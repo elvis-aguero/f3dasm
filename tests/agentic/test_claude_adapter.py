@@ -1,7 +1,6 @@
 """Tests for ClaudeAdapter — stub out claude_agent_sdk.query."""
 import types
 import sys
-import pytest
 
 
 # ---------------------------------------------------------------------------

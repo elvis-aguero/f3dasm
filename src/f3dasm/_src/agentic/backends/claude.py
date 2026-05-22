@@ -28,19 +28,21 @@ def _require_sdk() -> None:
         )
 
 
+_TYPE_MAP: dict = {
+    int: {"type": "integer"},
+    float: {"type": "number"},
+    bool: {"type": "boolean"},
+    dict: {"type": "object"},
+    list: {"type": "array"},
+    str: {"type": "string"},
+}
+
+
 def _infer_schema_from_callable(fn: Any) -> dict:
     """Build a JSON schema dict from a Python callable's type annotations."""
     sig = _inspect.signature(fn)
     props: dict = {}
     required: list[str] = []
-    _TYPE_MAP = {
-        int: {"type": "integer"},
-        float: {"type": "number"},
-        bool: {"type": "boolean"},
-        dict: {"type": "object"},
-        list: {"type": "array"},
-        str: {"type": "string"},
-    }
     for pname, param in sig.parameters.items():
         ann = param.annotation
         if ann is _inspect.Parameter.empty:
@@ -81,7 +83,12 @@ def _format_messages_as_prompt(messages: list[dict]) -> str:
                 c.get("text", "") if isinstance(c, dict) else str(c)
                 for c in content
             )
-        prefix = "Human" if role in ("human", "user") else "Assistant"
+        if role in ("human", "user"):
+            prefix = "Human"
+        elif role in ("ai", "assistant"):
+            prefix = "Assistant"
+        else:
+            continue  # skip system messages — passed via system_prompt
         parts.append(f"{prefix}: {content}")
     return "\n\n".join(parts)
 
