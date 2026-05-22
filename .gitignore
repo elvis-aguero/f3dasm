@@ -150,3 +150,8 @@ studies/*/workspace/
 
 # Reference material kept out of agent reach
 studies/fragile_becomes_supercompressible/bessa2019.md
+
+# Agents
+.github/agents/*
+superpowers/
+CLAUDE.md
