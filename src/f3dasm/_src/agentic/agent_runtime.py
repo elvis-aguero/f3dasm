@@ -17,8 +17,13 @@ from .graph_state import AgenticState, Delegation, Report, StudyConfig, Task
 __all__ = [
     "AgenticRun",
     "AgenticRunError",
-    "StrategizerAgent",
+    "DEFAULT_MODEL",
+    "Delegation",
     "ImplementerAgent",
+    "Report",
+    "StrategizerAgent",
+    "StudyConfig",
+    "Task",
 ]
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
