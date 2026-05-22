@@ -19,6 +19,8 @@ def build_graph(
     spec: Graph,
     make_adapter: Callable[[str, Agent], Any],
     checkpointer: Any = None,
+    study_dir: Any = None,
+    interactive: bool = False,
 ) -> Any:
     """Build and compile a LangGraph StateGraph from a Graph spec.
 
@@ -46,7 +48,13 @@ def build_graph(
 
         if outgoing:
             # Has outgoing edges → orchestrator role
-            node = StrategizerNode(adapter, outgoing=outgoing, entry=spec.entry)
+            node = StrategizerNode(
+                adapter,
+                outgoing=outgoing,
+                entry=spec.entry,
+                study_dir=study_dir,
+                interactive=interactive,
+            )
         else:
             # No outgoing edges → worker role
             return_to = incoming[0] if incoming else spec.entry

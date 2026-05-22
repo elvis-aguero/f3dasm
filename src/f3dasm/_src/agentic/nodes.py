@@ -62,17 +62,26 @@ class StrategizerNode(AgentNode):
         adapter: Any,
         outgoing: list[str],
         entry: str = "strategizer",
+        study_dir: Any = None,
+        interactive: bool = False,
     ) -> None:
         super().__init__(adapter)
         self._outgoing = list(outgoing)
         self._entry = entry
         self._route: dict = {}
+        self._study_dir = study_dir
+        self._interactive = interactive
         self.adapter.closure_tools.update(self._build_routing_closures())
 
     def _build_routing_closures(self) -> dict:
         """Return routing closure tools that write to self._route."""
+        import os
+        from pathlib import Path
+
         route = self._route
         outgoing = self._outgoing
+        study_dir = self._study_dir
+        interactive = self._interactive
 
         def Delegate(intent: str, expected_report: str) -> str:
             """Delegate a task to the implementer agent."""
@@ -89,11 +98,42 @@ class StrategizerNode(AgentNode):
 
         def Ask(question: str) -> str:
             """Ask the human operator a question and wait for input."""
-            route["kind"] = "ask"
-            route["question"] = question
-            return "Awaiting user response."
+            if interactive:
+                route["kind"] = "ask"
+                route["question"] = question
+                return "Awaiting user response."
+            # Non-interactive: auto-respond so run proceeds autonomously.
+            return (
+                "No human operator is present. Proceed autonomously "
+                "using only information available in the problem statement "
+                "and files in the study directory."
+            )
 
-        return {"Delegate": Delegate, "Done": Done, "Ask": Ask}
+        def WriteMarkdown(path: str, body: str) -> str:
+            """Write a Markdown file inside the study directory."""
+            if study_dir is None:
+                return "ERROR: study_dir not set."
+            target = Path(study_dir) / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(body)
+            return f"Written: {target}"
+
+        def ReadNote(path: str) -> str:
+            """Read a file from the study directory."""
+            if study_dir is None:
+                return "ERROR: study_dir not set."
+            target = Path(study_dir) / path
+            if not target.exists():
+                return f"NOT FOUND: {target}"
+            return target.read_text()
+
+        return {
+            "Delegate": Delegate,
+            "Done": Done,
+            "Ask": Ask,
+            "WriteMarkdown": WriteMarkdown,
+            "ReadNote": ReadNote,
+        }
 
     def __call__(self, state: "AgenticState") -> Any:
         from langchain_core.messages import AIMessage, HumanMessage

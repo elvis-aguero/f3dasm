@@ -14,6 +14,12 @@ from .backends.claude import ClaudeAdapter
 from .graph_builder import build_graph
 from .graph_state import AgenticState, Delegation, Report, StudyConfig, Task
 
+# Real tool names recognised by the claude-agent-sdk as native claude CLI tools.
+_CLAUDE_NATIVE_TOOLS = frozenset({
+    "Bash", "Edit", "Read", "Write", "Glob", "Grep",
+    "Task", "WebFetch", "WebSearch", "computer",
+})
+
 __all__ = [
     "AgenticRun",
     "AgenticRunError",
@@ -84,7 +90,9 @@ class AgenticRun:
         self._model = model
         self._budget = budget
         self._graph_spec = graph or _default_graph()
-        self._graph = build_graph(self._graph_spec, self._make_adapter)
+        self._graph = build_graph(
+            self._graph_spec, self._make_adapter, study_dir=self.study_dir
+        )
 
     def execute(self) -> str:
         """Run the agentic loop; return the final report text.
@@ -112,9 +120,10 @@ class AgenticRun:
         return result.get("last_report") or ""
 
     def _make_adapter(self, name: str, agent: Agent) -> ClaudeAdapter:
+        native = [t for t in agent.tools if t in _CLAUDE_NATIVE_TOOLS]
         return ClaudeAdapter(
             model=agent.model or self._model,
             system_prompt=agent.system_prompt,
             study_dir=self.study_dir,
-            native_tools=list(agent.tools),
+            native_tools=native,
         )
