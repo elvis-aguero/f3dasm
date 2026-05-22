@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph import END, StateGraph  # noqa: F401 — END re-exported for use in nodes
+from langgraph.graph import StateGraph
 
 from .backends.base import Agent, Graph
 from .graph_state import AgenticState
@@ -50,7 +50,7 @@ def build_graph(
         else:
             # No outgoing edges → worker role
             return_to = incoming[0] if incoming else spec.entry
-            node = ImplementerNode(adapter, return_to=return_to, entry=spec.entry)
+            node = ImplementerNode(adapter, return_to=return_to)
 
         builder.add_node(name, node)
 

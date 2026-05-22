@@ -131,12 +131,7 @@ class StrategizerNode(AgentNode):
 class ImplementerNode(AgentNode):
     """Worker node: executes tasks, writes Reports, returns to caller."""
 
-    def __init__(
-        self,
-        adapter: Any,
-        return_to: str,
-        entry: str = "strategizer",
-    ) -> None:
+    def __init__(self, adapter: Any, return_to: str) -> None:
         super().__init__(adapter)
         self._return_to = return_to
 

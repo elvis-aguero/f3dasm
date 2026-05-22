@@ -9,7 +9,7 @@ __all__ = ["OllamaAdapter"]
 
 def _to_lc_messages(messages: list[dict]) -> list:
     """Convert LangChain-style message dicts to LangChain message objects."""
-    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+    from langchain_core.messages import AIMessage, HumanMessage
 
     result = []
     for m in messages:
