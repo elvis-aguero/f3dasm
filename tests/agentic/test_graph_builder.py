@@ -1,0 +1,132 @@
+"""Tests for build_graph()."""
+from __future__ import annotations
+
+import pytest
+from langchain_core.messages import HumanMessage
+from langgraph.checkpoint.memory import MemorySaver
+
+from f3dasm._src.agentic.backends.base import Agent, Edge, Graph
+from f3dasm._src.agentic.graph_builder import build_graph
+from f3dasm._src.agentic.graph_state import AgenticState
+
+
+class StubAdapter:
+    """Test adapter that returns scripted responses."""
+    def __init__(self, *responses: str) -> None:
+        self._responses = list(responses)
+        self._call_count = 0
+        self.closure_tools: dict = {}
+
+    def invoke(self, messages: list[dict]) -> str:
+        if self._call_count < len(self._responses):
+            resp = self._responses[self._call_count]
+        else:
+            resp = self._responses[-1] if self._responses else "No response"
+        self._call_count += 1
+        return resp
+
+
+def make_initial_state(problem="Test problem") -> AgenticState:
+    return AgenticState(
+        messages=[HumanMessage(content=problem)],
+        study_dir="/tmp",
+        done=False,
+        last_report=None,
+        total_delegations=0,
+        budget_seconds=None,
+    )
+
+
+def test_build_graph_creates_compiledgraph():
+    """build_graph returns a compiled LangGraph graph."""
+    class A(Agent):
+        pass
+
+    spec = Graph(nodes={"s": A()}, edges=(), entry="s")
+    graph = build_graph(spec, lambda n, a: StubAdapter("## Done\nAll done."))
+
+    # CompiledGraph has .invoke method
+    assert hasattr(graph, "invoke")
+
+
+def test_build_graph_entry_node_receives_initial_message():
+    """The entry node gets invoked with the initial message in state."""
+    messages_seen = []
+
+    class CapturingAdapter:
+        closure_tools: dict = {}
+        def invoke(self, messages):
+            messages_seen.extend(messages)
+            self.closure_tools["Done"](summary="Captured.")
+            return "Done."
+
+    class A(Agent):
+        pass
+
+    spec2 = Graph(
+        nodes={"s": A(), "i": A()},
+        edges=(Edge("s", "i"),),
+        entry="s",
+    )
+
+    s_adapter = CapturingAdapter()
+    i_adapter = StubAdapter("## Report\nDone.")
+
+    def make_adapter(name, agent):
+        return s_adapter if name == "s" else i_adapter
+
+    graph = build_graph(spec2, make_adapter, MemorySaver())
+    config = {"configurable": {"thread_id": "test-1"}}
+    state = make_initial_state("My initial problem")
+    graph.invoke(state, config=config)
+
+    # The strategizer adapter received messages including the initial problem
+    assert any("My initial problem" in m.get("content", "") for m in messages_seen)
+
+
+def test_build_graph_routes_delegate_to_implementer():
+    """StrategizerNode delegates to ImplementerNode when Delegate closure is called."""
+    class A(Agent):
+        pass
+
+    strat_call_count = [0]
+    impl_call_count = [0]
+
+    class StratAdapter:
+        closure_tools: dict = {}
+        def invoke(self, messages):
+            strat_call_count[0] += 1
+            if strat_call_count[0] == 1:
+                # First call: delegate
+                self.closure_tools["Delegate"](intent="Do something", expected_report="Report back")
+                return "Delegating."
+            else:
+                # Second call: done
+                self.closure_tools["Done"](summary="All done")
+                return "Done."
+
+    class ImplAdapter:
+        closure_tools: dict = {}
+        def invoke(self, messages):
+            impl_call_count[0] += 1
+            return "## Report\nTask complete."
+
+    spec = Graph(
+        nodes={"s": A(), "i": A()},
+        edges=(Edge("s", "i"),),
+        entry="s",
+    )
+
+    graph = build_graph(
+        spec,
+        lambda name, a: StratAdapter() if name == "s" else ImplAdapter(),
+        MemorySaver(),
+    )
+
+    config = {"configurable": {"thread_id": "test-2"}}
+    result = graph.invoke(make_initial_state(), config=config)
+
+    # Both strategizer and implementer were called
+    assert strat_call_count[0] >= 1
+    assert impl_call_count[0] >= 1
+    assert result["done"] is True
