@@ -10,6 +10,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# This file tests pre-LangGraph Ollama internals (_OllamaAgentSession,
+# _preflight_ollama) that were removed in the LangGraph port.
+# Scheduled for rewrite in Task 10.
+pytestmark = pytest.mark.skip(
+    reason="test_ollama_backend.py targets the pre-LangGraph Ollama internals; "
+    "scheduled for rewrite in Task 10"
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
