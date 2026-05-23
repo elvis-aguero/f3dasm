@@ -175,7 +175,8 @@ class AgenticRun:
         start_time = time.time()
 
         # Build the graph now (after _run_dir is set) so _make_adapter sees it
-        graph = build_graph(
+        # If a pre-built graph was injected (e.g. in tests), use it directly.
+        graph = getattr(self, "_graph", None) or build_graph(
             self._graph_spec, self._make_adapter, study_dir=self.study_dir
         )
 
@@ -186,9 +187,9 @@ class AgenticRun:
             done=False,
             last_report=None,
             total_delegations=0,
-            budget_seconds=self._budget,
+            budget_seconds=getattr(self, "_budget", None),
             run_dir=str(run_dir),
-            eval_budget=self._eval_budget,
+            eval_budget=getattr(self, "_eval_budget", None),
             evals_used=0,
             start_time=start_time,
         )
