@@ -1,101 +1,154 @@
-"""Tests for OllamaAdapter — stub out langchain_ollama.ChatOllama."""
-import sys
-import types
+"""Tests for OllamaAdapter."""
+from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
 
 
-def _install_fake_ollama(response_text: str = "ok"):
-    """Install a fake langchain_ollama module that returns response_text."""
-    class FakeResponse:
-        content = response_text
-
-    class FakeChatOllama:
-        def __init__(self, model):
-            self.model = model
-        def invoke(self, messages):
-            return FakeResponse()
-
-    fake_mod = types.ModuleType("langchain_ollama")
-    fake_mod.ChatOllama = FakeChatOllama
-    sys.modules["langchain_ollama"] = fake_mod
-    return FakeChatOllama
-
-
-def test_ollama_adapter_invoke_returns_string():
-    """OllamaAdapter.invoke returns a str."""
-    _install_fake_ollama("hello from ollama")
-
-    # Force reimport to pick up the fake module
-    if "f3dasm._src.agentic.backends.ollama" in sys.modules:
-        del sys.modules["f3dasm._src.agentic.backends.ollama"]
-
+def _make_adapter(**kwargs):
     from f3dasm._src.agentic.backends.ollama import OllamaAdapter
-
-    adapter = OllamaAdapter("llama3", "You are helpful.")
-    result = adapter.invoke([{"role": "user", "content": "Hello"}])
-    assert result == "hello from ollama"
-
-
-def test_ollama_adapter_prepends_system_prompt():
-    """OllamaAdapter passes SystemMessage as first message."""
-    messages_received = []
-
-    class FakeResponse:
-        content = "ok"
-
-    class CaptureChatOllama:
-        def __init__(self, model):
-            pass
-        def invoke(self, messages):
-            messages_received.extend(messages)
-            return FakeResponse()
-
-    fake_mod = sys.modules.get("langchain_ollama", types.ModuleType("langchain_ollama"))
-    fake_mod.ChatOllama = CaptureChatOllama
-    sys.modules["langchain_ollama"] = fake_mod
-
-    if "f3dasm._src.agentic.backends.ollama" in sys.modules:
-        del sys.modules["f3dasm._src.agentic.backends.ollama"]
-
-    from f3dasm._src.agentic.backends.ollama import OllamaAdapter
-    from langchain_core.messages import SystemMessage
-
-    adapter = OllamaAdapter("llama3", "Be concise.")
-    adapter.invoke([{"role": "user", "content": "Hi"}])
-
-    assert isinstance(messages_received[0], SystemMessage)
-    assert messages_received[0].content == "Be concise."
+    defaults = dict(model="llama3.2", system_prompt="You are helpful.")
+    defaults.update(kwargs)
+    return OllamaAdapter(**defaults)
 
 
-def test_ollama_adapter_skips_system_role_in_messages():
-    """System-role dicts in messages are ignored (not doubled)."""
-    messages_received = []
+# ---------------------------------------------------------------------------
+# Interface parity with ClaudeAdapter
+# ---------------------------------------------------------------------------
 
-    class FakeResponse:
-        content = "ok"
 
-    class CaptureChatOllama:
-        def __init__(self, model):
-            pass
-        def invoke(self, messages):
-            messages_received.extend(messages)
-            return FakeResponse()
+def test_has_closure_tools_dict():
+    adapter = _make_adapter()
+    assert isinstance(adapter.closure_tools, dict)
 
-    fake_mod = sys.modules.get("langchain_ollama", types.ModuleType("langchain_ollama"))
-    fake_mod.ChatOllama = CaptureChatOllama
-    sys.modules["langchain_ollama"] = fake_mod
 
-    if "f3dasm._src.agentic.backends.ollama" in sys.modules:
-        del sys.modules["f3dasm._src.agentic.backends.ollama"]
+def test_closure_tools_mutable_after_init():
+    adapter = _make_adapter()
+    adapter.closure_tools["foo"] = lambda x: x
+    assert "foo" in adapter.closure_tools
 
-    from f3dasm._src.agentic.backends.ollama import OllamaAdapter
-    from langchain_core.messages import SystemMessage
 
-    adapter = OllamaAdapter("llama3", "sys")
-    adapter.invoke([
-        {"role": "system", "content": "ignore me"},
-        {"role": "user", "content": "Hi"},
-    ])
+# ---------------------------------------------------------------------------
+# _build_tools maps native names to LangChain tools
+# ---------------------------------------------------------------------------
 
-    # Only one SystemMessage (from system_prompt), not two
-    system_msgs = [m for m in messages_received if isinstance(m, SystemMessage)]
-    assert len(system_msgs) == 1
+
+def test_native_tools_mapped():
+    adapter = _make_adapter(native_tools=["Bash", "Read", "Write", "Edit", "Glob", "Grep"])
+    tools = adapter._build_tools()
+    names = {t.name for t in tools}
+    assert names == {"Bash", "Read", "Write", "Edit", "Glob", "Grep"}
+
+
+def test_unknown_native_tool_ignored():
+    adapter = _make_adapter(native_tools=["Bash", "NonExistent"])
+    tools = adapter._build_tools()
+    names = {t.name for t in tools}
+    assert "NonExistent" not in names
+    assert "Bash" in names
+
+
+def test_closure_tools_become_structured_tools():
+    def my_tool(x: str) -> str:
+        """A test tool."""
+        return x
+    adapter = _make_adapter()
+    adapter.closure_tools["MyTool"] = my_tool
+    tools = adapter._build_tools()
+    names = {t.name for t in tools}
+    assert "MyTool" in names
+
+
+# ---------------------------------------------------------------------------
+# Glob tool works correctly (pattern-based, not directory listing)
+# ---------------------------------------------------------------------------
+
+
+def test_glob_tool_matches_pattern(tmp_path):
+    (tmp_path / "a.py").write_text("x")
+    (tmp_path / "b.txt").write_text("y")
+    adapter = _make_adapter(native_tools=["Glob"], study_dir=tmp_path)
+    tools = {t.name: t for t in adapter._build_tools()}
+    result = tools["Glob"].invoke({"pattern": "*.py"})
+    assert "a.py" in result
+    assert "b.txt" not in result
+
+
+# ---------------------------------------------------------------------------
+# invoke() uses fresh thread_id per call (no state leakage)
+# ---------------------------------------------------------------------------
+
+
+def test_invoke_uses_fresh_thread_id_each_call():
+    thread_ids = []
+    fake_result = {"messages": [MagicMock(content="done")]}
+
+    def fake_invoke(state, config=None):
+        thread_ids.append(config["configurable"]["thread_id"])
+        return fake_result
+
+    fake_agent = MagicMock()
+    fake_agent.invoke.side_effect = fake_invoke
+
+    adapter = _make_adapter()
+    adapter._agent = fake_agent
+
+    adapter.invoke([{"role": "user", "content": "hello"}])
+    adapter.invoke([{"role": "user", "content": "world"}])
+
+    assert len(thread_ids) == 2
+    assert thread_ids[0] != thread_ids[1]
+
+
+# ---------------------------------------------------------------------------
+# invoke() returns last message content
+# ---------------------------------------------------------------------------
+
+
+def test_invoke_returns_last_message_content():
+    fake_agent = MagicMock()
+    fake_agent.invoke.return_value = {
+        "messages": [
+            MagicMock(content="intermediate"),
+            MagicMock(content="final answer"),
+        ]
+    }
+    adapter = _make_adapter()
+    adapter._agent = fake_agent
+    result = adapter.invoke([{"role": "user", "content": "go"}])
+    assert result == "final answer"
+
+
+# ---------------------------------------------------------------------------
+# Agent built lazily — closure_tools populated before first invoke
+# ---------------------------------------------------------------------------
+
+
+def test_agent_built_lazily():
+    adapter = _make_adapter()
+    assert adapter._agent is None
+    adapter.closure_tools["Done"] = lambda summary: "done"
+
+    fake_agent = MagicMock()
+    fake_agent.invoke.return_value = {"messages": [MagicMock(content="ok")]}
+
+    with patch.object(adapter, "_build_agent", return_value=fake_agent) as mock_build:
+        adapter.invoke([{"role": "user", "content": "hi"}])
+        mock_build.assert_called_once()
+        adapter.invoke([{"role": "user", "content": "hi again"}])
+        mock_build.assert_called_once()  # not rebuilt on second call
+
+
+def test_done_closure_in_tools_when_agent_built():
+    """Closure added before first invoke appears in built tools."""
+    route = {}
+
+    def Done(summary: str) -> str:
+        """Signal done."""
+        route["done"] = summary
+        return "done"
+
+    adapter = _make_adapter()
+    adapter.closure_tools["Done"] = Done
+    tools = adapter._build_tools()
+    names = {t.name for t in tools}
+    assert "Done" in names

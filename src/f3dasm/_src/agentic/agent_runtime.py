@@ -124,6 +124,7 @@ class AgenticRun:
         cfg = _load_study_config(self.study_dir)
 
         self._model = model or cfg.get("model") or DEFAULT_MODEL
+        self._backend = cfg.get("backend", "claude")
         self._eval_budget = (
             eval_budget if eval_budget is not None else cfg.get("eval_budget")
         )
@@ -218,13 +219,11 @@ class AgenticRun:
 
         return report
 
-    def _make_adapter(self, name: str, agent: Agent) -> ClaudeAdapter:
-        native = [t for t in agent.tools if t in _CLAUDE_NATIVE_TOOLS]
+    def _make_adapter(self, name: str, agent: Agent):
         run_dir = self._run_dir
         workspace_dir = self.study_dir / "workspace"
 
         if run_dir and hasattr(self._graph_spec, "outgoing") and self._graph_spec.outgoing(name):
-            # Strategizer: inject run paths preamble
             notes_dir = Path(run_dir) / "strategizer_notes"
             preamble = RUN_PATHS_PREAMBLE_TEMPLATE.format(
                 study_dir=self.study_dir,
@@ -233,15 +232,28 @@ class AgenticRun:
             system_prompt = preamble + agent.system_prompt
             cwd = self.study_dir
         else:
-            # Implementer: inject workspace preamble
             preamble = WORKSPACE_PREAMBLE_TEMPLATE.format(
                 workspace_dir=workspace_dir,
             )
             system_prompt = preamble + agent.system_prompt
             cwd = workspace_dir
 
+        model = agent.model or self._model
+
+        if self._backend == "ollama":
+            from .backends.ollama import OllamaAdapter
+            # All non-claude-native tool names are native tools for Ollama
+            ollama_native = [t for t in agent.tools if t not in {"Done", "Ask", "WriteMarkdown", "ReadNote", "ReportEvals"}]
+            return OllamaAdapter(
+                model=model,
+                system_prompt=system_prompt,
+                study_dir=cwd,
+                native_tools=ollama_native,
+            )
+
+        native = [t for t in agent.tools if t in _CLAUDE_NATIVE_TOOLS]
         return ClaudeAdapter(
-            model=agent.model or self._model,
+            model=model,
             system_prompt=system_prompt,
             study_dir=cwd,
             native_tools=native,
