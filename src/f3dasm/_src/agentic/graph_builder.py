@@ -44,21 +44,18 @@ def build_graph(
     for name, agent in spec.nodes.items():
         adapter = make_adapter(name, agent)
         outgoing = spec.outgoing(name)
-        incoming = spec.incoming(name)
 
-        if outgoing:
-            # Has outgoing edges → orchestrator role
+        if agent.role == "strategizer":
             node = StrategizerNode(
                 adapter,
+                name=name,
                 outgoing=outgoing,
-                entry=spec.entry,
+                spec=spec,
                 study_dir=study_dir,
                 interactive=interactive,
             )
         else:
-            # No outgoing edges → worker role
-            return_to = incoming[0] if incoming else spec.entry
-            node = ImplementerNode(adapter, return_to=return_to)
+            node = ImplementerNode(adapter)
 
         builder.add_node(name, node)
 

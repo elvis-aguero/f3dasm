@@ -8,6 +8,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from f3dasm._src.agentic.backends.base import Agent, Edge, Graph
 from f3dasm._src.agentic.graph_builder import build_graph
 from f3dasm._src.agentic.graph_state import AgenticState
+from f3dasm._src.agentic.nodes import ImplementerNode, StrategizerNode
 
 
 class StubAdapter:
@@ -34,19 +35,60 @@ def make_initial_state(problem="Test problem") -> AgenticState:
         last_report=None,
         total_delegations=0,
         budget_seconds=None,
+        return_to=None,
     )
+
+
+class StrategAgent(Agent):
+    role = "strategizer"
+
+
+class ImplAgent(Agent):
+    role = "implementer"
 
 
 def test_build_graph_creates_compiledgraph():
     """build_graph returns a compiled LangGraph graph."""
-    class A(Agent):
-        pass
-
-    spec = Graph(nodes={"s": A()}, edges=(), entry="s")
+    spec = Graph(nodes={"s": ImplAgent()}, edges=(), entry="s")
     graph = build_graph(spec, lambda n, a: StubAdapter("## Done\nAll done."))
 
-    # CompiledGraph has .invoke method
     assert hasattr(graph, "invoke")
+
+
+def test_build_graph_strategizer_role_creates_strategizer_node():
+    """Agent with role='strategizer' is built as StrategizerNode."""
+    built_nodes = {}
+
+    class TrackingStrategizerNode(StrategizerNode):
+        pass
+
+    class TrackingImplementerNode(ImplementerNode):
+        pass
+
+    spec = Graph(
+        nodes={"s": StrategAgent(), "i": ImplAgent()},
+        edges=(Edge("s", "i"),),
+        entry="s",
+    )
+
+    import f3dasm._src.agentic.graph_builder as gb
+    original_strat = gb.StrategizerNode
+    original_impl = gb.ImplementerNode
+    try:
+        gb.StrategizerNode = TrackingStrategizerNode
+        gb.ImplementerNode = TrackingImplementerNode
+
+        adapters = {}
+
+        def make_adapter(name, agent):
+            a = StubAdapter("## Done\nAll done.")
+            adapters[name] = a
+            return a
+
+        build_graph(spec, make_adapter)
+    finally:
+        gb.StrategizerNode = original_strat
+        gb.ImplementerNode = original_impl
 
 
 def test_build_graph_entry_node_receives_initial_message():
@@ -60,11 +102,8 @@ def test_build_graph_entry_node_receives_initial_message():
             self.closure_tools["Done"](summary="Captured.")
             return "Done."
 
-    class A(Agent):
-        pass
-
     spec2 = Graph(
-        nodes={"s": A(), "i": A()},
+        nodes={"s": StrategAgent(), "i": ImplAgent()},
         edges=(Edge("s", "i"),),
         entry="s",
     )
@@ -80,15 +119,11 @@ def test_build_graph_entry_node_receives_initial_message():
     state = make_initial_state("My initial problem")
     graph.invoke(state, config=config)
 
-    # The strategizer adapter received messages including the initial problem
     assert any("My initial problem" in m.get("content", "") for m in messages_seen)
 
 
 def test_build_graph_routes_delegate_to_implementer():
     """StrategizerNode delegates to ImplementerNode when Delegate closure is called."""
-    class A(Agent):
-        pass
-
     strat_call_count = [0]
     impl_call_count = [0]
 
@@ -97,11 +132,9 @@ def test_build_graph_routes_delegate_to_implementer():
         def invoke(self, messages):
             strat_call_count[0] += 1
             if strat_call_count[0] == 1:
-                # First call: delegate
-                self.closure_tools["Delegate"](intent="Do something", expected_report="Report back")
+                self.closure_tools["Delegate"](target="i", intent="Do something", expected_report="Report back")
                 return "Delegating."
             else:
-                # Second call: done
                 self.closure_tools["Done"](summary="All done")
                 return "Done."
 
@@ -112,7 +145,7 @@ def test_build_graph_routes_delegate_to_implementer():
             return "## Report\nTask complete."
 
     spec = Graph(
-        nodes={"s": A(), "i": A()},
+        nodes={"s": StrategAgent(), "i": ImplAgent()},
         edges=(Edge("s", "i"),),
         entry="s",
     )
@@ -126,7 +159,6 @@ def test_build_graph_routes_delegate_to_implementer():
     config = {"configurable": {"thread_id": "test-2"}}
     result = graph.invoke(make_initial_state(), config=config)
 
-    # Both strategizer and implementer were called
     assert strat_call_count[0] >= 1
     assert impl_call_count[0] >= 1
     assert result["done"] is True

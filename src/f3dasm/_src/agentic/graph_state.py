@@ -23,6 +23,7 @@ class AgenticState(MessagesState):
     eval_budget: int | None      # max function evaluations (from config)
     evals_used: int              # running count across delegations
     start_time: float | None     # time.time() at run start, for budget enforcement
+    return_to: str | None
 
 
 # ---------------------------------------------------------------------------

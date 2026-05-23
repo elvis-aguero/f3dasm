@@ -13,11 +13,10 @@ import yaml  # available via hydra-core
 from langchain_core.messages import HumanMessage
 
 from .agent_prompts import (
-    IMPLEMENTER_SYSTEM_PROMPT,
     RUN_PATHS_PREAMBLE_TEMPLATE,
-    STRATEGIZER_SYSTEM_PROMPT,
     WORKSPACE_PREAMBLE_TEMPLATE,
 )
+from .agents import ImplementerAgent, StrategizerAgent, _default_graph
 from .backends.base import Agent, Edge, Graph
 from .backends.claude import ClaudeAdapter
 from .graph_builder import build_graph
@@ -46,30 +45,6 @@ DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
 class AgenticRunError(Exception):
     """Raised when an agentic run fails unrecoverably."""
-
-
-class StrategizerAgent(Agent):
-    """Default orchestrator agent for f3dasm agentic runs."""
-
-    system_prompt = STRATEGIZER_SYSTEM_PROMPT
-    tools = frozenset({"Done", "Ask", "WriteMarkdown", "ReadNote"})
-    reset_on_checkpoint = False
-
-
-class ImplementerAgent(Agent):
-    """Default worker agent for f3dasm agentic runs."""
-
-    system_prompt = IMPLEMENTER_SYSTEM_PROMPT
-    tools = frozenset({"Bash", "Edit", "Read", "Write", "Glob", "Grep", "ReportEvals"})
-    reset_on_checkpoint = True
-
-
-def _default_graph() -> Graph:
-    return Graph(
-        nodes={"strategizer": StrategizerAgent(), "implementer": ImplementerAgent()},
-        edges=(Edge("strategizer", "implementer"),),
-        entry="strategizer",
-    )
 
 
 def _load_study_config(study_dir: Path) -> dict:
@@ -193,6 +168,7 @@ class AgenticRun:
             eval_budget=getattr(self, "_eval_budget", None),
             evals_used=0,
             start_time=start_time,
+            return_to=None,
         )
 
         log.info("Invoking graph")
@@ -239,10 +215,10 @@ class AgenticRun:
             cwd = workspace_dir
 
         model = agent.model or self._model
+        backend = agent.backend or self._backend
 
-        if self._backend == "ollama":
+        if backend == "ollama":
             from .backends.ollama import OllamaAdapter
-            # All non-claude-native tool names are native tools for Ollama
             ollama_native = [t for t in agent.tools if t not in {"Done", "Ask", "WriteMarkdown", "ReadNote", "ReportEvals"}]
             return OllamaAdapter(
                 model=model,

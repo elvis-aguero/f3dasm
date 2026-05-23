@@ -96,14 +96,16 @@ class StrategizerNode(AgentNode):
     def __init__(
         self,
         adapter: Any,
+        name: str,
         outgoing: list[str],
-        entry: str = "strategizer",
+        spec: Any,
         study_dir: Any = None,
         interactive: bool = False,
     ) -> None:
         super().__init__(adapter)
+        self._name = name
         self._outgoing = list(outgoing)
-        self._entry = entry
+        self._spec = spec
         self._route: dict = {}
         self._study_dir = study_dir
         self._interactive = interactive
@@ -118,10 +120,12 @@ class StrategizerNode(AgentNode):
         study_dir = self._study_dir
         interactive = self._interactive
 
-        def Delegate(intent: str, expected_report: str) -> str:
-            """Delegate a task to the implementer agent."""
+        def Delegate(target: str, intent: str, expected_report: str) -> str:
+            """Delegate a task to a named agent."""
+            if target not in outgoing:
+                return f"ERROR: unknown target {target!r}. Valid targets: {outgoing}"
             route["kind"] = "delegate"
-            route["target"] = outgoing[0] if outgoing else None
+            route["target"] = target
             route["task"] = intent
             route["expected_report"] = expected_report
             return "Task delegated. Waiting for Report."
@@ -222,23 +226,26 @@ class StrategizerNode(AgentNode):
 
         route = self._route
         if route.get("kind") == "delegate" and route.get("target"):
+            edge = self._spec.edge(self._name, route["target"])
+            preamble = edge.preamble if edge else ""
             task_msg = route.get("task", "")
             expected = route.get("expected_report", "")
             if expected:
-                task_msg = (
-                    f"{task_msg}\n\n**Required deliverables / acceptance criteria:**\n{expected}"
-                )
+                task_msg += f"\n\n**Required deliverables / acceptance criteria:**\n{expected}"
+            if preamble:
+                task_msg = preamble + "\n\n" + task_msg
             return Command(
                 goto=route["target"],
                 update={
                     "messages": [ai_msg, HumanMessage(content=task_msg)],
                     "total_delegations": state["total_delegations"] + 1,
+                    "return_to": self._name,
                 },
             )
         if route.get("kind") == "ask" and route.get("question"):
             answer = interrupt(route["question"])
             return Command(
-                goto=self._entry,
+                goto=self._name,
                 update={"messages": [ai_msg, HumanMessage(content=str(answer))]},
             )
         # "done" or no routing tool called → end run
@@ -252,9 +259,8 @@ class StrategizerNode(AgentNode):
 class ImplementerNode(AgentNode):
     """Worker node: executes tasks, writes Reports, returns to caller."""
 
-    def __init__(self, adapter: Any, return_to: str) -> None:
+    def __init__(self, adapter: Any) -> None:
         super().__init__(adapter)
-        self._return_to = return_to
         self._evals_reported: dict = {}
         self.adapter.closure_tools.update(self._build_eval_closures())
 
@@ -294,8 +300,9 @@ class ImplementerNode(AgentNode):
 
         ai_msg = AIMessage(content=text)
         evals_delta = self._evals_reported.get("count", 0)
+        return_to = state.get("return_to")
         return Command(
-            goto=self._return_to,
+            goto=return_to,
             update={
                 "messages": [ai_msg],
                 "last_report": text,

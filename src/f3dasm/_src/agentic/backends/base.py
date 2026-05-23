@@ -51,6 +51,8 @@ class Agent:
     tools: frozenset[str] = frozenset()
     reset_on_checkpoint: bool = True
     description: str | None = None
+    role: str = "implementer"
+    backend: str | None = None
 
     def __init__(self, model: str | None = None) -> None:
         self.model = model
@@ -74,10 +76,13 @@ class Edge:
         Name of the agent that is allowed to call ``Delegate``.
     target : str
         Name of the agent that receives the delegated task.
+    preamble : str
+        Text prepended to the task message when this edge is traversed.
     """
 
     source: str
     target: str
+    preamble: str = ""
 
 
 @dataclass
@@ -96,7 +101,6 @@ class Graph:
         receives no ``Delegate`` tool.
     entry : str
         Name of the agent that receives the initial briefing.
-        Defaults to ``"strategizer"``.
 
     Raises
     ------
@@ -107,10 +111,12 @@ class Graph:
 
     nodes: dict  # dict[str, Agent]
     edges: tuple = ()
-    entry: str = "strategizer"
+    entry: str = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         self.edges = tuple(self.edges)
+        if self.entry is None:
+            raise ValueError("Graph.entry is required and must not be None.")
         bad = [k for k, v in self.nodes.items() if not isinstance(v, Agent)]
         if bad:
             raise TypeError(
@@ -137,4 +143,11 @@ class Graph:
     def incoming(self, name: str) -> list[str]:
         """Return source names for all edges into *name*."""
         return [e.source for e in self.edges if e.target == name]
+
+    def edge(self, source: str, target: str) -> "Edge | None":
+        """Return the Edge from *source* to *target*, or None if absent."""
+        for e in self.edges:
+            if e.source == source and e.target == target:
+                return e
+        return None
 

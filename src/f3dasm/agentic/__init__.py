@@ -14,12 +14,11 @@ from .._src.agentic.agent_runtime import (
     AgenticRunError,
     DEFAULT_MODEL,
     Delegation,
-    ImplementerAgent,
     Report,
-    StrategizerAgent,
     StudyConfig,
     Task,
 )
+from .._src.agentic.agents import ImplementerAgent, StrategizerAgent
 from .._src.agentic.backends.base import Agent, Edge, Graph
 from .._src.agentic.backends.claude import ClaudeAdapter
 from .._src.agentic.backends.ollama import OllamaAdapter
