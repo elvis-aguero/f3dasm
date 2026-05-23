@@ -123,6 +123,7 @@ class StrategizerNode(AgentNode):
             route["kind"] = "delegate"
             route["target"] = outgoing[0] if outgoing else None
             route["task"] = intent
+            route["expected_report"] = expected_report
             return "Task delegated. Waiting for Report."
 
         def Done(summary: str) -> str:
@@ -221,10 +222,16 @@ class StrategizerNode(AgentNode):
 
         route = self._route
         if route.get("kind") == "delegate" and route.get("target"):
+            task_msg = route.get("task", "")
+            expected = route.get("expected_report", "")
+            if expected:
+                task_msg = (
+                    f"{task_msg}\n\n**Required deliverables / acceptance criteria:**\n{expected}"
+                )
             return Command(
                 goto=route["target"],
                 update={
-                    "messages": [ai_msg, HumanMessage(content=route.get("task", ""))],
+                    "messages": [ai_msg, HumanMessage(content=task_msg)],
                     "total_delegations": state["total_delegations"] + 1,
                 },
             )
@@ -248,6 +255,18 @@ class ImplementerNode(AgentNode):
     def __init__(self, adapter: Any, return_to: str) -> None:
         super().__init__(adapter)
         self._return_to = return_to
+        self._evals_reported: dict = {}
+        self.adapter.closure_tools.update(self._build_eval_closures())
+
+    def _build_eval_closures(self) -> dict:
+        evals = self._evals_reported
+
+        def ReportEvals(count: int) -> str:
+            """Report the number of function evaluations used in this task."""
+            evals["count"] = int(count)
+            return f"Recorded {count} evaluations."
+
+        return {"ReportEvals": ReportEvals}
 
     def __call__(self, state: "AgenticState") -> Any:
         from langchain_core.messages import AIMessage
@@ -255,6 +274,7 @@ class ImplementerNode(AgentNode):
 
         from .agent_prompts import IMPLEMENTER_REPORT_RETRY_PROMPT
 
+        self._evals_reported.clear()
         messages = _to_adapter_messages(state["messages"])
         text = self.adapter.invoke(messages)
 
@@ -273,7 +293,12 @@ class ImplementerNode(AgentNode):
             text = self.adapter.invoke(retry_messages)
 
         ai_msg = AIMessage(content=text)
+        evals_delta = self._evals_reported.get("count", 0)
         return Command(
             goto=self._return_to,
-            update={"messages": [ai_msg], "last_report": text},
+            update={
+                "messages": [ai_msg],
+                "last_report": text,
+                "evals_used": state.get("evals_used", 0) + evals_delta,
+            },
         )

@@ -147,6 +147,59 @@ def test_implementer_stores_response_as_last_report():
     assert cmd.update["last_report"] == response
 
 
+def test_implementer_accumulates_evals_when_report_evals_called():
+    """ImplementerNode adds ReportEvals count to state evals_used."""
+    from f3dasm._src.agentic.nodes import ImplementerNode
+
+    class ReportEvalsCallingAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["ReportEvals"](count=1500)
+            return "## Report\n### Actions taken\nDone.\n### Files touched\n(none)\n### Conclusions\nOK\n### Numbers\nn: 1500"
+
+    adapter = ReportEvalsCallingAdapter()
+    node = ImplementerNode(adapter, return_to="strategizer")
+    state = make_state()
+    state["evals_used"] = 100
+    cmd = node(state)
+
+    assert cmd.update["evals_used"] == 1600
+
+
+def test_implementer_evals_zero_when_report_evals_not_called():
+    """ImplementerNode adds 0 to evals_used when ReportEvals is not called."""
+    from f3dasm._src.agentic.nodes import ImplementerNode
+
+    adapter = StubAdapter(response="## Report\n### Actions taken\nDone.\n### Files touched\n(none)\n### Conclusions\nOK\n### Numbers\nn: 0")
+    node = ImplementerNode(adapter, return_to="strategizer")
+    state = make_state()
+    state["evals_used"] = 42
+    cmd = node(state)
+
+    assert cmd.update["evals_used"] == 42
+
+
+def test_strategizer_delegate_includes_expected_report_in_message():
+    """Delegate expected_report appears in the HumanMessage sent to implementer."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    class DelegateCallingAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["Delegate"](
+                intent="Run the experiment.",
+                expected_report="Must produce workspace/replicate.py",
+            )
+            return "Delegated."
+
+    adapter = DelegateCallingAdapter()
+    node = StrategizerNode(adapter, outgoing=["implementer"])
+    cmd = node(make_state())
+
+    human_msgs = [m for m in cmd.update["messages"] if isinstance(m, HumanMessage)]
+    full_content = " ".join(m.content for m in human_msgs)
+    assert "workspace/replicate.py" in full_content
+    assert "Required deliverables" in full_content
+
+
 # ---------------------------------------------------------------------------
 # _to_adapter_messages tests
 # ---------------------------------------------------------------------------

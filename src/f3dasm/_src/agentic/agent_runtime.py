@@ -60,7 +60,7 @@ class ImplementerAgent(Agent):
     """Default worker agent for f3dasm agentic runs."""
 
     system_prompt = IMPLEMENTER_SYSTEM_PROMPT
-    tools = frozenset({"Bash", "Edit", "Read", "Write", "Glob", "Grep"})
+    tools = frozenset({"Bash", "Edit", "Read", "Write", "Glob", "Grep", "ReportEvals"})
     reset_on_checkpoint = True
 
 

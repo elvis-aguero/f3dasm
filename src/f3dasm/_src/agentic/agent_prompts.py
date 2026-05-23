@@ -527,6 +527,15 @@ USE RunPython() to:
 
 DO NOT use RunPython() to:
   - Import modules that are not installed; check with Bash first.
+
+USE ReportEvals(count) to:
+  - Report the total number of function evaluations performed in this
+    task, immediately before writing the ## Report block.
+  - Always call this once per task, even if count is 0.
+
+DO NOT use ReportEvals() to:
+  - Report cumulative totals from prior delegations — report only the
+    evaluations performed in the current task.
 </tool_usage>
 
 <reasoning_protocol>
