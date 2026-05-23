@@ -7,12 +7,24 @@ which is the ADAS-inspectable topology entry point.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .graph_state import AgenticState
 
 __all__ = ["AgentNode", "StrategizerNode", "ImplementerNode", "_to_adapter_messages"]
+
+_REQUIRED_SUBSECTIONS = [
+    "### Actions taken",
+    "### Files touched",
+    "### Conclusions",
+    "### Numbers",
+]
+_CAPABILITY_PHRASES = [
+    "i cannot", "i can't", "i don't have access",
+    "unable to", "not able to", "i am unable",
+]
 
 
 def _to_adapter_messages(lc_messages: list) -> list[dict]:
@@ -38,6 +50,30 @@ def _to_adapter_messages(lc_messages: list) -> list[dict]:
                 )
             result.append({"role": "ai", "content": str(content)})
     return result
+
+
+def _classify_response(text: str) -> str | None:
+    """Return a REFLECT diagnosis string if text is malformed, else None."""
+    from .agent_prompts import (
+        REFLECT_DIAGNOSIS_CAPABILITY_LIMIT,
+        REFLECT_DIAGNOSIS_MISSING_SUBSECTIONS_TEMPLATE,
+        REFLECT_DIAGNOSIS_NO_REPORT_HEADING,
+        REFLECT_DIAGNOSIS_SHORT,
+    )
+
+    if len(text.strip()) < 100:
+        return REFLECT_DIAGNOSIS_SHORT
+    low = text.lower()
+    if any(p in low for p in _CAPABILITY_PHRASES):
+        return REFLECT_DIAGNOSIS_CAPABILITY_LIMIT
+    if "## report" not in low:
+        return REFLECT_DIAGNOSIS_NO_REPORT_HEADING
+    missing = [s for s in _REQUIRED_SUBSECTIONS if s.lower() not in low]
+    if missing:
+        return REFLECT_DIAGNOSIS_MISSING_SUBSECTIONS_TEMPLATE.format(
+            missing_subsections=", ".join(f"'{s}'" for s in missing)
+        )
+    return None
 
 
 class AgentNode:
@@ -71,13 +107,12 @@ class StrategizerNode(AgentNode):
         self._route: dict = {}
         self._study_dir = study_dir
         self._interactive = interactive
+        self._current_notes_dir: Path | None = None
         self.adapter.closure_tools.update(self._build_routing_closures())
 
     def _build_routing_closures(self) -> dict:
         """Return routing closure tools that write to self._route."""
-        import os
-        from pathlib import Path
-
+        node = self
         route = self._route
         outgoing = self._outgoing
         study_dir = self._study_dir
@@ -110,10 +145,14 @@ class StrategizerNode(AgentNode):
             )
 
         def WriteMarkdown(path: str, body: str) -> str:
-            """Write a Markdown file inside the study directory."""
-            if study_dir is None:
-                return "ERROR: study_dir not set."
-            target = Path(study_dir) / path
+            """Write a Markdown (.md) file to strategizer_notes/."""
+            notes_dir = node._current_notes_dir
+            if notes_dir is None:
+                return "ERROR: notes_dir not set (run_dir missing from state)."
+            bare = Path(path).name
+            if not bare.endswith(".md"):
+                bare = bare + ".md"
+            target = Path(notes_dir) / bare
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(body)
             return f"Written: {target}"
@@ -136,9 +175,44 @@ class StrategizerNode(AgentNode):
         }
 
     def __call__(self, state: "AgenticState") -> Any:
+        import time
+
         from langchain_core.messages import AIMessage, HumanMessage
         from langgraph.graph import END
         from langgraph.types import Command, interrupt
+
+        # Update notes_dir from current state run_dir
+        run_dir = state.get("run_dir")
+        if run_dir:
+            self._current_notes_dir = Path(run_dir) / "strategizer_notes"
+
+        # Wall-clock budget check
+        budget = state.get("budget_seconds")
+        start = state.get("start_time")
+        if budget is not None and start is not None:
+            elapsed = time.time() - start
+            if elapsed >= budget:
+                return Command(
+                    goto=END,
+                    update={
+                        "messages": [],
+                        "done": True,
+                        "last_report": state.get("last_report") or "Budget exhausted.",
+                    },
+                )
+
+        # Eval budget check
+        eval_budget = state.get("eval_budget")
+        evals_used = state.get("evals_used", 0)
+        if eval_budget is not None and evals_used >= eval_budget:
+            return Command(
+                goto=END,
+                update={
+                    "messages": [],
+                    "done": True,
+                    "last_report": state.get("last_report") or "Eval budget exhausted.",
+                },
+            )
 
         self._route.clear()
 
@@ -179,7 +253,25 @@ class ImplementerNode(AgentNode):
         from langchain_core.messages import AIMessage
         from langgraph.types import Command
 
-        text = self.adapter.invoke(_to_adapter_messages(state["messages"]))
+        from .agent_prompts import IMPLEMENTER_REPORT_RETRY_PROMPT
+
+        messages = _to_adapter_messages(state["messages"])
+        text = self.adapter.invoke(messages)
+
+        diagnosis = _classify_response(text)
+        if diagnosis is not None:
+            # One retry with correction prompt
+            retry_messages = messages + [
+                {"role": "ai", "content": text},
+                {
+                    "role": "user",
+                    "content": (
+                        f"{IMPLEMENTER_REPORT_RETRY_PROMPT}\n\nDiagnosis: {diagnosis}"
+                    ),
+                },
+            ]
+            text = self.adapter.invoke(retry_messages)
+
         ai_msg = AIMessage(content=text)
         return Command(
             goto=self._return_to,
