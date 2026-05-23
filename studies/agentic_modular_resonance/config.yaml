@@ -2,3 +2,6 @@ model: claude-haiku-4-5-20251001
 backend: claude
 budget: "01:00:00"
 checkpoint_every: 30
+required_deliverables:
+  - workspace/replicate.py
+  - workspace/solution.md

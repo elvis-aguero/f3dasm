@@ -179,6 +179,12 @@ class StrategizerNode(AgentNode):
             "ReadNote": ReadNote,
         }
 
+    def _missing_deliverables(self, state: "AgenticState") -> list[str]:
+        """Return required deliverable paths (relative to study_dir) that don't exist yet."""
+        required = state.get("required_deliverables") or []
+        study_dir = Path(state.get("study_dir", "."))
+        return [p for p in required if not (study_dir / p).exists()]
+
     def __call__(self, state: "AgenticState") -> Any:
         import time
 
@@ -191,37 +197,30 @@ class StrategizerNode(AgentNode):
         if run_dir:
             self._current_notes_dir = Path(run_dir) / "strategizer_notes"
 
-        # Wall-clock budget check
+        # Soft budget warnings — appended to context, run is NOT stopped
+        budget_warnings: list[dict] = []
         budget = state.get("budget_seconds")
         start = state.get("start_time")
         if budget is not None and start is not None:
             elapsed = time.time() - start
             if elapsed >= budget:
-                return Command(
-                    goto=END,
-                    update={
-                        "messages": [],
-                        "done": True,
-                        "last_report": state.get("last_report") or "Budget exhausted.",
-                    },
-                )
+                budget_warnings.append({
+                    "role": "user",
+                    "content": f"Warning: time budget exceeded ({elapsed:.0f}s elapsed / {budget:.0f}s budget). Wrap up as quickly as possible.",
+                })
 
-        # Eval budget check
         eval_budget = state.get("eval_budget")
         evals_used = state.get("evals_used", 0)
         if eval_budget is not None and evals_used >= eval_budget:
-            return Command(
-                goto=END,
-                update={
-                    "messages": [],
-                    "done": True,
-                    "last_report": state.get("last_report") or "Eval budget exhausted.",
-                },
-            )
+            budget_warnings.append({
+                "role": "user",
+                "content": f"Warning: eval budget exceeded ({evals_used} used / {eval_budget} budget). Do not run further evaluations.",
+            })
 
         self._route.clear()
 
-        text = self.adapter.invoke(_to_adapter_messages(state["messages"]))
+        messages = _to_adapter_messages(state["messages"]) + budget_warnings
+        text = self.adapter.invoke(messages)
         ai_msg = AIMessage(content=text)
 
         route = self._route
@@ -248,7 +247,25 @@ class StrategizerNode(AgentNode):
                 goto=self._name,
                 update={"messages": [ai_msg, HumanMessage(content=str(answer))]},
             )
-        # "done" or no routing tool called → end run
+
+        # "done" or no routing tool called — enforce deliverables before accepting
+        missing = self._missing_deliverables(state)
+        if missing:
+            missing_list = "\n".join(f"- {p}" for p in missing)
+            return Command(
+                goto=self._name,
+                update={
+                    "messages": [
+                        ai_msg,
+                        HumanMessage(content=(
+                            f"Run cannot complete: the following required deliverables "
+                            f"are missing from the workspace:\n{missing_list}\n"
+                            f"Please delegate their creation before calling Done."
+                        )),
+                    ],
+                },
+            )
+
         summary = route.get("summary") or text
         return Command(
             goto=END,

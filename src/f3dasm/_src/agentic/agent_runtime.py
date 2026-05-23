@@ -103,6 +103,7 @@ class AgenticRun:
         self._eval_budget = (
             eval_budget if eval_budget is not None else cfg.get("eval_budget")
         )
+        self._required_deliverables = cfg.get("required_deliverables") or []
 
         # budget from config is HH:MM:SS string or seconds float
         if budget is not None:
@@ -169,6 +170,7 @@ class AgenticRun:
             evals_used=0,
             start_time=start_time,
             return_to=None,
+            required_deliverables=getattr(self, "_required_deliverables", None) or None,
         )
 
         log.info("Invoking graph")

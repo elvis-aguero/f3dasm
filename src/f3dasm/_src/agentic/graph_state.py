@@ -24,6 +24,7 @@ class AgenticState(MessagesState):
     evals_used: int              # running count across delegations
     start_time: float | None     # time.time() at run start, for budget enforcement
     return_to: str | None
+    required_deliverables: list | None  # paths relative to study_dir; checked before Done accepted
 
 
 # ---------------------------------------------------------------------------
