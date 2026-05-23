@@ -1,11 +1,8 @@
 # Black-Box Optimisation: 8-Dimensional Continuous Function
 
-I have a real-valued function over an 8-dimensional continuous domain that I
-want to minimise. I know it has multiple local minima but I do not know their
-locations, values, or count. I have not solved this before.
+Find the point **x ∈ [−5, 5]⁸** that minimises f(x), and report its coordinates and objective value.
 
-**Goal: find the point x ∈ [−5, 5]⁸ that minimises f(x), and report its
-coordinates and objective value.**
+The function has multiple local minima. Their locations, values, and count are unknown.
 
 ---
 
@@ -36,32 +33,13 @@ sys.path.insert(0, "workspace")
 from evaluator import evaluate   # evaluate(x: list[float]) -> float
 ```
 
-`evaluate(x)` takes a list or array of exactly 8 floats and returns a scalar.
-All inputs must lie within the bounds above. Behaviour outside [−5, 5]⁸ is
-undefined.
-
-The function is **deterministic** — identical inputs always return identical
-outputs.
+`evaluate(x)` takes a list or array of exactly 8 floats and returns a scalar. All inputs must lie within the bounds above; behaviour outside [−5, 5]⁸ is undefined. The function is **deterministic**.
 
 ---
 
-## Budget
-
-**500 function evaluations.** The function is cheap to evaluate; the
-constraint is the evaluation count, not wall time. Naive uniform sampling
-across 8 dimensions will not reliably find the global minimum within this
-budget. A strategy that adapts where it samples based on observed values will
-do substantially better.
-
----
-
-## What to deliver
-
-Write your findings to `runs/<timestamp>/strategizer_notes/` as you go, and
-report in `solution.md`:
+## What to report
 
 - The best point (x1, …, x8) found and its f(x) value
-- The total number of evaluations used
+- Total number of evaluations used
 - The search strategy used and why
-- Evidence the solution is not a local minimum (e.g. multiple restarts,
-  deliberate exploration of distant regions)
+- Evidence the reported point is not a local minimum (e.g. multiple restarts, deliberate exploration of distant regions)

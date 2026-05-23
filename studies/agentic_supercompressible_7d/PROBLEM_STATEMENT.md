@@ -1,13 +1,6 @@
-# Problem Briefing: Supercompressible Metamaterial Design (7D)
+# Supercompressible Metamaterial Design (7D)
 
-I am a researcher running an agentic optimization system against a structural
-mechanics problem I have not solved before. This document is your complete
-starting point. Read it carefully, then use Ask() to clarify any genuine
-ambiguities before forming hypotheses.
-
----
-
-## What I am trying to do
+## Background
 
 I have a conical deployable mast made of PLA (polylactic acid), a brittle
 polymer. When compressed along its axis, most geometries cause the mast to
