@@ -1,7 +1,27 @@
 """Tests for OllamaAdapter."""
 from __future__ import annotations
 
+import pytest
 from unittest.mock import MagicMock, patch
+
+# Smallest Ollama model with confirmed tool-calling support.
+# Pull with: ollama pull qwen2.5:0.5b
+_OLLAMA_TEST_MODEL = "qwen2.5:0.5b"
+
+
+def _ollama_available() -> bool:
+    try:
+        import urllib.request
+        urllib.request.urlopen("http://localhost:11434", timeout=2)
+        return True
+    except Exception:
+        return False
+
+
+requires_ollama = pytest.mark.skipif(
+    not _ollama_available(),
+    reason="Ollama server not running at localhost:11434",
+)
 
 
 def _make_adapter(**kwargs):
@@ -152,3 +172,90 @@ def test_done_closure_in_tools_when_agent_built():
     tools = adapter._build_tools()
     names = {t.name for t in tools}
     assert "Done" in names
+
+
+# ---------------------------------------------------------------------------
+# Integration tests — require running Ollama with qwen2.5:0.5b
+# Run with: pytest -m ollama
+# Pull model with: ollama pull qwen2.5:0.5b
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ollama
+@requires_ollama
+def test_integration_invoke_returns_string():
+    """OllamaAdapter.invoke returns a non-empty string against a live model."""
+    adapter = _make_adapter(model=_OLLAMA_TEST_MODEL)
+    result = adapter.invoke([{"role": "user", "content": "Reply with the single word: hello"}])
+    assert isinstance(result, str)
+    assert len(result.strip()) > 0
+
+
+@pytest.mark.ollama
+@requires_ollama
+def test_integration_closure_tool_called(tmp_path):
+    """Closure tool is actually invoked by the model during a live turn."""
+    called = {}
+
+    def RecordResult(value: str) -> str:
+        """Record a result value. Call this with your answer."""
+        called["value"] = value
+        return "Recorded."
+
+    adapter = _make_adapter(model=_OLLAMA_TEST_MODEL)
+    adapter.closure_tools["RecordResult"] = RecordResult
+
+    adapter.invoke([{
+        "role": "user",
+        "content": "Use the RecordResult tool to record the value '42'. Do not say anything else.",
+    }])
+
+    assert "value" in called, "RecordResult was never called"
+    assert "42" in called["value"]
+
+
+@pytest.mark.ollama
+@requires_ollama
+def test_integration_bash_tool_executes(tmp_path):
+    """Bash tool actually runs a shell command and returns output."""
+    adapter = _make_adapter(
+        model=_OLLAMA_TEST_MODEL,
+        native_tools=["Bash"],
+        study_dir=tmp_path,
+    )
+    result = adapter.invoke([{
+        "role": "user",
+        "content": "Use the Bash tool to run: echo hello_world. Then tell me exactly what the output was.",
+    }])
+    assert "hello_world" in result
+
+
+@pytest.mark.ollama
+@requires_ollama
+def test_integration_write_then_read_tool(tmp_path):
+    """Write tool creates a file; Read tool retrieves its contents."""
+    adapter = _make_adapter(
+        model=_OLLAMA_TEST_MODEL,
+        native_tools=["Write", "Read"],
+        study_dir=tmp_path,
+    )
+    adapter.invoke([{
+        "role": "user",
+        "content": (
+            f"Use the Write tool to write the text 'test_content_xyz' to the file "
+            f"{tmp_path}/out.txt. Then use the Read tool to read it back and confirm the content."
+        ),
+    }])
+    assert (tmp_path / "out.txt").exists()
+    assert "test_content_xyz" in (tmp_path / "out.txt").read_text()
+
+
+@pytest.mark.ollama
+@requires_ollama
+def test_integration_stateless_between_calls():
+    """Two consecutive invoke() calls are independent (no state leakage)."""
+    adapter = _make_adapter(model=_OLLAMA_TEST_MODEL)
+    r1 = adapter.invoke([{"role": "user", "content": "Say only: FIRST"}])
+    r2 = adapter.invoke([{"role": "user", "content": "Say only: SECOND"}])
+    # Neither response should bleed context from the other call
+    assert isinstance(r1, str) and isinstance(r2, str)

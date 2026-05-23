@@ -117,7 +117,8 @@ source = ["src"]
 addopts = "--cov-report term --cov-report html --cov-config=.coveragerc --cov=f3dasm --cov-fail-under=85.00"
 markers = [
   "smoke",
-  "requires_dependency(name): mark the test as it requires a certain dependency"
+  "requires_dependency(name): mark the test as it requires a certain dependency",
+  "ollama: marks tests that require a running Ollama server (skip with -m 'not ollama')"
 ]
 minversion = "6.0"
 pythonpath = [".", "src"]
