@@ -4,210 +4,138 @@
 
 ## Summary
 
-`agentic-f3dasm` adds a single CLI entry point on top of f3dasm:
+`agentic-f3dasm` adds an LLM-orchestrated loop on top of f3dasm:
 
 ```bash
 uv run python -m f3dasm.agentic <study-dir>
 ```
 
-Inside `<study-dir>` you place one file — `PROBLEM_STATEMENT.md` — describing the problem, the design parameters, the objective, and any resources the agent should use. The runtime then orchestrates a graph of LLM agent sessions that collectively read, plan, hypothesise, write and execute code, and return a structured deliverable.
+Drop a `PROBLEM_STATEMENT.md` into a study directory and the runtime will orchestrate a graph of LLM agents that read, plan, write and execute Python code, and return a structured result. The only required input is a natural-language problem description.
 
-The default two-node topology is:
+The default topology is two nodes:
 
-- a **Strategizer** that reads the study tree, asks the user 1–3 clarifying questions, forms a strategy, and delegates concrete tasks;
+- a **Strategizer** that reads the study tree, forms hypotheses, delegates concrete tasks, and signals `Done` when results are satisfactory;
 - an **Implementer** that receives each task, writes and executes Python inside `workspace/`, and returns a structured `## Report`.
-
-The runtime records every delegation as a git commit against an isolated per-run repository, captures per-turn JSONL transcripts, and assembles a deliverable folder at the end.
-
----
-
-## Statement of need
-
-f3dasm is a Python framework for the canonical DOE loop: *define a domain → sample → evaluate → optimise → repeat*. The framework itself is powerful but requires a researcher who can configure a `Domain`, write a `DataGenerator`, pick a sampler, decide when to stop, and interpret results.
-
-`agentic-f3dasm` is the smallest possible bridge from a `PROBLEM_STATEMENT.md` to a result. The natural unit of work is the briefing a researcher would give a graduate-student assistant — a problem statement, constraints, available resources, and a goal. The agent reads, hypothesises, writes its own code, executes it, falsifies its own claims, and produces a self-contained folder that another human can audit and reproduce without re-running the agent.
 
 ---
 
 ## Architecture
 
-### Agent class hierarchy
+### LangGraph under the hood
 
-Every node in the run topology is a Python class that inherits from `Agent`. You declare what you want the agent to do by setting class-level attributes — no factory lambdas, no dataclasses, no role strings.
+The runtime compiles an `Agent`/`Graph` spec into a LangGraph `StateGraph`. Each agent definition becomes a LangGraph node; routing is handled by `Command(goto=...)` driven by the closure tools the agent calls. `AgenticState` (a `MessagesState` subclass) carries messages, budget counters, and routing metadata across turns.
+
+Users never interact with LangGraph directly — the `Agent`/`Graph`/`Edge` API is the only surface.
+
+### Agent definitions
+
+Every node in the topology is a Python class that subclasses `Agent`. You configure it with class-level attributes:
 
 ```python
-from f3dasm.agentic import Agent, Graph, Edge, AgenticRun
+from f3dasm.agentic.agents import StrategizerAgent, ImplementerAgent
+from f3dasm.agentic import Edge, Graph, AgenticRun
 
-class StrategizerAgent(Agent):
-    system_prompt = "You coordinate the search..."
-    tools = frozenset({"Done", "WriteMarkdown", "ReadNote"})
-    reset_on_checkpoint = False   # persist across checkpoints
+class MyOrchestrator(StrategizerAgent):
+    system_prompt = "You coordinate the search."
+    tools = frozenset({"Done", "Ask", "WriteMarkdown", "ReadNote"})
+    reset_on_checkpoint = False
 
-class ImplementerAgent(Agent):
-    system_prompt = "You execute tasks in the workspace..."
-    tools = frozenset({"Bash", "Read", "Write", "Edit", "Glob", "Grep"})
-    # reset_on_checkpoint = True  (default)
+class MyWorker(ImplementerAgent):
+    model = "claude-haiku-4-5-20251001"
+    tools = frozenset({"Bash", "Read", "Write", "Edit", "Glob", "Grep", "ReportEvals"})
 
 graph = Graph(
-    nodes={
-        "strategizer": StrategizerAgent(),
-        "implementer": ImplementerAgent(model="claude-haiku-4-5-20251001"),
-    },
-    edges=(Edge("strategizer", "implementer"),),
-    entry="strategizer",   # receives the initial briefing
+    nodes={"orch": MyOrchestrator(), "worker": MyWorker()},
+    edges=(Edge("orch", "worker"),),
+    entry="orch",
 )
+
+AgenticRun(study_dir="studies/my_problem", graph=graph).execute()
 ```
 
-At runtime, `AgenticRun` inspects the `Graph` and:
-- gives nodes **with outgoing edges** a planner session (orchestration tools injected)
-- gives nodes **without outgoing edges** an executor session (native backend tools)
+`StrategizerAgent` and `ImplementerAgent` are the library's canonical defaults (in `f3dasm.agentic.agents`). Users subclass them — or subclass `Agent` directly with `role = "strategizer"` or `role = "implementer"` — wherever is convenient: a run script, a notebook, or a dedicated file.
 
-### Tool system — three categories
+### Agent class attributes
 
-`Agent.tools` is a `frozenset[str]` of canonical tool names. **Default is `frozenset()` — no tools (opt-in, conservative).** The names fall into two categories you declare, plus one category that is never declared:
+| Attribute | Type | Default | Description |
+|---|---|---|---|
+| `system_prompt` | `str` | `""` | System prompt for this node's LLM session |
+| `tools` | `frozenset[str]` | `frozenset()` | Declared tool names (opt-in, conservative) |
+| `role` | `str` | `"implementer"` | `"strategizer"` or `"implementer"` — controls which routing closures are injected |
+| `backend` | `str \| None` | `None` | Per-node backend override (`"claude"` or `"ollama"`); `None` inherits run-level config |
+| `model` | `str \| None` | `None` | Model identifier; `None` inherits run-level config |
+| `reset_on_checkpoint` | `bool` | `True` | Whether to clear conversation history between delegations |
+| `description` | `str \| None` | `None` | Human-readable description (documentation only) |
 
-#### 1. Native backend tools — declared in `Agent.tools`
-
-Tools executed natively by the backend (Claude SDK built-ins or Ollama bash):
-
-| Canonical name | Claude SDK | Ollama |
-|---|---|---|
-| `"Bash"` | `Bash` | bash subprocess |
-| `"Read"` | `Read` | — (use Bash) |
-| `"Write"` | `Write` | — (use Bash) |
-| `"Edit"` | `Edit` | — (use Bash) |
-| `"MultiEdit"` | `MultiEdit` | — (use Bash) |
-| `"Glob"` | `Glob` | — (use Bash) |
-| `"Grep"` | `Grep` | — (use Bash) |
-
-#### 2. Protocol closure tools — declared in `Agent.tools`
-
-Python callables built by the f3dasm runtime and passed to the session:
-
-| Canonical name | What it does |
-|---|---|
-| `"Done"` | Signal end of run with a summary |
-| `"WriteMarkdown"` | Write a `.md` note to `strategizer_notes/` |
-| `"ReadNote"` | Read any file from the study tree (path-restricted) |
-
-#### 3. Topology-injected tools — **NEVER declared in `Agent.tools`**
-
-The runtime injects these automatically based on the graph. Declaring them in `Agent.tools` has no effect.
-
-| Tool | Injected when |
-|---|---|
-| `"Delegate"` | Node has outgoing edges |
-| `"Parallel"` | Node has outgoing edges |
-| `"Debate"` | Node has outgoing edges |
-| `"Retry"` | Node has outgoing edges |
-| `"Ask"` | Node is the entry node (talks to the human operator) |
-| `"FollowUp"` | Node has incoming edges (asks one clarifying question back) |
-
-### Graph and topology
+### Graph and Edge
 
 ```python
 Graph(
     nodes: dict[str, Agent],   # name → Agent instance
     edges: tuple[Edge, ...],   # directed delegation edges
-    entry: str,                # which node gets the initial briefing
+    entry: str,                # node that receives the initial briefing (required)
+)
+
+Edge(
+    source: str,               # delegating node name
+    target: str,               # receiving node name
+    preamble: str = "",        # text prepended to the task message on this edge
 )
 ```
 
-An agent with outgoing edges can `Delegate` to any of its named targets. An agent with no outgoing edges is a pure executor — it receives tasks and returns `## Report` blocks. Loops and multi-agent fan-outs are supported.
+`Graph.entry` has no default — it must be declared explicitly.
 
-```python
-# Three-node example: one coordinator, two specialists
-graph = Graph(
-    nodes={
-        "coordinator": CoordinatorAgent(),
-        "sampler": SamplerAgent(),
-        "evaluator": EvaluatorAgent(),
-    },
-    edges=(
-        Edge("coordinator", "sampler"),
-        Edge("coordinator", "evaluator"),
-    ),
-    entry="coordinator",
-)
-```
+**Multi-target delegation:** a strategizer with multiple outgoing edges calls `Delegate(target="name", intent="...", expected_report="...")`. The `target` is validated against declared outgoing edges; an error string is returned if the name is unknown. `Edge.preamble` is injected into the task message automatically when that edge is traversed.
 
-### FollowUp protocol
+**Routing is state-carried:** when the strategizer delegates, it writes its own name as `return_to` into `AgenticState`. The implementer reads `state["return_to"]` for its `goto` — no node name is hardcoded anywhere.
 
-An executor node (with incoming edges) that needs one clarification before it can proceed can respond with:
+### Tool system
 
-```
-## FollowUp
-<single clarifying question>
-```
+`Agent.tools` is a `frozenset[str]`. **Default is `frozenset()` — no tools.** There are three categories:
 
-The runtime detects this, returns a `FOLLOW_UP from 'target': <question>` message to the delegating agent, and that agent re-calls `Delegate` with the answer embedded in the intent. This is a response-format protocol — not a live callback — so it has no SDK overhead.
+#### 1. Native backend tools — declare in `Agent.tools`
 
-### ADAS compatibility
+| Name | Claude | Ollama |
+|---|---|---|
+| `"Bash"` | SDK `Bash` | subprocess wrapper |
+| `"Read"` | SDK `Read` | `StructuredTool` wrapper |
+| `"Write"` | SDK `Write` | `StructuredTool` wrapper |
+| `"Edit"` | SDK `Edit` | `StructuredTool` wrapper |
+| `"Glob"` | SDK `Glob` | `StructuredTool` wrapper |
+| `"Grep"` | SDK `Grep` | `StructuredTool` wrapper |
 
-Every `Agent` subclass has a `forward()` method hook:
+#### 2. Protocol closure tools — declare in `Agent.tools`
 
-```python
-class MyCoordinator(Agent):
-    def forward(self) -> None:
-        """Override for inspectable Python orchestration (ADAS pattern)."""
-        ...
-```
+Python callables built by the runtime and injected into the session:
 
-`inspect.getsource(agent.forward)` returns the Python source of the topology as code — the entry point for ADAS-style meta-agents that read and rewrite orchestration logic. Tool calls are the easy LLM-driven default; `forward()` overrides are the ADAS-searchable path. Both coexist.
+| Name | Role | What it does |
+|---|---|---|
+| `"Done"` | strategizer | End the run with a summary |
+| `"Ask"` | strategizer (entry) | Ask the human operator a question |
+| `"WriteMarkdown"` | strategizer | Write a `.md` note to `runs/<ts>/strategizer_notes/` |
+| `"ReadNote"` | strategizer | Read a file from the study tree |
+| `"ReportEvals"` | implementer | Report function evaluation count for this task |
 
----
+#### 3. Topology-injected tools — **never declare in `Agent.tools`**
 
-## Method overview
+Injected automatically by the runtime based on the graph; declared in `Agent.tools` has no effect:
 
-```text
-                ┌──────────────────────────────────────────────┐
- PROBLEM_STATEMENT.md ─▶│  AgenticRun                              │
-                │  (~800 lines of Python)                  │
-                │  - classifies Agent.tools (3 categories)  │
-                │  - injects topology tools from Graph      │
-                │  - routes messages via _tool_delegate     │
-                │  - git commit per delegation              │
-                │  - checkpoint every N delegations         │
-                └──┬────────────────────────────────────┬───┘
-                   │                                    │
-        ┌──────────▼────────┐                 ┌─────────▼──────────┐
-        │  StrategizerAgent │                 │  ImplementerAgent  │
-        │  (planner session)│                 │  (executor session)│
-        │                   │  ## Task        │                    │
-        │  ReadNote         │ ──────────────▶ │  Bash / Read /     │
-        │  WriteMarkdown    │                 │  Write / Edit …    │
-        │  Done             │  ## Report      │                    │
-        │  [Ask — entry]    │ ◀────────────── │  [FollowUp — opt]  │
-        │  Delegate ──┐     │                 │                    │
-        │  Parallel   │     │                 │                    │
-        │  Debate     │     │                 │                    │
-        │  Retry      │     │                 │                    │
-        └─────────────┘     │                 └────────────────────┘
-             topology-injected                 native backend tools
-             (from Graph edges)                (declared in Agent.tools)
-```
-
-**The five non-negotiable commitments:**
-
-1. **f3dasm is first-class and pristine.** No native f3dasm modules are edited. The agentic layer ships as `from f3dasm.agentic import …`.
-2. **Composable peer topology.** Agents are peers connected by directed delegation edges. Neither is structurally privileged.
-3. **The orchestrator is plumbing.** It routes messages, runs git, and enforces the checkpoint cadence — nothing more. Strategic decisions belong to the entry agent.
-4. **Provenance and interpretability are deliverables.** Every delegation is bracketed by a git commit. The deliverable folder includes the solution, the full git log, JSONL transcripts, and the workspace.
-5. **Problem-agnostic core.** Nothing in `src/f3dasm/` carries problem-specific names, enums, or constants. Domain content lives entirely in `studies/<study>/PROBLEM_STATEMENT.md`.
+| Tool | Injected when |
+|---|---|
+| `"Delegate"` | Node has `role = "strategizer"` |
 
 ---
 
 ## Getting started
 
-### Install (with `uv`)
+### Install
 
 ```bash
-# Inside the f3dasm repo
-uv venv                              # creates ./.venv (Python ≥ 3.10)
-uv pip install -e ".[agentic]"       # editable install + agentic extras
+uv venv
+uv pip install -e ".[agentic]"
 ```
 
-The `agentic` extras installs `claude-agent-sdk`. You also need the Claude CLI binary on your `PATH` and must log in once interactively (`claude`) so the CLI can authenticate with your Anthropic account.
+The `agentic` extra installs `claude-agent-sdk`, `langchain-*`, and `langgraph`. For Claude, you also need the `claude` CLI binary on your `PATH` with an active session (`claude` once interactively to authenticate).
 
 ### Run an existing study
 
@@ -215,72 +143,57 @@ The `agentic` extras installs `claude-agent-sdk`. You also need the Claude CLI b
 uv run python -m f3dasm.agentic studies/agentic_modular_resonance
 ```
 
-`uv run` executes inside `./.venv` automatically. The entry agent will print clarifying questions on stdout and wait for your typed answers, then delegate work. When the run completes, the deliverable lives at `studies/agentic_modular_resonance/runs/<timestamp>/deliverable/`.
-
 ### Make your own study
 
 ```bash
 mkdir studies/my_problem
-cat > studies/my_problem/PROBLEM_STATEMENT.md <<'EOF'
-# My problem
-
-I want to find (x, y) in [0, 1]² that maximises f(x, y) where
-f is implemented in sim.py. Do not run more than 200 evaluations.
+cat > studies/my_problem/PROBLEM_STATEMENT.md << 'EOF'
+Find (x, y) in [0,1]² that maximises f(x,y) implemented in sim.py.
+Do not run more than 200 evaluations.
 EOF
 cp my_simulator.py studies/my_problem/sim.py
 uv run python -m f3dasm.agentic studies/my_problem
 ```
 
-### CLI flags and config.yaml
-
-```bash
-uv run python -m f3dasm.agentic <study-dir> \
-    [--model claude-haiku-4-5-20251001] \
-    [--checkpoint-every 30]
-```
-
-Or drop a `config.yaml` in the study directory:
+### config.yaml reference
 
 ```yaml
-model: claude-haiku-4-5-20251001
-backend: claude          # or: ollama
-budget: "01:00:00"       # HH:MM:SS wall-clock budget
-checkpoint_every: 30
-eval_budget: 5000        # max evaluations (if tracked in report.numbers)
+model: claude-haiku-4-5-20251001   # LLM model
+backend: claude                     # "claude" (default) or "ollama"
+budget: "01:00:00"                  # HH:MM:SS wall-clock budget (soft warning when exceeded)
+eval_budget: 5000                   # max evaluations (soft warning when exceeded)
+required_deliverables:              # files that must exist before Done is accepted
+  - workspace/replicate.py
+  - workspace/solution.md
 ```
 
-CLI flags override config values; config values override backend defaults.
+**Budgets are soft constraints.** When `budget` or `eval_budget` is exceeded, a warning is appended to the strategizer's next message context; the run continues. The strategizer is expected to wrap up.
+
+**`required_deliverables` is a hard gate.** When the strategizer calls `Done` (or produces a response with no routing tool), the runtime checks whether all listed paths exist under `study_dir/`. If any are missing, the strategizer receives an error message listing the missing files and must delegate their creation before `Done` is accepted.
 
 ---
 
 ## Python API
 
-For programmatic use or custom topologies:
-
 ```python
-from f3dasm.agentic import Agent, Graph, Edge, AgenticRun, StudyConfig
+from f3dasm.agentic import AgenticRun, Graph, Edge
+from f3dasm.agentic.agents import StrategizerAgent, ImplementerAgent
 
-class Coordinator(Agent):
-    system_prompt = "You plan the search."
-    tools = frozenset({"Done", "WriteMarkdown", "ReadNote"})
-    reset_on_checkpoint = False
+# Default graph (no custom graph needed for simple cases)
+run = AgenticRun(study_dir="studies/my_problem")
+report = run.execute()   # returns final report text
 
-class Worker(Agent):
-    system_prompt = "You run experiments."
-    tools = frozenset({"Bash", "Read", "Write", "Edit"})
+# Custom graph
+class FastWorker(ImplementerAgent):
+    model = "claude-haiku-4-5-20251001"
+    backend = "ollama"        # per-node backend override
 
 graph = Graph(
-    nodes={"coordinator": Coordinator(), "worker": Worker()},
-    edges=(Edge("coordinator", "worker"),),
-    entry="coordinator",
+    nodes={"s": StrategizerAgent(), "w": FastWorker()},
+    edges=(Edge("s", "w", preamble="Work in workspace/. Use f3dasm."),),
+    entry="s",
 )
-
-run = AgenticRun(
-    study_dir="studies/my_problem",
-    graph=graph,
-    study_config=StudyConfig(budget=timedelta(hours=1)),
-)
-deliverable = run.execute()   # returns Path to deliverable/
+AgenticRun(study_dir="studies/my_problem", graph=graph).execute()
 ```
 
 ### Key public symbols
@@ -288,20 +201,16 @@ deliverable = run.execute()   # returns Path to deliverable/
 | Symbol | Description |
 |---|---|
 | `Agent` | Base class for all agent nodes |
+| `StrategizerAgent` | Default orchestrator (role="strategizer") |
+| `ImplementerAgent` | Default worker (role="implementer") |
 | `Graph` | Directed agent topology |
-| `Edge` | Directed delegation edge |
-| `AgenticRun` | Orchestrator entry point |
-| `StudyConfig` | Config loaded from `config.yaml` |
-| `Delegation` | Round-trip task+report envelope |
-| `Task` | Request half of a delegation |
-| `Report` | Parsed response half of a delegation |
-| `Backend` | Frozen bundle: `session_factory`, `preflight`, `name`, `default_model` |
-| `CLAUDE_BACKEND` | Default Claude CLI backend |
-| `register_backend` | Register a custom named backend |
-| `parallel` | Fan-out firing primitive |
-| `retry` | Retry firing primitive |
-| `debate` | Debate firing primitive |
-| `LookupDataGenerator` | Nearest-neighbour pool evaluator (Implementer-usable) |
+| `Edge` | Directed delegation edge with optional `preamble` |
+| `AgenticRun` | Run entry point |
+| `AgenticState` | LangGraph state schema |
+| `ClaudeAdapter` | Backend adapter using claude-agent-sdk |
+| `OllamaAdapter` | Backend adapter using LangGraph + Ollama |
+| `LookupDataGenerator` | Nearest-neighbour pool evaluator |
+| `AgenticOptimizer` | f3dasm `Optimizer` interface wrapper |
 
 ---
 
@@ -309,39 +218,35 @@ deliverable = run.execute()   # returns Path to deliverable/
 
 ### Claude (default)
 
-Uses the Claude Agent SDK and the `claude` CLI binary. Both planner and executor sessions are backed by `_ClaudeAgentSession`, which combines native SDK tools and an in-process MCP server for closure tools in a single session.
-
-Canonical→Claude tool name mapping: all names are identical (`Bash`→`Bash`, `Read`→`Read`, etc.).
+Uses the claude-agent-sdk (`claude-agent-sdk` package). `ClaudeAdapter` wraps a `query()` call with an MCP server for closure tools. Native tools are passed as SDK tool names.
 
 ### Ollama
 
-Uses a locally-running Ollama server. Only `"Bash"` is supported as a native tool; file I/O should be done via bash commands (`cat`, `echo`, `find`, `grep`). Closure tools (protocol + topology) work identically to Claude.
+Uses a locally-running Ollama server via `ChatOpenAI(base_url="http://localhost:11434/v1")` and LangGraph's `create_react_agent`. All native tools are custom `StructuredTool` wrappers (no external deps beyond `langchain-core`). Closure tools work identically to Claude.
 
 ```yaml
-# config.yaml
 backend: ollama
-model: qwen2.5:7b
+model: qwen2.5:7b   # any Ollama model with tool-calling support
 ```
 
-### Custom backends
+Test with the smallest confirmed tool-calling model: `ollama pull qwen2.5:0.5b`.
 
-```python
-from f3dasm.agentic import Backend, register_backend
-
-my_backend = Backend(
-    name="my-llm",
-    default_model="my-model-v1",
-    session_factory=my_session_factory,
-    preflight=my_preflight_fn,
-)
-register_backend("my-llm", my_backend)
-```
-
-`session_factory` signature: `(*, system_prompt, model, native_tools, closure_tools, study_dir) -> AgentSession`
+Per-node backend override: set `backend = "ollama"` on an individual `Agent` subclass to use Ollama for that node while the rest use Claude.
 
 ---
 
-## Repository layout (agentic-only)
+## Safeguards
+
+- **Strategizer prompts** address anchoring bias, confirmation bias, sycophancy, and premature convergence.
+- **Implementer prompts** enforce a three-stage protocol (Restate / Inventory / Plan) before code execution and a structured `## Report` block on output.
+- **Corrective retry**: if the implementer's response fails format checks, one retry fires with a `REFLECT:` diagnosis.
+- **Soft budget warnings**: when wall-clock or eval budgets are exceeded, the strategizer is warned in-context; no hard stop.
+- **Required deliverables gate**: configurable list of files that must exist before `Done` is accepted.
+- **`ReportEvals`**: implementer closure that writes eval counts back into `AgenticState.evals_used`; surfaced in `solution.md` metadata.
+
+---
+
+## Repository layout
 
 ```text
 src/f3dasm/agentic/
@@ -349,64 +254,46 @@ src/f3dasm/agentic/
     __main__.py            # CLI entry point
 
 src/f3dasm/_src/agentic/
-    agent_runtime.py       # AgenticRun orchestrator, tool classification,
-                           # _tool_delegate, FollowUp detection, git helpers,
-                           # checkpoint logic, transcript recording
-    agent_prompts.py       # all system prompts and template constants
+    agents.py              # StrategizerAgent, ImplementerAgent, _default_graph
+    agent_runtime.py       # AgenticRun (config loading, execute(), _make_adapter)
+    agent_prompts.py       # system prompts and template constants
+    graph_builder.py       # build_graph (compiles Agent/Graph spec → LangGraph)
+    graph_state.py         # AgenticState
+    nodes.py               # StrategizerNode, ImplementerNode (LangGraph nodes)
     backends/
-        base.py            # Agent, Graph, Edge, Backend, AgentSession,
-                           # NATIVE_TOOL_NAMES, PROTOCOL_CLOSURE_NAMES,
-                           # _TOPOLOGY_INJECTED_TOOL_NAMES
-        claude.py          # _ClaudeAgentSession, CLAUDE_BACKEND,
-                           # canonical→Claude tool mapping
-        ollama.py          # _OllamaAgentSession, OLLAMA_BACKEND,
-                           # canonical→Ollama mapping
+        base.py            # Agent, Edge, Graph
+        claude.py          # ClaudeAdapter
+        ollama.py          # OllamaAdapter
     lookup.py              # LookupDataGenerator
-    optimizer.py           # AgenticOptimizer (f3dasm Optimizer interface)
-    primitives.py          # parallel, retry, debate (Python-level)
-    stores.py              # AnalysisBase, TaskRegistry, ContextSlice
+    optimizer.py           # AgenticOptimizer
 
 tests/agentic/
-    test_agent_runtime.py
+    test_nodes.py
+    test_graph_builder.py
+    test_graph_state.py
+    test_agentic_run.py
     test_agent_prompts.py
+    test_claude_adapter.py
+    test_ollama_adapter.py
     test_lookup.py
-    test_ollama_backend.py
 
 studies/<study>/
     PROBLEM_STATEMENT.md   # the only required file
-    config.yaml            # optional: model, backend, budget, …
-    workspace/             # Implementer scratch (persists across runs)
-    runs/<ts>/             # one folder per run
-        .git/              # provenance (isolated per-run bare repo)
-        strategizer_notes/ # planner .md lab notebook
-        transcripts/       # JSONL per-turn transcripts
+    config.yaml            # optional: model, backend, budget, required_deliverables, …
+    workspace/             # implementer scratch space (persists across runs)
+    runs/<ts>/
+        solution.md        # final report + run metadata
         run.log
-        deliverable/
-            solution.md
-            replication/   # mirror of workspace/
-            git_log.txt
-            transcripts/
-            run.log
+        strategizer_notes/ # planner .md lab notebook
 ```
 
 ---
 
-## Built-in safeguards
-
-- **Strategizer prompts** name and mitigate anchoring bias, confirmation bias, availability bias, role drift, sycophancy, and premature convergence.
-- **Implementer prompts** enforce a SelfAI-style three-stage reasoning protocol (Restate / Inventory / Plan) before any code execution, and a BORA-style structured `## Report` block on output.
-- **One-shot corrective retry** fires when the report can't be parsed; a Reflexion-style `REFLECT:` diagnostic surfaces if the retry also fails.
-- **FollowUp protocol** gives executors a single clarifying question back to the delegating agent before committing to an approach.
-- **Budget enforcement**: wall-clock (`budget`) and evaluation-count (`eval_budget`) limits checked before every delegation.
-- **Git provenance**: every delegation is bracketed by a git commit so any state can be reproduced.
-
----
-
-## Studies in this repo
+## Studies
 
 | Study | Description |
 |---|---|
-| `agentic_modular_resonance` | Two-parameter integer optimisation: maximise `ord(k, m) / ln(m)` over `k ∈ [2,50]`, `m ∈ [1000,100000]`. Uses f3dasm `Domain` + `DataGenerator`. Brute-force confirmed optimum: `(k=6, m=99991, resonance ≈ 8685)`. |
+| `agentic_modular_resonance` | Two-parameter integer optimisation: maximise `ord(k,m)/ln(m)` over `k∈[2,50]`, `m∈[1000,100000]`. Uses f3dasm `Domain`+`DataGenerator`. Confirmed optimum: `k=6, m=99991, resonance≈8685`. |
 | `agentic_black_box_8d` | 8-dimensional black-box optimisation with unknown landscape. |
 | `agentic_supercompressible_3d` | Supercompressible metamaterial design (Bessa 2019 benchmark, 3D). |
 | `agentic_supercompressible_7d` | Same benchmark, 7D parameter space. |
@@ -417,25 +304,16 @@ studies/<study>/
 ## Authorship
 
 - **Elvis Aguero** (`elvis_alexander_aguero_vera@brown.edu`) — design, architecture, implementation.
-- Bessa Research Group, Brown University — context and host project.
-
----
-
-## Community support
-
-- **Architecture questions / bug reports:** open an issue on [`f3dasm`](https://github.com/bessagroup/f3dasm) with the prefix `[agentic]` in the title.
-- **Design proposals:** include a citation from `docs/specs/literature-map.md` where possible.
+- Bessa Research Group, Brown University.
 
 ---
 
 ## License
 
-`agentic-f3dasm` inherits the host project's **BSD-3-Clause** license. See `LICENSE` at the repository root.
+Inherits the host project's **BSD-3-Clause** license. See `LICENSE` at the repository root.
 
 ---
 
 ## Status
 
-This is the **v2 API of agentic-f3dasm**: class-based `Agent` hierarchy, declarative `Graph` topology, unified `Backend.session_factory`, and a three-category tool system. It has been exercised end-to-end against the `agentic_modular_resonance` study with Haiku 4.5; the deliverable folder is reproducible via the agent-written `replicate.py`, and an independent brute-force solver agrees with the agent's answer on that benchmark.
-
-Planned next: (1) hypothesis-log enforcement gate before `Done()` may fire; (2) cost monitoring; (3) ADAS-style meta-agent that reads and rewrites `Agent.forward()` topology via `inspect.getsource`; (4) multi-agent parallel topologies. See `docs/specs/architecture.md` for the full roadmap.
+This is the **v2 API**: class-based `Agent` hierarchy, declarative `Graph`/`Edge` topology, LangGraph `StateGraph` orchestration, and unified Claude/Ollama adapters. Exercised end-to-end against `agentic_modular_resonance` with Haiku 4.5; the deliverable folder is reproducible via the agent-written `replicate.py`.
