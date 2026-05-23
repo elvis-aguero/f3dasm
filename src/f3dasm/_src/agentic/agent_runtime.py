@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import logging
+import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml  # available via hydra-core
 from langchain_core.messages import HumanMessage
 
-from .agent_prompts import IMPLEMENTER_SYSTEM_PROMPT, STRATEGIZER_SYSTEM_PROMPT
+from .agent_prompts import (
+    IMPLEMENTER_SYSTEM_PROMPT,
+    RUN_PATHS_PREAMBLE_TEMPLATE,
+    STRATEGIZER_SYSTEM_PROMPT,
+    WORKSPACE_PREAMBLE_TEMPLATE,
+)
 from .backends.base import Agent, Edge, Graph
 from .backends.claude import ClaudeAdapter
 from .graph_builder import build_graph
@@ -63,6 +72,28 @@ def _default_graph() -> Graph:
     )
 
 
+def _load_study_config(study_dir: Path) -> dict:
+    """Read study_dir/config.yaml if present; return empty dict otherwise."""
+    cfg_path = study_dir / "config.yaml"
+    if not cfg_path.exists():
+        return {}
+    with cfg_path.open() as f:
+        return yaml.safe_load(f) or {}
+
+
+def _parse_budget_str(value) -> float | None:
+    """Parse budget: float seconds passthrough, or 'HH:MM:SS' string."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    parts = str(value).split(":")
+    if len(parts) == 3:
+        h, m, s = parts
+        return int(h) * 3600 + int(m) * 60 + int(s)
+    return float(value)
+
+
 class AgenticRun:
     """Run an agentic loop over a study directory using LangGraph.
 
@@ -76,6 +107,8 @@ class AgenticRun:
         LLM model identifier.  Defaults to ``DEFAULT_MODEL``.
     budget : float, optional
         Time budget in seconds.  ``None`` means unlimited.
+    eval_budget : int, optional
+        Maximum function evaluations across all delegations.
     """
 
     def __init__(
@@ -83,16 +116,28 @@ class AgenticRun:
         study_dir: Path,
         *,
         graph: Graph | None = None,
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
         budget: float | None = None,
+        eval_budget: int | None = None,
     ) -> None:
         self.study_dir = Path(study_dir)
-        self._model = model
-        self._budget = budget
-        self._graph_spec = graph or _default_graph()
-        self._graph = build_graph(
-            self._graph_spec, self._make_adapter, study_dir=self.study_dir
+        cfg = _load_study_config(self.study_dir)
+
+        self._model = model or cfg.get("model") or DEFAULT_MODEL
+        self._eval_budget = (
+            eval_budget if eval_budget is not None else cfg.get("eval_budget")
         )
+
+        # budget from config is HH:MM:SS string or seconds float
+        if budget is not None:
+            self._budget = budget
+        elif "budget" in cfg:
+            self._budget = _parse_budget_str(cfg["budget"])
+        else:
+            self._budget = None
+
+        self._graph_spec = graph or _default_graph()
+        self._run_dir = None  # set in execute()
 
     def execute(self) -> str:
         """Run the agentic loop; return the final report text.
@@ -107,6 +152,33 @@ class AgenticRun:
             )
         problem = problem_path.read_text()
 
+        # Create run directory
+        ts = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S")
+        run_dir = self.study_dir / "runs" / ts
+        notes_dir = run_dir / "strategizer_notes"
+        notes_dir.mkdir(parents=True, exist_ok=True)
+        self._run_dir = run_dir
+
+        # Set up run.log
+        log = logging.getLogger(f"f3dasm.agentic.{ts}")
+        log.setLevel(logging.INFO)
+        handler = logging.FileHandler(run_dir / "run.log")
+        handler.setFormatter(
+            logging.Formatter(
+                "[%(asctime)s] %(levelname)s %(message)s",
+                datefmt="%H:%M:%S",
+            )
+        )
+        log.addHandler(handler)
+        log.info(f"Run starting: model={self._model}, study={self.study_dir}")
+
+        start_time = time.time()
+
+        # Build the graph now (after _run_dir is set) so _make_adapter sees it
+        graph = build_graph(
+            self._graph_spec, self._make_adapter, study_dir=self.study_dir
+        )
+
         config: dict[str, Any] = {"configurable": {"thread_id": str(uuid.uuid4())}}
         initial_state = AgenticState(
             messages=[HumanMessage(content=problem)],
@@ -115,15 +187,61 @@ class AgenticRun:
             last_report=None,
             total_delegations=0,
             budget_seconds=self._budget,
+            run_dir=str(run_dir),
+            eval_budget=self._eval_budget,
+            evals_used=0,
+            start_time=start_time,
         )
-        result = self._graph.invoke(initial_state, config=config)
-        return result.get("last_report") or ""
+
+        log.info("Invoking graph")
+        result = graph.invoke(initial_state, config=config)
+        report = result.get("last_report") or ""
+        evals = result.get("evals_used", 0)
+
+        # Write solution.md
+        solution_path = run_dir / "solution.md"
+        now_ts = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
+        solution_path.write_text(
+            f"# Solution\n\n"
+            f"{report}\n\n"
+            f"## Run metadata\n\n"
+            f"- timestamp: {now_ts}\n"
+            f"- model: {self._model}\n"
+            f"- total_delegations: {result.get('total_delegations', 0)}\n"
+            f"- evals_used: {evals}\n"
+            f"- run_dir: {run_dir}\n"
+        )
+        log.info(f"Run complete. Evals used: {evals}. solution.md written.")
+        log.removeHandler(handler)
+        handler.close()
+
+        return report
 
     def _make_adapter(self, name: str, agent: Agent) -> ClaudeAdapter:
         native = [t for t in agent.tools if t in _CLAUDE_NATIVE_TOOLS]
+        run_dir = self._run_dir
+        workspace_dir = self.study_dir / "workspace"
+
+        if run_dir and hasattr(self._graph_spec, "outgoing") and self._graph_spec.outgoing(name):
+            # Strategizer: inject run paths preamble
+            notes_dir = Path(run_dir) / "strategizer_notes"
+            preamble = RUN_PATHS_PREAMBLE_TEMPLATE.format(
+                study_dir=self.study_dir,
+                notes_dir=notes_dir,
+            )
+            system_prompt = preamble + agent.system_prompt
+            cwd = self.study_dir
+        else:
+            # Implementer: inject workspace preamble
+            preamble = WORKSPACE_PREAMBLE_TEMPLATE.format(
+                workspace_dir=workspace_dir,
+            )
+            system_prompt = preamble + agent.system_prompt
+            cwd = workspace_dir
+
         return ClaudeAdapter(
             model=agent.model or self._model,
-            system_prompt=agent.system_prompt,
-            study_dir=self.study_dir,
+            system_prompt=system_prompt,
+            study_dir=cwd,
             native_tools=native,
         )
