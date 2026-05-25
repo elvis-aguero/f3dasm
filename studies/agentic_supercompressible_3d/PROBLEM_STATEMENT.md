@@ -174,8 +174,6 @@ f3dasm stores data relative to the study directory.
 
 ## Success criterion
 
-Report the best design found — its parameter values, its predicted (or
-looked-up) `sigma_crit`, its `coilable` classification, and its `energy`.
-Describe the approach used and report confidence or uncertainty where available.
-If multiple high-performing designs are identified, include them for trade-off
-analysis.
+Report the best design found — its parameter values, its `sigma_crit`, its
+`coilable` classification, and its `energy`. If multiple high-performing
+designs are identified, include them for trade-off analysis.
