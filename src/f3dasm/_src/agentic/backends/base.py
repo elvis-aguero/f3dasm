@@ -151,3 +151,43 @@ class Graph:
                 return e
         return None
 
+    def to_mermaid(self) -> str:
+        """Return a Mermaid flowchart string for this graph.
+
+        Paste the output at https://mermaid.live to render it, or use
+        any Mermaid-aware renderer (GitHub markdown, Jupyter extensions, etc.).
+        """
+        lines = ["flowchart TD"]
+        for name in self.nodes:
+            agent = self.nodes[name]
+            label = f"{name}\\n{type(agent).__name__}"
+            if name == self.entry:
+                lines.append(f'    {name}(["{label}"])')
+            else:
+                lines.append(f'    {name}["{label}"]')
+        for e in self.edges:
+            if e.preamble:
+                snippet = e.preamble[:35] + ("…" if len(e.preamble) > 35 else "")
+                lines.append(f'    {e.source} -->|"{snippet}"| {e.target}')
+            else:
+                lines.append(f'    {e.source} --> {e.target}')
+        return "\n".join(lines)
+
+    def __repr__(self) -> str:
+        out_map: dict[str, list] = {}
+        for e in self.edges:
+            out_map.setdefault(e.source, []).append(e)
+        lines = [f"Graph(entry={self.entry!r})"]
+        for name in self.nodes:
+            agent = self.nodes[name]
+            tag = " [entry]" if name == self.entry else ""
+            edges = out_map.get(name, [])
+            if edges:
+                for e in edges:
+                    preamble = f"  # {e.preamble!r}" if e.preamble else ""
+                    lines.append(f"  {name}{tag}  ──▶  {e.target}{preamble}")
+                    tag = ""  # only label first edge row
+            else:
+                lines.append(f"  {name}{tag}  (leaf)")
+        return "\n".join(lines)
+
