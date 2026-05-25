@@ -139,25 +139,24 @@ converge. Of the 214 class-1 designs, only 99 have a valid `energy` value.
 
 ## Objective
 
-Find the design with the **highest `sigma_crit`** subject to **`coilable == 1`**.
-Designs with `coilable ≠ 1` are mechanically unusable regardless of their
-other output values.
+Identify the design in the **continuous** three-dimensional parameter space
+that achieves the **highest `sigma_crit`** while remaining **`coilable == 1`**.
+The 1 000-point dataset is a training resource — your deliverable is a specific
+parameter triplet anywhere in the bounded domain, not necessarily a row that
+was already simulated. The question is whether we can design a metamaterial
+that exceeds the best compressibility strength observed so far.
 
-`energy` is a secondary objective: among designs satisfying `coilable == 1`,
-higher energy absorption is preferable, but only after the primary criterion
-has been met.
+`energy` is a secondary objective: among feasible designs, higher energy
+absorption is preferable, but only after maximising `sigma_crit`.
 
 ---
 
 ## Available data
 
-No new finite-element simulations can be run. The dataset of 1 000 pre-computed
-designs is the only source of ground-truth information about the design space.
-
-The dataset was sampled using a Sobol sequence — a low-discrepancy quasi-random
-method that fills the parameter space more uniformly than pseudo-random
-sampling. Coverage is roughly uniform across the domain; no subregion has been
-preferentially sampled.
+No new finite-element simulations can be run. The 1 000 pre-computed designs
+are the only ground truth available. They were sampled via Sobol sequence —
+coverage is roughly uniform across the domain with no intentionally dense
+regions.
 
 ```
 experiment_data/experiment_data/
@@ -172,9 +171,32 @@ f3dasm stores data relative to the study directory.
 
 ---
 
+## Q&A
+
+**Is the coilable==1 region a simple shape?**
+No. The boundary between regimes is set by nonlinear buckling mechanics, is not
+analytically known, and is not convex.
+
+**What physically drives sigma_crit?**
+Euler buckling theory predicts critical load scales as d⁴ (moment of inertia)
+over effective length squared, so `ratio_d` is the dominant driver. But higher
+`ratio_d` also pushes designs into coilable==2 or coilable==0 — the feasible
+region near peak sigma_crit is narrow, and simple beam theory does not capture
+the taper and pitch interactions.
+
+**Can I propose a design not in the dataset?**
+Yes — that is the goal. Use the data to learn about the space; the answer
+should be the best design you can justify in the continuous domain.
+
+**How do I know if a proposed design is coilable==1 if I can't simulate it?**
+You cannot run new simulations, so any prediction carries uncertainty. Be
+honest about what you don't know.
+
+---
+
 ## Success criterion
 
-Report the best design found — its parameter values, its `sigma_crit`, its
-`coilable` classification, and its `energy`. Report uncertainty or confidence
-in the result where available. If multiple high-performing designs are
-identified, include them for trade-off analysis.
+Report a specific design (parameter values) predicted to be `coilable == 1`
+with the highest achievable `sigma_crit`. Include the predicted `sigma_crit`,
+why you believe the design is feasible, and a clear statement of what you
+know and what you don't.
