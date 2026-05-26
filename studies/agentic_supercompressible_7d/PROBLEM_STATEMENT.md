@@ -158,13 +158,12 @@ f3dasm stores data relative to the study directory.
 
 ---
 
-## Q&A
+## More context
 
 **Is the coilable==1 region a simple shape?**
 No. The boundary is set by nonlinear buckling mechanics, is not analytically
-known, and is not convex. The relatively high class-1 fraction (65%) means
-much of the domain is coilable, but the high-sigma_crit frontier is a narrow
-subset of that region.
+known. The relatively high class-1 fraction (65%) means much of the domain is
+coilable, but the high-sigma_crit frontier is a narrow subset of that region.
 
 **What physically drives sigma_crit?**
 Euler buckling theory links critical load to the bending stiffness of the
@@ -188,5 +187,4 @@ honest about what you don't know.
 
 Report a specific design (parameter values) predicted to be `coilable == 1`
 with the highest achievable `sigma_crit`. Include the predicted `sigma_crit`,
-why you believe the design is feasible, and a clear statement of what you
-know and what you don't.
+why you believe the design is feasible.
