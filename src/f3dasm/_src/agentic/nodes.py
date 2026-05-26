@@ -132,6 +132,12 @@ class StrategizerNode(AgentNode):
 
         def Done(summary: str) -> str:
             """Signal end of run with a summary of findings."""
+            if route.get("kind") == "delegate":
+                target = route["target"]
+                return (
+                    f"ERROR: '{target}' has not reported back yet. "
+                    f"Wait for {target}'s report before calling Done."
+                )
             route["kind"] = "done"
             route["summary"] = summary
             return "Run complete."

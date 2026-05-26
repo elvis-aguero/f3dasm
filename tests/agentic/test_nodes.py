@@ -110,6 +110,34 @@ def test_strategizer_routes_delegate_when_delegate_called():
     assert cmd.update["return_to"] == "strategizer"
 
 
+def test_done_blocked_while_delegation_pending():
+    """Done returns an error when called after Delegate in the same turn."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    results: list[str] = []
+
+    class DelegateThenDoneAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["Delegate"](
+                target="implementer",
+                intent="Run experiment.",
+                expected_report="Report back.",
+            )
+            results.append(self.closure_tools["Done"](summary="All done."))
+            return "Task delegated. Waiting for Report."
+
+    adapter = DelegateThenDoneAdapter()
+    spec = _minimal_spec()
+    node = StrategizerNode(adapter, name="strategizer", outgoing=["implementer"], spec=spec)
+    cmd = node(make_state())
+
+    # Done should have returned an error, not ended the run
+    assert "implementer" in results[0]
+    assert "not reported back" in results[0]
+    # Routing should still be to the implementer
+    assert cmd.goto == "implementer"
+
+
 def test_strategizer_increments_delegation_count():
     """Each Delegate call increments total_delegations."""
     from f3dasm._src.agentic.nodes import StrategizerNode
