@@ -39,7 +39,7 @@ When compressed axially, a given geometry will respond in one of three ways:
   not recover.
 
 Predicting which regime a given design falls into requires full nonlinear
-finite-element analysis. No closed-form criterion separates the three modes.
+finite-element analysis. A closed-form criterion that separates the three modes is not known.
 
 ---
 
