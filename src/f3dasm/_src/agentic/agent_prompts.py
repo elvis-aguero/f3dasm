@@ -913,7 +913,7 @@ stay inside the study directory you were given at the start.
 
 Examples:
 - Read a file:   bash(cmd="cat workspace/results.csv")
-- Write a file:  bash(cmd="python3 -c \\"open('workspace/out.py','w').write('...')\\"")
+- Write a file:  bash(cmd="python3 workspace/write_output.py")
 - Run a script:  bash(cmd="python3 workspace/optimise.py")
 
 ## Your output

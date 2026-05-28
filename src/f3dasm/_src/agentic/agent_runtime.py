@@ -17,12 +17,12 @@ from .agent_prompts import (
     WORKSPACE_PREAMBLE_TEMPLATE,
 )
 from .agents import ImplementerAgent, StrategizerAgent, _default_graph
-from .backends.base import Agent, Edge, Graph
+from .backends.base import Agent, Graph
 from .backends.claude import ClaudeAdapter
 from .graph_builder import build_graph
 from .graph_state import AgenticState, Delegation, Report, StudyConfig, Task
 
-# Real tool names recognised by the claude-agent-sdk as native claude CLI tools.
+# Real tool names recognised by the claude-agent-sdk as native CLI tools.
 _CLAUDE_NATIVE_TOOLS = frozenset({
     "Bash", "Edit", "Read", "Write", "Glob", "Grep",
     "Task", "WebFetch", "WebSearch", "computer",
@@ -52,7 +52,7 @@ def _load_study_config(study_dir: Path) -> dict:
     cfg_path = study_dir / "config.yaml"
     if not cfg_path.exists():
         return {}
-    with cfg_path.open() as f:
+    with cfg_path.open(encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
@@ -77,7 +77,8 @@ class AgenticRun:
     study_dir : Path
         Root of the study tree.  Must contain ``PROBLEM_STATEMENT.md``.
     graph : Graph, optional
-        Custom agent graph.  Defaults to a 2-node strategizer→implementer graph.
+        Custom agent graph.  Defaults to a 2-node strategizer→implementer
+        graph.
     model : str, optional
         LLM model identifier.  Defaults to ``DEFAULT_MODEL``.
     budget : float, optional
@@ -127,7 +128,7 @@ class AgenticRun:
             raise AgenticRunError(
                 f"PROBLEM_STATEMENT.md not found in {self.study_dir}"
             )
-        problem = problem_path.read_text()
+        problem = problem_path.read_text(encoding="utf-8")
 
         # Create run directory
         ts = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S")
@@ -157,7 +158,9 @@ class AgenticRun:
             self._graph_spec, self._make_adapter, study_dir=self.study_dir
         )
 
-        config: dict[str, Any] = {"configurable": {"thread_id": str(uuid.uuid4())}}
+        config: dict[str, Any] = {
+            "configurable": {"thread_id": str(uuid.uuid4())}
+        }
         initial_state = AgenticState(
             messages=[HumanMessage(content=problem)],
             study_dir=str(self.study_dir),
@@ -170,7 +173,9 @@ class AgenticRun:
             evals_used=0,
             start_time=start_time,
             return_to=None,
-            required_deliverables=getattr(self, "_required_deliverables", None) or None,
+            required_deliverables=(
+                getattr(self, "_required_deliverables", None) or None
+            ),
         )
 
         log.info("Invoking graph")
@@ -189,7 +194,8 @@ class AgenticRun:
             f"- model: {self._model}\n"
             f"- total_delegations: {result.get('total_delegations', 0)}\n"
             f"- evals_used: {evals}\n"
-            f"- run_dir: {run_dir}\n"
+            f"- run_dir: {run_dir}\n",
+            encoding="utf-8",
         )
         log.info(f"Run complete. Evals used: {evals}. solution.md written.")
         log.removeHandler(handler)
@@ -201,7 +207,12 @@ class AgenticRun:
         run_dir = self._run_dir
         workspace_dir = self.study_dir / "workspace"
 
-        if run_dir and hasattr(self._graph_spec, "outgoing") and self._graph_spec.outgoing(name):
+        has_outgoing = (
+            run_dir
+            and hasattr(self._graph_spec, "outgoing")
+            and self._graph_spec.outgoing(name)
+        )
+        if has_outgoing:
             notes_dir = Path(run_dir) / "strategizer_notes"
             preamble = RUN_PATHS_PREAMBLE_TEMPLATE.format(
                 study_dir=self.study_dir,
@@ -221,7 +232,12 @@ class AgenticRun:
 
         if backend == "ollama":
             from .backends.ollama import OllamaAdapter
-            ollama_native = [t for t in agent.tools if t not in {"Done", "Ask", "WriteMarkdown", "ReadNote", "ReportEvals"}]
+            _closure_tool_names = {
+                "Done", "Ask", "WriteMarkdown", "ReadNote", "ReportEvals"
+            }
+            ollama_native = [
+                t for t in agent.tools if t not in _closure_tool_names
+            ]
             return OllamaAdapter(
                 model=model,
                 system_prompt=system_prompt,

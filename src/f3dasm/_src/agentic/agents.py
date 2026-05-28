@@ -21,13 +21,18 @@ class ImplementerAgent(Agent):
     """Default worker agent for f3dasm agentic runs."""
 
     system_prompt = IMPLEMENTER_SYSTEM_PROMPT
-    tools = frozenset({"Bash", "Edit", "Read", "Write", "Glob", "Grep", "ReportEvals"})
+    tools = frozenset({
+        "Bash", "Edit", "Read", "Write", "Glob", "Grep", "ReportEvals"
+    })
     reset_on_checkpoint = True
 
 
 def _default_graph() -> Graph:
     return Graph(
-        nodes={"strategizer": StrategizerAgent(), "implementer": ImplementerAgent()},
+        nodes={
+            "strategizer": StrategizerAgent(),
+            "implementer": ImplementerAgent(),
+        },
         edges=(Edge("strategizer", "implementer"),),
         entry="strategizer",
     )

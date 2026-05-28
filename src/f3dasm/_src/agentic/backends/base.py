@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 # ---------------------------------------------------------------------------
 # Agent base class
 # ---------------------------------------------------------------------------
@@ -144,7 +143,7 @@ class Graph:
         """Return source names for all edges into *name*."""
         return [e.source for e in self.edges if e.target == name]
 
-    def edge(self, source: str, target: str) -> "Edge | None":
+    def edge(self, source: str, target: str) -> Edge | None:
         """Return the Edge from *source* to *target*, or None if absent."""
         for e in self.edges:
             if e.source == source and e.target == target:
@@ -167,7 +166,8 @@ class Graph:
                 lines.append(f'    {name}["{label}"]')
         for e in self.edges:
             if e.preamble:
-                snippet = e.preamble[:35] + ("…" if len(e.preamble) > 35 else "")
+                tail = "…" if len(e.preamble) > 35 else ""
+                snippet = e.preamble[:35] + tail
                 lines.append(f'    {e.source} -->|"{snippet}"| {e.target}')
             else:
                 lines.append(f'    {e.source} --> {e.target}')
@@ -179,7 +179,6 @@ class Graph:
             out_map.setdefault(e.source, []).append(e)
         lines = [f"Graph(entry={self.entry!r})"]
         for name in self.nodes:
-            agent = self.nodes[name]
             tag = " [entry]" if name == self.entry else ""
             edges = out_map.get(name, [])
             if edges:

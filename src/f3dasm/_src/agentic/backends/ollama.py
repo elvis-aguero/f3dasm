@@ -25,7 +25,8 @@ def _to_lc_messages(messages: list[dict]) -> list:
         content = m.get("content", "")
         if isinstance(content, list):
             content = " ".join(
-                c.get("text", "") if isinstance(c, dict) else str(c) for c in content
+                c.get("text", "") if isinstance(c, dict) else str(c)
+                for c in content
             )
         if role in ("human", "user"):
             result.append(HumanMessage(content=content))
@@ -42,10 +43,10 @@ def _make_edit_tool() -> Any:
         p = Path(path)
         if not p.exists():
             return f"ERROR: {path} not found"
-        text = p.read_text()
+        text = p.read_text(encoding="utf-8")
         if old_str not in text:
             return f"ERROR: string not found in {path}"
-        p.write_text(text.replace(old_str, new_str, 1))
+        p.write_text(text.replace(old_str, new_str, 1), encoding="utf-8")
         return f"Edited {path}"
 
     return StructuredTool.from_function(edit_file, name="Edit")
@@ -56,7 +57,6 @@ def _make_grep_tool() -> Any:
 
     def grep_files(pattern: str, path: str = ".") -> str:
         """Search for pattern in files under path; return matching lines."""
-        import re
         import subprocess
 
         try:
@@ -85,8 +85,9 @@ def _make_glob_tool(cwd: Path | None) -> Any:
 
 
 def _make_bash_tool(cwd: Path | None) -> Any:
-    from langchain_core.tools import StructuredTool
     import subprocess
+
+    from langchain_core.tools import StructuredTool
 
     work_dir = str(cwd) if cwd else None
 
@@ -107,10 +108,13 @@ def _make_read_tool(cwd: Path | None) -> Any:
 
     def read_file(path: str) -> str:
         """Read a file and return its contents."""
-        p = Path(path) if Path(path).is_absolute() else (cwd or Path(".")) / path
+        p = (
+            Path(path) if Path(path).is_absolute()
+            else (cwd or Path(".")) / path
+        )
         if not p.exists():
             return f"ERROR: {p} not found"
-        return p.read_text()
+        return p.read_text(encoding="utf-8")
 
     return StructuredTool.from_function(read_file, name="Read")
 
@@ -120,9 +124,12 @@ def _make_write_tool(cwd: Path | None) -> Any:
 
     def write_file(path: str, content: str) -> str:
         """Write content to a file, creating it if it doesn't exist."""
-        p = Path(path) if Path(path).is_absolute() else (cwd or Path(".")) / path
+        p = (
+            Path(path) if Path(path).is_absolute()
+            else (cwd or Path(".")) / path
+        )
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content)
+        p.write_text(content, encoding="utf-8")
         return f"Written: {p}"
 
     return StructuredTool.from_function(write_file, name="Write")
@@ -177,7 +184,8 @@ class OllamaAdapter:
         self._native_tool_names: list[str] = list(native_tools or [])
         self.closure_tools: dict[str, Any] = dict(closure_tools or {})
         self._base_url = base_url
-        self._agent: Any = None  # built lazily so closure_tools are fully populated
+        # built lazily so closure_tools are fully populated
+        self._agent: Any = None
 
     def _build_tools(self) -> list[Any]:
         from langchain_core.tools import StructuredTool
@@ -197,7 +205,9 @@ class OllamaAdapter:
         from langchain_openai import ChatOpenAI
         from langgraph.prebuilt import create_react_agent
 
-        llm = ChatOpenAI(model=self.model, base_url=self._base_url, api_key="local")
+        llm = ChatOpenAI(
+            model=self.model, base_url=self._base_url, api_key="local"
+        )
         return create_react_agent(
             llm,
             self._build_tools(),

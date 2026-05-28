@@ -13,7 +13,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .graph_state import AgenticState
 
-__all__ = ["AgentNode", "StrategizerNode", "ImplementerNode", "_to_adapter_messages"]
+__all__ = [
+    "AgentNode", "StrategizerNode", "ImplementerNode", "_to_adapter_messages"
+]
 
 _REQUIRED_SUBSECTIONS = [
     "### Actions taken",
@@ -86,12 +88,12 @@ class AgentNode:
     def __init__(self, adapter: Any) -> None:
         self.adapter = adapter
 
-    def __call__(self, state: "AgenticState") -> Any:
+    def __call__(self, state: AgenticState) -> Any:
         raise NotImplementedError
 
 
 class StrategizerNode(AgentNode):
-    """Orchestrator node: reads Reports, decides next Delegation, signals Done/Ask."""
+    """Orchestrator: reads Reports, decides next Delegation or Done/Ask."""
 
     def __init__(
         self,
@@ -123,7 +125,10 @@ class StrategizerNode(AgentNode):
         def Delegate(target: str, intent: str, expected_report: str) -> str:
             """Delegate a task to a named agent."""
             if target not in outgoing:
-                return f"ERROR: unknown target {target!r}. Valid targets: {outgoing}"
+                return (
+                    f"ERROR: unknown target {target!r}."
+                    f" Valid targets: {outgoing}"
+                )
             route["kind"] = "delegate"
             route["target"] = target
             route["task"] = intent
@@ -165,7 +170,7 @@ class StrategizerNode(AgentNode):
                 bare = bare + ".md"
             target = Path(notes_dir) / bare
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(body)
+            target.write_text(body, encoding="utf-8")
             return f"Written: {target}"
 
         def ReadNote(path: str) -> str:
@@ -175,7 +180,7 @@ class StrategizerNode(AgentNode):
             target = Path(study_dir) / path
             if not target.exists():
                 return f"NOT FOUND: {target}"
-            return target.read_text()
+            return target.read_text(encoding="utf-8")
 
         return {
             "Delegate": Delegate,
@@ -185,13 +190,13 @@ class StrategizerNode(AgentNode):
             "ReadNote": ReadNote,
         }
 
-    def _missing_deliverables(self, state: "AgenticState") -> list[str]:
-        """Return required deliverable paths (relative to study_dir) that don't exist yet."""
+    def _missing_deliverables(self, state: AgenticState) -> list[str]:
+        """Return required deliverable paths not present yet."""
         required = state.get("required_deliverables") or []
         study_dir = Path(state.get("study_dir", "."))
         return [p for p in required if not (study_dir / p).exists()]
 
-    def __call__(self, state: "AgenticState") -> Any:
+    def __call__(self, state: AgenticState) -> Any:
         import time
 
         from langchain_core.messages import AIMessage, HumanMessage
@@ -212,7 +217,11 @@ class StrategizerNode(AgentNode):
             if elapsed >= budget:
                 budget_warnings.append({
                     "role": "user",
-                    "content": f"Warning: time budget exceeded ({elapsed:.0f}s elapsed / {budget:.0f}s budget). Wrap up as quickly as possible.",
+                    "content": (
+                        f"Warning: time budget exceeded"
+                        f" ({elapsed:.0f}s elapsed / {budget:.0f}s budget)."
+                        f" Wrap up as quickly as possible."
+                    ),
                 })
 
         eval_budget = state.get("eval_budget")
@@ -220,7 +229,11 @@ class StrategizerNode(AgentNode):
         if eval_budget is not None and evals_used >= eval_budget:
             budget_warnings.append({
                 "role": "user",
-                "content": f"Warning: eval budget exceeded ({evals_used} used / {eval_budget} budget). Do not run further evaluations.",
+                "content": (
+                    f"Warning: eval budget exceeded"
+                    f" ({evals_used} used / {eval_budget} budget)."
+                    f" Do not run further evaluations."
+                ),
             })
 
         self._route.clear()
@@ -236,7 +249,10 @@ class StrategizerNode(AgentNode):
             task_msg = route.get("task", "")
             expected = route.get("expected_report", "")
             if expected:
-                task_msg += f"\n\n**Required deliverables / acceptance criteria:**\n{expected}"
+                task_msg += (
+                    f"\n\n**Required deliverables / acceptance"
+                    f" criteria:**\n{expected}"
+                )
             if preamble:
                 task_msg = preamble + "\n\n" + task_msg
             return Command(
@@ -251,10 +267,12 @@ class StrategizerNode(AgentNode):
             answer = interrupt(route["question"])
             return Command(
                 goto=self._name,
-                update={"messages": [ai_msg, HumanMessage(content=str(answer))]},
+                update={
+                    "messages": [ai_msg, HumanMessage(content=str(answer))]
+                },
             )
 
-        # "done" or no routing tool called — enforce deliverables before accepting
+        # "done" or no routing tool — enforce deliverables before accepting
         missing = self._missing_deliverables(state)
         if missing:
             missing_list = "\n".join(f"- {p}" for p in missing)
@@ -264,9 +282,11 @@ class StrategizerNode(AgentNode):
                     "messages": [
                         ai_msg,
                         HumanMessage(content=(
-                            f"Run cannot complete: the following required deliverables "
-                            f"are missing from the workspace:\n{missing_list}\n"
-                            f"Please delegate their creation before calling Done."
+                            "Run cannot complete: the following required"
+                            " deliverables are missing from the"
+                            f" workspace:\n{missing_list}\n"
+                            "Please delegate their creation before"
+                            " calling Done."
                         )),
                     ],
                 },
@@ -275,7 +295,9 @@ class StrategizerNode(AgentNode):
         summary = route.get("summary") or text
         return Command(
             goto=END,
-            update={"messages": [ai_msg], "done": True, "last_report": summary},
+            update={
+                "messages": [ai_msg], "done": True, "last_report": summary
+            },
         )
 
 
@@ -297,7 +319,7 @@ class ImplementerNode(AgentNode):
 
         return {"ReportEvals": ReportEvals}
 
-    def __call__(self, state: "AgenticState") -> Any:
+    def __call__(self, state: AgenticState) -> Any:
         from langchain_core.messages import AIMessage
         from langgraph.types import Command
 
@@ -315,7 +337,8 @@ class ImplementerNode(AgentNode):
                 {
                     "role": "user",
                     "content": (
-                        f"{IMPLEMENTER_REPORT_RETRY_PROMPT}\n\nDiagnosis: {diagnosis}"
+                        f"{IMPLEMENTER_REPORT_RETRY_PROMPT}"
+                        f"\n\nDiagnosis: {diagnosis}"
                     ),
                 },
             ]

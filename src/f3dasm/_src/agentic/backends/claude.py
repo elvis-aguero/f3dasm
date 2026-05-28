@@ -94,7 +94,7 @@ def _format_messages_as_prompt(messages: list[dict]) -> str:
 
 
 class ClaudeAdapter:
-    """Wraps claude-agent-sdk; runs one full agent turn and returns assistant text.
+    """Wraps claude-agent-sdk; runs one agent turn and returns assistant text.
 
     The SDK handles its own tool-execution loop (Bash, Read, Write, Edit).
     This adapter converts a list of LangChain-style message dicts to the SDK
@@ -129,7 +129,7 @@ class ClaudeAdapter:
         self.closure_tools = dict(closure_tools or {})
 
     async def ainvoke(self, messages: list[dict]) -> str:
-        """Run one agent turn asynchronously; return assembled assistant text."""
+        """Run one agent turn asynchronously; return assembled text."""
         _require_sdk()
         from claude_agent_sdk import (
             AssistantMessage,
@@ -155,14 +155,18 @@ class ClaudeAdapter:
                         result = bound_fn(**args)
                     except Exception as exc:
                         return {
-                            "content": [{"type": "text", "text": f"ERROR: {exc}"}],
+                            "content": [
+                                {"type": "text", "text": f"ERROR: {exc}"}
+                            ],
                             "is_error": True,
                         }
                     return {
                         "content": [
                             {
                                 "type": "text",
-                                "text": str(result) if result is not None else "",
+                                "text": (
+                                    str(result) if result is not None else ""
+                                ),
                             }
                         ]
                     }
@@ -170,7 +174,9 @@ class ClaudeAdapter:
                 sdk_tools.append(
                     SdkMcpTool(
                         name=tool_name,
-                        description=(fn.__doc__ or tool_name).split("\n")[0].strip(),
+                        description=(
+                            (fn.__doc__ or tool_name).split("\n")[0].strip()
+                        ),
                         input_schema=schema,
                         handler=_handler,
                     )

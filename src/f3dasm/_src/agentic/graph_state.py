@@ -22,9 +22,11 @@ class AgenticState(MessagesState):
     run_dir: str | None          # absolute path to runs/<timestamp>/
     eval_budget: int | None      # max function evaluations (from config)
     evals_used: int              # running count across delegations
-    start_time: float | None     # time.time() at run start, for budget enforcement
+    # time.time() at run start, for budget enforcement
+    start_time: float | None
     return_to: str | None
-    required_deliverables: list | None  # paths relative to study_dir; checked before Done accepted
+    # paths relative to study_dir; checked before Done accepted
+    required_deliverables: list | None
 
 
 # ---------------------------------------------------------------------------
