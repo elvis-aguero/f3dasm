@@ -33,7 +33,9 @@ When compressed axially, a given geometry will respond in one of two ways:
   outcome.
 
 Predicting which regime a given design falls into requires full nonlinear
-finite-element analysis. No closed-form criterion separates the two modes.
+finite-element analysis. A closed-form criterion that separates the two modes is not known.
+
+You have freedom to experiment with innovative solutions within your time constraints. We strive for state-of-the-art supercompressible designs.
 
 ---
 
@@ -188,5 +190,3 @@ honest about what you don't know.
 Report a specific design (parameter values) predicted to be `coilable == 1`
 with the highest achievable `sigma_crit`. Include the predicted `sigma_crit`,
 why you believe the design is feasible.
-
-You have freedom to experiment innovative solutions within your time constraints. We strive for state-of-the-art supercompressible designs.

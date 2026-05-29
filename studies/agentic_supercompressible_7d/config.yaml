@@ -1,4 +1,4 @@
-model: claude-haiku-4-5-20251001
+model: claude-sonnet-4-6
 backend: claude
-budget: "04:00:00"
+budget: "03:00:00"
 checkpoint_every: 30

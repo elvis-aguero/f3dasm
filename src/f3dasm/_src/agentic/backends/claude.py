@@ -198,8 +198,7 @@ class ClaudeAdapter:
             mcp_servers=mcp_servers if mcp_servers else {},
             allowed_tools=(
                 (qualified_mcp_tools + self.native_tools)
-                if self.native_tools or qualified_mcp_tools
-                else []
+                or None
             ),
             disallowed_tools=[
                 "WebSearch",
