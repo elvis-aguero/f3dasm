@@ -188,3 +188,5 @@ honest about what you don't know.
 Report a specific design (parameter values) predicted to be `coilable == 1`
 with the highest achievable `sigma_crit`. Include the predicted `sigma_crit`,
 why you believe the design is feasible.
+
+You have freedom to experiment innovative solutions within your time constraints. We strive for state-of-the-art supercompressible designs.
