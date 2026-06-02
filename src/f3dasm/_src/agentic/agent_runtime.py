@@ -95,8 +95,9 @@ class AgenticRun:
         model: str | None = None,
         budget: float | None = None,
         eval_budget: int | None = None,
+        interactive: bool = False,
     ) -> None:
-        self.study_dir = Path(study_dir)
+        self.study_dir = Path(study_dir).resolve()
         cfg = _load_study_config(self.study_dir)
 
         self._model = model or cfg.get("model") or DEFAULT_MODEL
@@ -115,6 +116,7 @@ class AgenticRun:
             self._budget = None
 
         self._graph_spec = graph or _default_graph()
+        self._interactive = interactive
         self._run_dir = None  # set in execute()
 
     def execute(self) -> str:
@@ -155,7 +157,8 @@ class AgenticRun:
         # Build the graph now (after _run_dir is set) so _make_adapter sees it
         # If a pre-built graph was injected (e.g. in tests), use it directly.
         graph = getattr(self, "_graph", None) or build_graph(
-            self._graph_spec, self._make_adapter, study_dir=self.study_dir
+            self._graph_spec, self._make_adapter, study_dir=self.study_dir,
+            interactive=self._interactive,
         )
 
         config: dict[str, Any] = {
@@ -206,6 +209,7 @@ class AgenticRun:
     def _make_adapter(self, name: str, agent: Agent):
         run_dir = self._run_dir
         workspace_dir = self.study_dir / "workspace"
+        workspace_dir.mkdir(parents=True, exist_ok=True)
 
         has_outgoing = (
             run_dir

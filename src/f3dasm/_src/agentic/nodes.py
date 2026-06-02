@@ -113,6 +113,7 @@ class StrategizerNode(AgentNode):
         self._interactive = interactive
         self._current_notes_dir: Path | None = None
         self.adapter.closure_tools.update(self._build_routing_closures())
+        self.adapter.route_watcher = lambda: bool(self._route.get("kind"))
 
     def _build_routing_closures(self) -> dict:
         """Return routing closure tools that write to self._route."""
@@ -150,9 +151,8 @@ class StrategizerNode(AgentNode):
         def Ask(question: str) -> str:
             """Ask the human operator a question and wait for input."""
             if interactive:
-                route["kind"] = "ask"
-                route["question"] = question
-                return "Awaiting user response."
+                print(f"\n[Strategizer] {question}\nAnswer: ", end="", flush=True)
+                return input()
             # Non-interactive: auto-respond so run proceeds autonomously.
             return (
                 "No human operator is present. Proceed autonomously "
@@ -263,15 +263,6 @@ class StrategizerNode(AgentNode):
                     "return_to": self._name,
                 },
             )
-        if route.get("kind") == "ask" and route.get("question"):
-            answer = interrupt(route["question"])
-            return Command(
-                goto=self._name,
-                update={
-                    "messages": [ai_msg, HumanMessage(content=str(answer))]
-                },
-            )
-
         # "done" or no routing tool — enforce deliverables before accepting
         missing = self._missing_deliverables(state)
         if missing:

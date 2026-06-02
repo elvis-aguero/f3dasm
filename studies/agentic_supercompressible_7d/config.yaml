@@ -1,4 +1,3 @@
-model: claude-sonnet-4-6
 backend: claude
-budget: "03:00:00"
+budget: "01:00:00"
 checkpoint_every: 30

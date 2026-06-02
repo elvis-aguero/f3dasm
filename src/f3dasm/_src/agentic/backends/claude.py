@@ -127,6 +127,9 @@ class ClaudeAdapter:
         self.study_dir = Path(study_dir) if study_dir else None
         self.native_tools = list(native_tools or [])
         self.closure_tools = dict(closure_tools or {})
+        # Set by StrategizerNode; when truthy, the generator is closed after
+        # the next AssistantMessage so the session ends on a routing decision.
+        self.route_watcher: Any = None
 
     async def ainvoke(self, messages: list[dict]) -> str:
         """Run one agent turn asynchronously; return assembled text."""
@@ -219,6 +222,8 @@ class ClaudeAdapter:
             async for msg in gen:
                 if isinstance(msg, AssistantMessage):
                     last_assistant = msg
+                    if self.route_watcher and self.route_watcher():
+                        break
                 elif isinstance(msg, ResultMessage):
                     break
         finally:
