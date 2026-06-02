@@ -125,11 +125,23 @@ class StrategizerNode(AgentNode):
         self._registry: dict[str, dict] = {}
         self._registry_lock = threading.Lock()
         self._threads: dict[str, threading.Thread] = {}
+        # Push notifications: background threads append here; tool calls drain it.
+        self._notifications: list[str] = []
+        self._notifications_lock = threading.Lock()
         # Budget state — set at the start of each __call__ from AgenticState
         self._budget_seconds: float | None = None
         self._run_start: float | None = None
         self.adapter.closure_tools.update(self._build_routing_closures())
         self.adapter.route_watcher = lambda: self._route.get("kind") == "done"
+
+    def _drain_notifications(self) -> str:
+        """Return and clear any pending push notifications, or empty string."""
+        with self._notifications_lock:
+            if not self._notifications:
+                return ""
+            msgs = list(self._notifications)
+            self._notifications.clear()
+        return "\n".join(msgs) + "\n\n"
 
     def _build_routing_closures(self) -> dict:
         """Return routing closure tools that write to self._route."""
@@ -216,6 +228,10 @@ class StrategizerNode(AgentNode):
                             "result": text,
                             "evals": evals_box["count"],
                         })
+                    with node._notifications_lock:
+                        node._notifications.append(
+                            f"[Delegation {delegation_id} Done]"
+                        )
                 except Exception:  # noqa: BLE001
                     tb = traceback.format_exc()
                     with node._registry_lock:
@@ -224,6 +240,10 @@ class StrategizerNode(AgentNode):
                             "result": tb,
                             "evals": evals_box["count"],
                         })
+                    with node._notifications_lock:
+                        node._notifications.append(
+                            f"[Delegation {delegation_id} Errored]"
+                        )
 
             t = threading.Thread(target=_run, daemon=True, name=delegation_id)
             with node._registry_lock:
@@ -236,19 +256,25 @@ class StrategizerNode(AgentNode):
             )
 
         def GetStatus(delegation_id: str) -> str:
-            """Poll a background delegation.
+            """Poll a background delegation; also delivers any push notifications.
 
             Returns one of:
               'Working'                 — task still running
               'Done\\n\\n<full report>' — completed successfully
               'Errored:\\n<traceback>'  — task raised an exception; read the
                                          traceback, revise intent, re-delegate
+
+            Any delegations that completed since your last tool call are
+            announced as [Delegation TASK-xxx Done/Errored] lines prepended
+            to this response.
             """
+            prefix = node._drain_notifications()
             with node._registry_lock:
                 entry = dict(node._registry.get(delegation_id, {}))
             if not entry:
                 known = list(node._registry)
                 return (
+                    prefix +
                     f"ERROR: unknown delegation ID {delegation_id!r}. "
                     f"Known IDs: {known}"
                 )
@@ -271,14 +297,15 @@ class StrategizerNode(AgentNode):
                                 ),
                             })
                         return (
+                            prefix +
                             f"Errored:\nTimeout: delegation exceeded {timeout:.0f}s "
                             f"(75% of run budget). Re-delegate with a simpler "
                             "or more focused task."
                         )
-                return "Working"
+                return prefix + "Working"
             if status == "Done":
-                return f"Done\n\n{entry['result']}"
-            return f"Errored:\n{entry['result']}"
+                return prefix + f"Done\n\n{entry['result']}"
+            return prefix + f"Errored:\n{entry['result']}"
 
         def Done(summary: str) -> str:
             """Signal end of run with a summary of findings.
@@ -286,6 +313,7 @@ class StrategizerNode(AgentNode):
             Refuses if any delegation is still Working — call GetStatus()
             on all pending delegations first.
             """
+            prefix = node._drain_notifications()
             with node._registry_lock:
                 pending = [
                     did for did, e in node._registry.items()
@@ -293,6 +321,7 @@ class StrategizerNode(AgentNode):
                 ]
             if pending:
                 return (
+                    prefix +
                     f"ERROR: {len(pending)} delegation(s) still running: "
                     f"{pending}. "
                     "Call GetStatus() on each and wait for 'Done' or "
@@ -300,7 +329,7 @@ class StrategizerNode(AgentNode):
                 )
             route["kind"] = "done"
             route["summary"] = summary
-            return "Run complete."
+            return prefix + "Run complete."
 
         def Ask(question: str) -> str:
             """Ask the human operator a question and wait for input."""
@@ -322,6 +351,7 @@ class StrategizerNode(AgentNode):
 
         def WriteMarkdown(path: str, body: str) -> str:
             """Write a Markdown (.md) file to strategizer_notes/."""
+            prefix = node._drain_notifications()
             notes_dir = node._current_notes_dir
             if notes_dir is None:
                 return "ERROR: notes_dir not set (run_dir missing from state)."
@@ -331,16 +361,17 @@ class StrategizerNode(AgentNode):
             target = Path(notes_dir) / bare
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(body, encoding="utf-8")
-            return f"Written: {target}"
+            return prefix + f"Written: {target}"
 
         def ReadNote(path: str) -> str:
             """Read a file from the study directory."""
+            prefix = node._drain_notifications()
             if study_dir is None:
                 return "ERROR: study_dir not set."
             target = Path(study_dir) / path
             if not target.exists():
-                return f"NOT FOUND: {target}"
-            return target.read_text(encoding="utf-8")
+                return prefix + f"NOT FOUND: {target}"
+            return prefix + target.read_text(encoding="utf-8")
 
         return {
             "Delegate": Delegate,
@@ -420,6 +451,8 @@ class StrategizerNode(AgentNode):
         with self._registry_lock:
             self._registry.clear()
             self._threads.clear()
+        with self._notifications_lock:
+            self._notifications.clear()
 
         messages = _to_adapter_messages(state["messages"]) + budget_warnings
         text = self.adapter.invoke(messages)
@@ -467,10 +500,60 @@ class StrategizerNode(AgentNode):
 class ImplementerNode(AgentNode):
     """Worker node: executes tasks, writes Reports, returns to caller."""
 
-    def __init__(self, adapter: Any) -> None:
+    def __init__(self, adapter: Any, study_dir: Any = None) -> None:
         super().__init__(adapter)
         self._evals_reported: dict = {}
+        self._workspace_dir = (
+            Path(study_dir) / "workspace" if study_dir else None
+        )
+        self._setup_sandboxed_write()
         self.adapter.closure_tools.update(self._build_eval_closures())
+
+    def _setup_sandboxed_write(self) -> None:
+        """Replace native Write with a workspace/-sandboxed closure (D1/D2 fix).
+
+        Removes 'Write' from native_tools so the SDK doesn't expose it,
+        then injects a closure that hard-rejects any path that resolves
+        outside workspace/.  Path.resolve() collapses '..' and symlinks,
+        so traversal attacks are blocked at the tool level, not just the prompt.
+
+        Bash is kept native but cwd is already set to study_dir by the adapter;
+        the prompt further constrains it to workspace/.
+        """
+        if self._workspace_dir is None:
+            return  # no sandboxing if study_dir unknown (e.g. tests)
+
+        workspace = self._workspace_dir.resolve()
+
+        # Remove native Write so the SDK doesn't expose an unrestricted version
+        if hasattr(self.adapter, "native_tools") and "Write" in self.adapter.native_tools:
+            self.adapter.native_tools = [
+                t for t in self.adapter.native_tools if t != "Write"
+            ]
+
+        def Write(path: str, body: str) -> str:
+            """Write a file.  Restricted to workspace/ — no exceptions."""
+            try:
+                # Resolve against workspace/ so relative paths land there
+                candidate = (workspace / path).resolve()
+            except Exception as exc:  # noqa: BLE001
+                return f"ERROR: invalid path {path!r}: {exc}"
+
+            # Reject anything that escapes the workspace tree
+            try:
+                candidate.relative_to(workspace)
+            except ValueError:
+                return (
+                    f"ERROR: write rejected — path resolves to {candidate}, "
+                    f"which is outside workspace/ ({workspace}). "
+                    "Only paths inside workspace/ are permitted."
+                )
+
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            candidate.write_text(body, encoding="utf-8")
+            return f"Written: {candidate}"
+
+        self.adapter.closure_tools["Write"] = Write
 
     def _build_eval_closures(self) -> dict:
         evals = self._evals_reported

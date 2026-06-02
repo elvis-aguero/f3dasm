@@ -485,8 +485,8 @@ def test_get_status_returns_working_then_done():
     )
     node(make_state())
 
-    assert status_snapshots[0] == "Working"
-    assert status_snapshots[1].startswith("Done")
+    assert status_snapshots[0] == "Working"  # no notification yet
+    assert "Done" in status_snapshots[1]      # notification prefix + Done report
 
 
 def test_registry_cleared_between_runs():
@@ -588,7 +588,7 @@ def test_errored_status_contains_traceback():
 
     assert status_seen, "Never got a non-Working status"
     msg = status_seen[0]
-    assert msg.startswith("Errored:")
+    assert "Errored:" in msg  # may have notification prefix
     # Must contain the exception type and message for diagnostics (B1)
     assert "ValueError" in msg
     assert "pool.csv" in msg

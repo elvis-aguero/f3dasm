@@ -65,7 +65,7 @@ def build_graph(
                 worker_adapters=worker_adapters,
             )
         else:
-            node = ImplementerNode(adapter)
+            node = ImplementerNode(adapter, study_dir=study_dir)
 
         builder.add_node(name, node)
 
