@@ -619,23 +619,20 @@ def test_strategizer_on_error_tag_appears_once():
 # ---------------------------------------------------------------------------
 
 def test_strategizer_on_error_content():
-    """on_error mentions REFLECT: and forbids identical re-delegation."""
+    """on_error covers the async Errored: path and forbids verbatim re-delegation."""
     from f3dasm._src.agentic.agent_prompts import (
         STRATEGIZER_SYSTEM_PROMPT,
     )
 
-    assert "REFLECT:" in STRATEGIZER_SYSTEM_PROMPT, (
-        "STRATEGIZER_SYSTEM_PROMPT on_error does not mention 'REFLECT:'"
-    )
     lower = STRATEGIZER_SYSTEM_PROMPT.lower()
-    forbidden_phrases = [
-        "forbidden",
-        "exact same intent",
-    ]
-    for phrase in forbidden_phrases:
-        assert phrase in lower, (
-            f"STRATEGIZER_SYSTEM_PROMPT on_error missing phrase '{phrase}'"
-        )
+    # Must describe the Errored: path from GetStatus() (async, not REFLECT:)
+    assert "errored:" in lower, (
+        "STRATEGIZER_SYSTEM_PROMPT on_error does not mention 'Errored:' path"
+    )
+    # Must warn against verbatim re-delegation without addressing root cause
+    assert "verbatim" in lower, (
+        "STRATEGIZER_SYSTEM_PROMPT on_error missing 'verbatim' re-delegation guard"
+    )
 
 
 # ---------------------------------------------------------------------------

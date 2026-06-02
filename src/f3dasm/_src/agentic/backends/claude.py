@@ -131,6 +131,22 @@ class ClaudeAdapter:
         # the next AssistantMessage so the session ends on a routing decision.
         self.route_watcher: Any = None
 
+    def copy(self) -> "ClaudeAdapter":
+        """Return a fresh adapter with the same config but independent closure_tools.
+
+        Use this to create a per-delegation adapter so concurrent background
+        threads never race on a shared closure_tools dict.
+        """
+        fresh = ClaudeAdapter(
+            model=self.model,
+            system_prompt=self.system_prompt,
+            study_dir=self.study_dir,
+            native_tools=list(self.native_tools),
+            closure_tools=dict(self.closure_tools),
+        )
+        # route_watcher is intentionally not copied — worker adapters don't use it
+        return fresh
+
     async def ainvoke(self, messages: list[dict]) -> str:
         """Run one agent turn asynchronously; return assembled text."""
         _require_sdk()

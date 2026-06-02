@@ -1,6 +1,7 @@
 """Tests for AgentNode, StrategizerNode, ImplementerNode."""
 from __future__ import annotations
 
+import threading
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import END
@@ -486,6 +487,158 @@ def test_get_status_returns_working_then_done():
 
     assert status_snapshots[0] == "Working"
     assert status_snapshots[1].startswith("Done")
+
+
+def test_registry_cleared_between_runs():
+    """Registry and ask_count are reset on each __call__, preventing cross-run pollution."""
+    import time
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    call_count = [0]
+
+    class FastWorkerAdapter(StubAdapter):
+        def invoke(self, messages):
+            return "## Report\n### Actions taken\nDone.\n### Files touched\n(none)\n### Conclusions\nOK\n### Numbers\nn: 0"
+
+    class OneDelegateAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["Delegate"](target="implementer", intent="task", expected_report="")
+            time.sleep(0.1)
+            self.closure_tools["Done"](summary="done")
+            call_count[0] += 1
+            return "Done."
+
+    adapter = OneDelegateAdapter()
+    spec = _minimal_spec()
+    worker = FastWorkerAdapter()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": worker},
+    )
+
+    # First run
+    cmd1 = node(make_state(total_delegations=0))
+    assert cmd1.update["total_delegations"] == 1
+
+    # Second run on the same node — registry must be fresh
+    cmd2 = node(make_state(total_delegations=0))
+    assert cmd2.update["total_delegations"] == 1  # not 2
+
+
+def test_get_status_unknown_id_returns_error():
+    """GetStatus on an unknown ID returns a clear ERROR string."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    errors: list[str] = []
+
+    class PollUnknownAdapter(StubAdapter):
+        def invoke(self, messages):
+            result = self.closure_tools["GetStatus"]("TASK-notreal")
+            errors.append(result)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    adapter = PollUnknownAdapter()
+    spec = _minimal_spec()
+    node = StrategizerNode(adapter, name="strategizer", outgoing=["implementer"], spec=spec)
+    node(make_state())
+
+    assert errors and errors[0].startswith("ERROR")
+    assert "TASK-notreal" in errors[0]
+
+
+def test_errored_status_contains_traceback():
+    """When a worker raises, GetStatus returns 'Errored:\\n<traceback>' with enough info."""
+    import re
+    import time
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    status_seen: list[str] = []
+    worker_done = threading.Event()
+
+    class CrashingWorkerAdapter(StubAdapter):
+        def invoke(self, messages):
+            raise ValueError("pool.csv not found at workspace/pool.csv")
+
+    class PollErrorAdapter(StubAdapter):
+        def invoke(self, messages):
+            result = self.closure_tools["Delegate"](
+                target="implementer", intent="task", expected_report=""
+            )
+            import re as _re
+            task_id = _re.search(r"TASK-[0-9a-f]+", result).group()
+            # Poll until resolved
+            for _ in range(50):
+                status = self.closure_tools["GetStatus"](task_id)
+                if not status == "Working":
+                    status_seen.append(status)
+                    break
+                time.sleep(0.02)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    adapter = PollErrorAdapter()
+    spec = _minimal_spec()
+    worker = CrashingWorkerAdapter()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": worker},
+    )
+    node(make_state())
+
+    assert status_seen, "Never got a non-Working status"
+    msg = status_seen[0]
+    assert msg.startswith("Errored:")
+    # Must contain the exception type and message for diagnostics (B1)
+    assert "ValueError" in msg
+    assert "pool.csv" in msg
+
+
+def test_delegation_timeout_marks_errored():
+    """A hung delegation is marked Errored after the timeout elapses."""
+    import time
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    status_seen: list[str] = []
+    worker_started = threading.Event()
+
+    class HungWorkerAdapter(StubAdapter):
+        def invoke(self, messages):
+            worker_started.set()
+            time.sleep(60)  # hangs
+            return "never"
+
+    class TimeoutPollAdapter(StubAdapter):
+        def invoke(self, messages):
+            result = self.closure_tools["Delegate"](
+                target="implementer", intent="task", expected_report=""
+            )
+            import re as _re
+            task_id = _re.search(r"TASK-[0-9a-f]+", result).group()
+            worker_started.wait(timeout=2)
+            time.sleep(0.05)  # let the timeout expire
+            status = self.closure_tools["GetStatus"](task_id)
+            status_seen.append(status)
+            # Force Done with the errored delegation still in registry
+            # (timeout marks it Errored so Done() should now succeed)
+            self.closure_tools["Done"](summary="timed out")
+            return "Done."
+
+    adapter = TimeoutPollAdapter()
+    spec = _minimal_spec()
+    worker = HungWorkerAdapter()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": worker},
+    )
+    # budget_seconds=0.013 → delegation timeout = 75% * 0.013 ≈ 10ms
+    state = make_state()
+    state["budget_seconds"] = 0.013
+    state["start_time"] = 0.0  # unused but needed for budget warning path
+
+    cmd = node(state)
+    assert cmd.goto == END
+    assert status_seen and "Timeout" in status_seen[0]
 
 
 # ---------------------------------------------------------------------------

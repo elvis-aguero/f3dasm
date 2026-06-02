@@ -8,6 +8,8 @@ which is the ADAS-inspectable topology entry point.
 from __future__ import annotations
 
 import threading
+import time
+import traceback
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -123,6 +125,9 @@ class StrategizerNode(AgentNode):
         self._registry: dict[str, dict] = {}
         self._registry_lock = threading.Lock()
         self._threads: dict[str, threading.Thread] = {}
+        # Budget state — set at the start of each __call__ from AgenticState
+        self._budget_seconds: float | None = None
+        self._run_start: float | None = None
         self.adapter.closure_tools.update(self._build_routing_closures())
         self.adapter.route_watcher = lambda: self._route.get("kind") == "done"
 
@@ -135,18 +140,14 @@ class StrategizerNode(AgentNode):
         interactive = self._interactive
 
         def Delegate(target: str, intent: str, expected_report: str) -> str:
-            """Fire a task to a named agent in the background.
-
-            Returns a delegation ID (e.g. 'TASK-a3b2c4d5') immediately.
-            Use GetStatus(delegation_id) to poll for completion.
-            """
+            """Fire a task concurrently; returns a TASK-xxxxxxxx ID immediately."""
             if target not in outgoing:
                 return (
                     f"ERROR: unknown target {target!r}."
                     f" Valid targets: {outgoing}"
                 )
-            worker = node._worker_adapters.get(target)
-            if worker is None:
+            worker_template = node._worker_adapters.get(target)
+            if worker_template is None:
                 return (
                     f"ERROR: no worker adapter for target {target!r}."
                     f" Available: {list(node._worker_adapters)}"
@@ -165,16 +166,22 @@ class StrategizerNode(AgentNode):
                 task_msg = preamble + "\n\n" + task_msg
 
             delegation_id = "TASK-" + uuid.uuid4().hex[:8]
+            start_time_mono = time.monotonic()
 
             with node._registry_lock:
                 node._registry[delegation_id] = {
                     "status": "Working",
                     "result": None,
                     "evals": 0,
+                    "start_time": start_time_mono,
                 }
 
+            # Each delegation gets its OWN adapter copy so concurrent
+            # delegations to the same target never race on closure_tools (D1/D2).
+            # Adapters that don't implement copy() are used as-is (e.g. test stubs).
+            worker = worker_template.copy() if hasattr(worker_template, "copy") else worker_template
+
             def _run() -> None:
-                # Per-delegation evals counter (written by ReportEvals closure)
                 evals_box: dict = {"count": 0}
 
                 def ReportEvals(count: int) -> str:
@@ -182,11 +189,8 @@ class StrategizerNode(AgentNode):
                     evals_box["count"] = int(count)
                     return f"Recorded {count} evaluations."
 
-                # Attach ReportEvals to the worker adapter for this invocation
-                original_closure_tools = dict(worker.closure_tools)
                 worker.closure_tools["ReportEvals"] = ReportEvals
                 try:
-                    from .nodes import _classify_response
                     from .agent_prompts import IMPLEMENTER_REPORT_RETRY_PROMPT
 
                     messages = [{"role": "user", "content": task_msg}]
@@ -207,23 +211,23 @@ class StrategizerNode(AgentNode):
                         text = worker.invoke(retry_messages)
 
                     with node._registry_lock:
-                        node._registry[delegation_id] = {
+                        node._registry[delegation_id].update({
                             "status": "Done",
                             "result": text,
                             "evals": evals_box["count"],
-                        }
-                except Exception as exc:  # noqa: BLE001
+                        })
+                except Exception:  # noqa: BLE001
+                    tb = traceback.format_exc()
                     with node._registry_lock:
-                        node._registry[delegation_id] = {
+                        node._registry[delegation_id].update({
                             "status": "Errored",
-                            "result": str(exc),
+                            "result": tb,
                             "evals": evals_box["count"],
-                        }
-                finally:
-                    worker.closure_tools = original_closure_tools
+                        })
 
             t = threading.Thread(target=_run, daemon=True, name=delegation_id)
-            node._threads[delegation_id] = t
+            with node._registry_lock:
+                node._threads[delegation_id] = t  # A3: inside lock
             t.start()
 
             return (
@@ -232,16 +236,17 @@ class StrategizerNode(AgentNode):
             )
 
         def GetStatus(delegation_id: str) -> str:
-            """Poll the status of a background delegation.
+            """Poll a background delegation.
 
             Returns one of:
               'Working'                 — task still running
-              'Done\\n\\n<full report>' — task completed successfully
-              'Errored: <message>'      — task raised an exception
+              'Done\\n\\n<full report>' — completed successfully
+              'Errored:\\n<traceback>'  — task raised an exception; read the
+                                         traceback, revise intent, re-delegate
             """
             with node._registry_lock:
-                entry = node._registry.get(delegation_id)
-            if entry is None:
+                entry = dict(node._registry.get(delegation_id, {}))
+            if not entry:
                 known = list(node._registry)
                 return (
                     f"ERROR: unknown delegation ID {delegation_id!r}. "
@@ -249,10 +254,31 @@ class StrategizerNode(AgentNode):
                 )
             status = entry["status"]
             if status == "Working":
+                # Lazy timeout: 75% of the run's total time budget.
+                # No budget → no timeout (B2 fix, but respects user's config).
+                budget = node._budget_seconds
+                if budget is not None and budget > 0:
+                    timeout = 0.75 * budget
+                    elapsed = time.monotonic() - entry["start_time"]
+                    if elapsed > timeout:
+                        with node._registry_lock:
+                            node._registry[delegation_id].update({
+                                "status": "Errored",
+                                "result": (
+                                    f"Timeout: delegation exceeded {timeout:.0f}s "
+                                    f"(75% of {budget:.0f}s run budget; "
+                                    f"elapsed {elapsed:.0f}s)."
+                                ),
+                            })
+                        return (
+                            f"Errored:\nTimeout: delegation exceeded {timeout:.0f}s "
+                            f"(75% of run budget). Re-delegate with a simpler "
+                            "or more focused task."
+                        )
                 return "Working"
             if status == "Done":
                 return f"Done\n\n{entry['result']}"
-            return f"Errored: {entry['result']}"
+            return f"Errored:\n{entry['result']}"
 
         def Done(summary: str) -> str:
             """Signal end of run with a summary of findings.
@@ -343,19 +369,36 @@ class StrategizerNode(AgentNode):
         if run_dir:
             self._current_notes_dir = Path(run_dir) / "strategizer_notes"
 
-        # Soft budget warnings — appended to context, run is NOT stopped
+        # Soft budget warnings — appended to context, run is NOT stopped.
+        # 95%: early warning, start wrapping up.
+        # 100%: final warning with 5% cleanup window remaining.
         budget_warnings: list[dict] = []
         budget = state.get("budget_seconds")
         start = state.get("start_time")
+        # Store on node so GetStatus() can compute delegation timeout
+        self._budget_seconds = budget
+        self._run_start = start
         if budget is not None and start is not None:
             elapsed = time.time() - start
-            if elapsed >= budget:
+            pct = elapsed / budget
+            if pct >= 1.0:
+                cleanup_remaining = max(0.0, budget * 1.05 - elapsed)
                 budget_warnings.append({
                     "role": "user",
                     "content": (
-                        f"Warning: time budget exceeded"
-                        f" ({elapsed:.0f}s elapsed / {budget:.0f}s budget)."
-                        f" Wrap up as quickly as possible."
+                        f"CRITICAL: time budget fully consumed "
+                        f"({elapsed:.0f}s / {budget:.0f}s). "
+                        f"You have ~{cleanup_remaining:.0f}s (5% cleanup window) "
+                        "to call Done(). Do not start new delegations."
+                    ),
+                })
+            elif pct >= 0.95:
+                budget_warnings.append({
+                    "role": "user",
+                    "content": (
+                        f"Warning: time budget at {pct*100:.0f}% "
+                        f"({elapsed:.0f}s / {budget:.0f}s). "
+                        "Begin wrapping up — call Done() soon."
                     ),
                 })
 
@@ -371,7 +414,12 @@ class StrategizerNode(AgentNode):
                 ),
             })
 
+        # A1/A2: reset per-turn state so a reused node starts clean each call
         self._route.clear()
+        self._ask_count = 0
+        with self._registry_lock:
+            self._registry.clear()
+            self._threads.clear()
 
         messages = _to_adapter_messages(state["messages"]) + budget_warnings
         text = self.adapter.invoke(messages)

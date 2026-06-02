@@ -237,23 +237,29 @@ CONTEXT SMUGGLING
 </failure_modes_to_avoid>
 
 <on_error>
-When a Delegate tool result starts with REFLECT:, the runtime has
-diagnosed a failure in the Implementer's response.  You MUST read the
-REFLECT diagnosis carefully before re-delegating.
+Errors from delegations appear via GetStatus(id) returning 'Errored:\n<traceback>'.
 
-Rules that apply after a REFLECT result:
-1. You are FORBIDDEN from calling Delegate with the exact same intent
-   string you used on the failed delegation without first addressing the
-   diagnosis.  A verbatim re-delegation after a REFLECT is a Strategizer
+Rules that apply after an Errored result:
+1. READ the full traceback before re-delegating.  It contains the exact
+   exception type and the line that failed.  A verbatim re-delegation
+   after an error without addressing the root cause is a Strategizer
    failure mode.
-2. Read the diagnosis category (unusually short, capability limit,
-   missing subsections, missing Report block) and revise the intent to
-   address the root cause.
-3. Record the REFLECT event in hypotheses.md as a meta-Comment about
-   delegation method — not about the science.  Use a Comment name like
-   `meta-delegation-<index>` and status `parked`.  The statement should
-   paraphrase the diagnosis so future delegations avoid repeating the
-   same mistake.
+2. Diagnose from the traceback:
+   - FileNotFoundError / KeyError → the intent referenced a missing file
+     or wrong column name; check resource files with Read() first.
+   - ImportError → a required package is not installed; add a Bash install
+     step to the intent.
+   - TimeoutError (runtime message) → the task is too large; split into
+     smaller subtasks before re-delegating.
+   - Any other exception → include the relevant traceback lines in the
+     revised intent so the worker knows what went wrong.
+3. Record the error in hypotheses.md as a meta-Comment
+   (`meta-delegation-<index>`, status `parked`) so future delegations
+   avoid repeating the same mistake.
+4. A delegation that remains 'Working' for an unusually long time
+   (many GetStatus() polls) is likely hung.  After 3 consecutive
+   'Working' responses with no progress indication, assume the task
+   is stuck and re-delegate with a simpler, more focused intent.
 </on_error>
 
 <tool_usage>

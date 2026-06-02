@@ -143,6 +143,8 @@ def test_build_graph_routes_delegate_to_implementer():
         def invoke(self, messages):
             impl_call_count[0] += 1
             return "## Report\nTask complete."
+        def copy(self):
+            return ImplAdapter()
 
     spec = Graph(
         nodes={"s": StrategAgent(), "i": ImplAgent()},
