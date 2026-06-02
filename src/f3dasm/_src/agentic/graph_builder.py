@@ -21,6 +21,7 @@ def build_graph(
     checkpointer: Any = None,
     study_dir: Any = None,
     interactive: bool = False,
+    max_ask: int = 1,
 ) -> Any:
     """Build and compile a LangGraph StateGraph from a Graph spec.
 
@@ -46,6 +47,13 @@ def build_graph(
         outgoing = spec.outgoing(name)
 
         if agent.role == "strategizer":
+            # Pre-build worker adapters for each outgoing edge target so the
+            # Strategizer can spawn them in background threads.
+            worker_adapters = {
+                target_name: make_adapter(target_name, spec.nodes[target_name])
+                for target_name in outgoing
+                if target_name in spec.nodes
+            }
             node = StrategizerNode(
                 adapter,
                 name=name,
@@ -53,6 +61,8 @@ def build_graph(
                 spec=spec,
                 study_dir=study_dir,
                 interactive=interactive,
+                max_ask=max_ask,
+                worker_adapters=worker_adapters,
             )
         else:
             node = ImplementerNode(adapter)

@@ -85,36 +85,59 @@ def test_strategizer_routes_done_when_done_called():
     assert "Finished successfully." in (cmd.update.get("last_report") or "")
 
 
-def test_strategizer_routes_delegate_when_delegate_called():
-    """StrategizerNode returns Command(goto='implementer') when Delegate closure is called."""
+def test_strategizer_delegate_returns_task_id():
+    """Delegate() returns a TASK-xxxxxxxx ID and starts a background thread."""
+    import threading
+    import time
     from f3dasm._src.agentic.nodes import StrategizerNode
+
+    received_ids: list[str] = []
+    worker_started = threading.Event()
+
+    class SlowWorkerAdapter(StubAdapter):
+        def invoke(self, messages):
+            worker_started.set()
+            time.sleep(0.05)
+            return "## Report\n### Actions taken\nDone.\n### Files touched\n(none)\n### Conclusions\nOK\n### Numbers\nn: 0"
 
     class DelegateCallingAdapter(StubAdapter):
         def invoke(self, messages):
-            self.closure_tools["Delegate"](
+            result = self.closure_tools["Delegate"](
                 target="implementer",
                 intent="Run experiment A.",
                 expected_report="Report results.",
             )
-            return "Task delegated. Waiting for Report."
+            received_ids.append(result)
+            # Wait briefly then call Done after delegation finishes
+            worker_started.wait(timeout=2)
+            time.sleep(0.1)  # let worker finish
+            self.closure_tools["Done"](summary="All done.")
+            return "Done."
 
     adapter = DelegateCallingAdapter()
     spec = _minimal_spec()
-    node = StrategizerNode(adapter, name="strategizer", outgoing=["implementer"], spec=spec)
+    worker = SlowWorkerAdapter()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": worker},
+    )
     cmd = node(make_state())
 
-    assert cmd.goto == "implementer"
-    human_msgs = [m for m in cmd.update["messages"] if isinstance(m, HumanMessage)]
-    assert any("Run experiment A." in m.content for m in human_msgs)
-    assert cmd.update["total_delegations"] == 1
-    assert cmd.update["return_to"] == "strategizer"
+    assert cmd.goto == END
+    assert received_ids and "TASK-" in received_ids[0]
 
 
 def test_done_blocked_while_delegation_pending():
-    """Done returns an error when called after Delegate in the same turn."""
+    """Done returns an error when called while a delegation is still Working."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
     results: list[str] = []
+
+    class SlowWorkerAdapter(StubAdapter):
+        def invoke(self, messages):
+            import time
+            time.sleep(10)  # never finishes in test timeframe
+            return "## Report\n### Actions taken\nDone.\n### Files touched\n(none)\n### Conclusions\nOK\n### Numbers\nn: 0"
 
     class DelegateThenDoneAdapter(StubAdapter):
         def invoke(self, messages):
@@ -124,35 +147,51 @@ def test_done_blocked_while_delegation_pending():
                 expected_report="Report back.",
             )
             results.append(self.closure_tools["Done"](summary="All done."))
-            return "Task delegated. Waiting for Report."
+            # Fall through to Done without waiting → should default to END
+            self.closure_tools["Done"](summary="forced")
+            return "Done."
 
     adapter = DelegateThenDoneAdapter()
     spec = _minimal_spec()
-    node = StrategizerNode(adapter, name="strategizer", outgoing=["implementer"], spec=spec)
-    cmd = node(make_state())
+    worker = SlowWorkerAdapter()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": worker},
+    )
+    node(make_state())
 
-    # Done should have returned an error, not ended the run
-    assert "implementer" in results[0]
-    assert "not reported back" in results[0]
-    # Routing should still be to the implementer
-    assert cmd.goto == "implementer"
+    # Done should have returned an error about pending delegation
+    assert results and "ERROR" in results[0]
+    assert "still running" in results[0]
 
 
 def test_strategizer_increments_delegation_count():
-    """Each Delegate call increments total_delegations."""
+    """total_delegations reflects all fired delegations after the run completes."""
+    import time
     from f3dasm._src.agentic.nodes import StrategizerNode
+
+    class FastWorkerAdapter(StubAdapter):
+        def invoke(self, messages):
+            return "## Report\n### Actions taken\nDone.\n### Files touched\n(none)\n### Conclusions\nOK\n### Numbers\nn: 0"
 
     class DelegateCallingAdapter(StubAdapter):
         def invoke(self, messages):
             self.closure_tools["Delegate"](target="implementer", intent="task", expected_report="report")
-            return "delegated"
+            time.sleep(0.1)  # let worker finish
+            self.closure_tools["Done"](summary="done")
+            return "Done."
 
     adapter = DelegateCallingAdapter()
     spec = _minimal_spec()
-    node = StrategizerNode(adapter, name="strategizer", outgoing=["implementer"], spec=spec)
+    worker = FastWorkerAdapter()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": worker},
+    )
     state = make_state(total_delegations=3)
     cmd = node(state)
 
+    # 3 existing + 1 new delegation from registry
     assert cmd.update["total_delegations"] == 4
 
 
@@ -254,8 +293,16 @@ def test_implementer_evals_zero_when_report_evals_not_called():
 
 
 def test_strategizer_delegate_includes_expected_report_in_message():
-    """Delegate expected_report appears in the HumanMessage sent to implementer."""
+    """Delegate expected_report appears in the task message sent to the worker."""
+    import time
     from f3dasm._src.agentic.nodes import StrategizerNode
+
+    received_messages: list[list] = []
+
+    class CapturingWorkerAdapter(StubAdapter):
+        def invoke(self, messages):
+            received_messages.append(messages)
+            return "## Report\n### Actions taken\nDone.\n### Files touched\n(none)\n### Conclusions\nOK\n### Numbers\nn: 0"
 
     class DelegateCallingAdapter(StubAdapter):
         def invoke(self, messages):
@@ -264,21 +311,28 @@ def test_strategizer_delegate_includes_expected_report_in_message():
                 intent="Run the experiment.",
                 expected_report="Must produce workspace/replicate.py",
             )
-            return "Delegated."
+            time.sleep(0.1)  # let worker finish
+            self.closure_tools["Done"](summary="done")
+            return "Done."
 
     adapter = DelegateCallingAdapter()
     spec = _minimal_spec()
-    node = StrategizerNode(adapter, name="strategizer", outgoing=["implementer"], spec=spec)
-    cmd = node(make_state())
+    worker = CapturingWorkerAdapter()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": worker},
+    )
+    node(make_state())
 
-    human_msgs = [m for m in cmd.update["messages"] if isinstance(m, HumanMessage)]
-    full_content = " ".join(m.content for m in human_msgs)
-    assert "workspace/replicate.py" in full_content
-    assert "Required deliverables" in full_content
+    assert received_messages, "Worker was never called"
+    task_content = received_messages[0][0]["content"]
+    assert "workspace/replicate.py" in task_content
+    assert "Required deliverables" in task_content
 
 
 def test_strategizer_delegate_prepends_edge_preamble():
     """Edge preamble is prepended to the task message when the edge has one."""
+    import time
     from f3dasm._src.agentic.nodes import StrategizerNode
 
     class A(Agent):
@@ -293,6 +347,13 @@ def test_strategizer_delegate_prepends_edge_preamble():
         entry="strategizer",
     )
 
+    received_messages: list[list] = []
+
+    class CapturingWorkerAdapter(StubAdapter):
+        def invoke(self, messages):
+            received_messages.append(messages)
+            return "## Report\n### Actions taken\nDone.\n### Files touched\n(none)\n### Conclusions\nOK\n### Numbers\nn: 0"
+
     class DelegateCallingAdapter(StubAdapter):
         def invoke(self, messages):
             self.closure_tools["Delegate"](
@@ -300,15 +361,131 @@ def test_strategizer_delegate_prepends_edge_preamble():
                 intent="Do work.",
                 expected_report="",
             )
-            return "Delegated."
+            time.sleep(0.1)  # let worker finish
+            self.closure_tools["Done"](summary="done")
+            return "Done."
 
     adapter = DelegateCallingAdapter()
-    node = StrategizerNode(adapter, name="strategizer", outgoing=["implementer"], spec=spec)
+    worker = CapturingWorkerAdapter()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": worker},
+    )
+    node(make_state())
+
+    assert received_messages, "Worker was never called"
+    task_content = received_messages[0][0]["content"]
+    assert "PREAMBLE TEXT" in task_content
+
+
+# ---------------------------------------------------------------------------
+# Parallel fan-out tests
+# ---------------------------------------------------------------------------
+
+
+def test_parallel_two_delegations_both_complete():
+    """Strategizer can fire two delegations concurrently; both complete and are counted."""
+    import time
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    call_log: list[str] = []
+
+    class LoggingWorkerAdapter(StubAdapter):
+        def __init__(self, name: str) -> None:
+            super().__init__()
+            self._name = name
+
+        def invoke(self, messages: list) -> str:
+            call_log.append(self._name)
+            time.sleep(0.05)
+            return (
+                f"## Report\n### Actions taken\nDone {self._name}.\n"
+                f"### Files touched\n(none)\n### Conclusions\nOK\n### Numbers\nn: 0"
+            )
+
+    class TwoDelegateAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["Delegate"](target="worker_a", intent="Task A", expected_report="")
+            self.closure_tools["Delegate"](target="worker_b", intent="Task B", expected_report="")
+            time.sleep(0.15)  # let both workers finish
+            result = self.closure_tools["Done"](summary="Both done.")
+            assert "ERROR" not in result, f"Done() failed: {result}"
+            return "Done."
+
+    class A(Agent):
+        role = "strategizer"
+
+    class B(Agent):
+        pass
+
+    spec = Graph(
+        nodes={"strategizer": A(), "worker_a": B(), "worker_b": B()},
+        edges=(Edge("strategizer", "worker_a"), Edge("strategizer", "worker_b")),
+        entry="strategizer",
+    )
+
+    adapter = TwoDelegateAdapter()
+    node = StrategizerNode(
+        adapter, name="strategizer",
+        outgoing=["worker_a", "worker_b"], spec=spec,
+        worker_adapters={
+            "worker_a": LoggingWorkerAdapter("worker_a"),
+            "worker_b": LoggingWorkerAdapter("worker_b"),
+        },
+    )
     cmd = node(make_state())
 
-    human_msgs = [m for m in cmd.update["messages"] if isinstance(m, HumanMessage)]
-    full_content = " ".join(m.content for m in human_msgs)
-    assert "PREAMBLE TEXT" in full_content
+    assert cmd.goto == END
+    assert cmd.update["done"] is True
+    assert cmd.update["total_delegations"] == 2  # 0 existing + 2 from registry
+    assert set(call_log) == {"worker_a", "worker_b"}
+
+
+def test_get_status_returns_working_then_done():
+    """GetStatus returns 'Working' while the delegation is running, then 'Done'."""
+    import time
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    status_snapshots: list[str] = []
+
+    class SlowWorkerAdapter(StubAdapter):
+        def invoke(self, messages):
+            time.sleep(0.1)
+            return (
+                "## Report\n### Actions taken\nDone.\n"
+                "### Files touched\n(none)\n### Conclusions\nOK\n### Numbers\nn: 0"
+            )
+
+    class PollAdapter(StubAdapter):
+        def invoke(self, messages):
+            task_id_msg = self.closure_tools["Delegate"](
+                target="implementer", intent="Work.", expected_report=""
+            )
+            # Extract TASK-xxxxxxxx from the return string
+            import re
+            m = re.search(r"TASK-[0-9a-f]+", task_id_msg)
+            assert m, f"No task ID found in: {task_id_msg!r}"
+            task_id = m.group()
+
+            # Poll immediately — should be Working
+            status_snapshots.append(self.closure_tools["GetStatus"](task_id))
+            # Wait and poll again — should be Done
+            time.sleep(0.5)
+            status_snapshots.append(self.closure_tools["GetStatus"](task_id))
+            self.closure_tools["Done"](summary="polled")
+            return "Done."
+
+    adapter = PollAdapter()
+    spec = _minimal_spec()
+    worker = SlowWorkerAdapter()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": worker},
+    )
+    node(make_state())
+
+    assert status_snapshots[0] == "Working"
+    assert status_snapshots[1].startswith("Done")
 
 
 # ---------------------------------------------------------------------------

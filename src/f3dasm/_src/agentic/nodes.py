@@ -7,6 +7,8 @@ which is the ADAS-inspectable topology entry point.
 
 from __future__ import annotations
 
+import threading
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -103,6 +105,8 @@ class StrategizerNode(AgentNode):
         spec: Any,
         study_dir: Any = None,
         interactive: bool = False,
+        max_ask: int = 1,
+        worker_adapters: dict | None = None,
     ) -> None:
         super().__init__(adapter)
         self._name = name
@@ -111,9 +115,16 @@ class StrategizerNode(AgentNode):
         self._route: dict = {}
         self._study_dir = study_dir
         self._interactive = interactive
+        self._max_ask = max_ask
+        self._ask_count = 0
         self._current_notes_dir: Path | None = None
+        # Parallel delegation registry: id → {"status", "result", "evals"}
+        self._worker_adapters: dict[str, Any] = worker_adapters or {}
+        self._registry: dict[str, dict] = {}
+        self._registry_lock = threading.Lock()
+        self._threads: dict[str, threading.Thread] = {}
         self.adapter.closure_tools.update(self._build_routing_closures())
-        self.adapter.route_watcher = lambda: bool(self._route.get("kind"))
+        self.adapter.route_watcher = lambda: self._route.get("kind") == "done"
 
     def _build_routing_closures(self) -> dict:
         """Return routing closure tools that write to self._route."""
@@ -124,25 +135,142 @@ class StrategizerNode(AgentNode):
         interactive = self._interactive
 
         def Delegate(target: str, intent: str, expected_report: str) -> str:
-            """Delegate a task to a named agent."""
+            """Fire a task to a named agent in the background.
+
+            Returns a delegation ID (e.g. 'TASK-a3b2c4d5') immediately.
+            Use GetStatus(delegation_id) to poll for completion.
+            """
             if target not in outgoing:
                 return (
                     f"ERROR: unknown target {target!r}."
                     f" Valid targets: {outgoing}"
                 )
-            route["kind"] = "delegate"
-            route["target"] = target
-            route["task"] = intent
-            route["expected_report"] = expected_report
-            return "Task delegated. Waiting for Report."
+            worker = node._worker_adapters.get(target)
+            if worker is None:
+                return (
+                    f"ERROR: no worker adapter for target {target!r}."
+                    f" Available: {list(node._worker_adapters)}"
+                )
+
+            # Build task message (same as previous sequential logic)
+            edge = node._spec.edge(node._name, target)
+            preamble = edge.preamble if edge else ""
+            task_msg = intent
+            if expected_report:
+                task_msg += (
+                    f"\n\n**Required deliverables / acceptance"
+                    f" criteria:**\n{expected_report}"
+                )
+            if preamble:
+                task_msg = preamble + "\n\n" + task_msg
+
+            delegation_id = "TASK-" + uuid.uuid4().hex[:8]
+
+            with node._registry_lock:
+                node._registry[delegation_id] = {
+                    "status": "Working",
+                    "result": None,
+                    "evals": 0,
+                }
+
+            def _run() -> None:
+                # Per-delegation evals counter (written by ReportEvals closure)
+                evals_box: dict = {"count": 0}
+
+                def ReportEvals(count: int) -> str:
+                    """Report the number of function evaluations used."""
+                    evals_box["count"] = int(count)
+                    return f"Recorded {count} evaluations."
+
+                # Attach ReportEvals to the worker adapter for this invocation
+                original_closure_tools = dict(worker.closure_tools)
+                worker.closure_tools["ReportEvals"] = ReportEvals
+                try:
+                    from .nodes import _classify_response
+                    from .agent_prompts import IMPLEMENTER_REPORT_RETRY_PROMPT
+
+                    messages = [{"role": "user", "content": task_msg}]
+                    text = worker.invoke(messages)
+
+                    diagnosis = _classify_response(text)
+                    if diagnosis is not None:
+                        retry_messages = messages + [
+                            {"role": "ai", "content": text},
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"{IMPLEMENTER_REPORT_RETRY_PROMPT}"
+                                    f"\n\nDiagnosis: {diagnosis}"
+                                ),
+                            },
+                        ]
+                        text = worker.invoke(retry_messages)
+
+                    with node._registry_lock:
+                        node._registry[delegation_id] = {
+                            "status": "Done",
+                            "result": text,
+                            "evals": evals_box["count"],
+                        }
+                except Exception as exc:  # noqa: BLE001
+                    with node._registry_lock:
+                        node._registry[delegation_id] = {
+                            "status": "Errored",
+                            "result": str(exc),
+                            "evals": evals_box["count"],
+                        }
+                finally:
+                    worker.closure_tools = original_closure_tools
+
+            t = threading.Thread(target=_run, daemon=True, name=delegation_id)
+            node._threads[delegation_id] = t
+            t.start()
+
+            return (
+                f"Delegation started. ID: {delegation_id!r}. "
+                f"Use GetStatus('{delegation_id}') to poll for completion."
+            )
+
+        def GetStatus(delegation_id: str) -> str:
+            """Poll the status of a background delegation.
+
+            Returns one of:
+              'Working'                 — task still running
+              'Done\\n\\n<full report>' — task completed successfully
+              'Errored: <message>'      — task raised an exception
+            """
+            with node._registry_lock:
+                entry = node._registry.get(delegation_id)
+            if entry is None:
+                known = list(node._registry)
+                return (
+                    f"ERROR: unknown delegation ID {delegation_id!r}. "
+                    f"Known IDs: {known}"
+                )
+            status = entry["status"]
+            if status == "Working":
+                return "Working"
+            if status == "Done":
+                return f"Done\n\n{entry['result']}"
+            return f"Errored: {entry['result']}"
 
         def Done(summary: str) -> str:
-            """Signal end of run with a summary of findings."""
-            if route.get("kind") == "delegate":
-                target = route["target"]
+            """Signal end of run with a summary of findings.
+
+            Refuses if any delegation is still Working — call GetStatus()
+            on all pending delegations first.
+            """
+            with node._registry_lock:
+                pending = [
+                    did for did, e in node._registry.items()
+                    if e["status"] == "Working"
+                ]
+            if pending:
                 return (
-                    f"ERROR: '{target}' has not reported back yet. "
-                    f"Wait for {target}'s report before calling Done."
+                    f"ERROR: {len(pending)} delegation(s) still running: "
+                    f"{pending}. "
+                    "Call GetStatus() on each and wait for 'Done' or "
+                    "'Errored' before calling Done()."
                 )
             route["kind"] = "done"
             route["summary"] = summary
@@ -150,6 +278,12 @@ class StrategizerNode(AgentNode):
 
         def Ask(question: str) -> str:
             """Ask the human operator a question and wait for input."""
+            if node._ask_count >= node._max_ask:
+                return (
+                    f"Ask limit reached ({node._max_ask} allowed). "
+                    "Proceed autonomously with the information you have."
+                )
+            node._ask_count += 1
             if interactive:
                 print(f"\n[Strategizer] {question}\nAnswer: ", end="", flush=True)
                 return input()
@@ -184,6 +318,7 @@ class StrategizerNode(AgentNode):
 
         return {
             "Delegate": Delegate,
+            "GetStatus": GetStatus,
             "Done": Done,
             "Ask": Ask,
             "WriteMarkdown": WriteMarkdown,
@@ -243,26 +378,6 @@ class StrategizerNode(AgentNode):
         ai_msg = AIMessage(content=text)
 
         route = self._route
-        if route.get("kind") == "delegate" and route.get("target"):
-            edge = self._spec.edge(self._name, route["target"])
-            preamble = edge.preamble if edge else ""
-            task_msg = route.get("task", "")
-            expected = route.get("expected_report", "")
-            if expected:
-                task_msg += (
-                    f"\n\n**Required deliverables / acceptance"
-                    f" criteria:**\n{expected}"
-                )
-            if preamble:
-                task_msg = preamble + "\n\n" + task_msg
-            return Command(
-                goto=route["target"],
-                update={
-                    "messages": [ai_msg, HumanMessage(content=task_msg)],
-                    "total_delegations": state["total_delegations"] + 1,
-                    "return_to": self._name,
-                },
-            )
         # "done" or no routing tool — enforce deliverables before accepting
         missing = self._missing_deliverables(state)
         if missing:
@@ -283,11 +398,20 @@ class StrategizerNode(AgentNode):
                 },
             )
 
+        # Accumulate delegation counts and evals from registry
+        with self._registry_lock:
+            total_new = len(self._registry)
+            evals_new = sum(e["evals"] for e in self._registry.values())
+
         summary = route.get("summary") or text
         return Command(
             goto=END,
             update={
-                "messages": [ai_msg], "done": True, "last_report": summary
+                "messages": [ai_msg],
+                "done": True,
+                "last_report": summary,
+                "total_delegations": state["total_delegations"] + total_new,
+                "evals_used": state.get("evals_used", 0) + evals_new,
             },
         )
 
