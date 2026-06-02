@@ -181,11 +181,37 @@ class OllamaAdapter:
         self.model = model
         self.system_prompt = system_prompt
         self.study_dir = Path(study_dir) if study_dir else None
-        self._native_tool_names: list[str] = list(native_tools or [])
+        # Use 'native_tools' (not '_native_tool_names') so ImplementerNode's
+        # sandboxed-Write setup can find it by the same attribute name as
+        # ClaudeAdapter.
+        self.native_tools: list[str] = list(native_tools or [])
         self.closure_tools: dict[str, Any] = dict(closure_tools or {})
         self._base_url = base_url
-        # built lazily so closure_tools are fully populated
+        # Built lazily so that closure_tools are fully populated before first
+        # invoke().  Reset to None whenever native_tools or closure_tools change
+        # so the next invoke() picks up the updated tool set.
         self._agent: Any = None
+        # route_watcher is set by StrategizerNode; unused by OllamaAdapter
+        # (create_react_agent runs the full tool loop to completion) but must
+        # be present so StrategizerNode.__init__ doesn't raise AttributeError.
+        self.route_watcher: Any = None
+
+    def copy(self) -> "OllamaAdapter":
+        """Return a fresh adapter with the same config but independent state.
+
+        Used by StrategizerNode.Delegate() to give each concurrent delegation
+        its own adapter instance so they never race on closure_tools or the
+        cached _agent.
+        """
+        return OllamaAdapter(
+            model=self.model,
+            system_prompt=self.system_prompt,
+            study_dir=self.study_dir,
+            native_tools=list(self.native_tools),
+            closure_tools=dict(self.closure_tools),
+            base_url=self._base_url,
+        )
+        # _agent is intentionally left as None in the copy so it is built fresh.
 
     def _build_tools(self) -> list[Any]:
         from langchain_core.tools import StructuredTool
@@ -193,7 +219,7 @@ class OllamaAdapter:
         native_map = _native_tool_map(self.study_dir)
         tools: list[Any] = [
             native_map[name]
-            for name in self._native_tool_names
+            for name in self.native_tools
             if name in native_map
         ]
         for name, fn in self.closure_tools.items():
