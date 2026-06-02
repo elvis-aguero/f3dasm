@@ -10,7 +10,7 @@ from langgraph.graph import StateGraph
 
 from .backends.base import Agent, Graph
 from .graph_state import AgenticState
-from .nodes import ImplementerNode, StrategizerNode
+from .nodes import ImplementerNode, StrategizerNode, WorkerNode  # ImplementerNode re-exported for backward compat
 
 __all__ = ["build_graph"]
 
@@ -65,7 +65,7 @@ def build_graph(
                 worker_adapters=worker_adapters,
             )
         else:
-            node = ImplementerNode(adapter, study_dir=study_dir)
+            node = WorkerNode(adapter, study_dir=study_dir)
 
         builder.add_node(name, node)
 

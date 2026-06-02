@@ -18,7 +18,8 @@ if TYPE_CHECKING:
     from .graph_state import AgenticState
 
 __all__ = [
-    "AgentNode", "StrategizerNode", "ImplementerNode", "_to_adapter_messages"
+    "AgentNode", "StrategizerNode", "WorkerNode", "ImplementerNode",
+    "_to_adapter_messages"
 ]
 
 _REQUIRED_SUBSECTIONS = [
@@ -497,8 +498,13 @@ class StrategizerNode(AgentNode):
         )
 
 
-class ImplementerNode(AgentNode):
-    """Worker node: executes tasks, writes Reports, returns to caller."""
+class WorkerNode(AgentNode):
+    """Generic worker node: executes tasks, writes Reports, returns to caller.
+
+    Used for any non-orchestrator agent (Implementer, Debugger,
+    LiteratureReviewer, etc.).  The node name in the graph is what
+    distinguishes agents — not the node class.
+    """
 
     def __init__(self, adapter: Any, study_dir: Any = None) -> None:
         super().__init__(adapter)
@@ -601,3 +607,8 @@ class ImplementerNode(AgentNode):
                 "evals_used": state.get("evals_used", 0) + evals_delta,
             },
         )
+
+
+# Backward-compatible alias — ImplementerNode is the WorkerNode used in the
+# canonical 2-node topology.  New code should use WorkerNode directly.
+ImplementerNode = WorkerNode

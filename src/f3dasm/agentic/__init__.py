@@ -18,14 +18,24 @@ from .._src.agentic.agent_runtime import (
     StudyConfig,
     Task,
 )
-from .._src.agentic.agents import ImplementerAgent, StrategizerAgent
+from .._src.agentic.agents import (
+    DebuggerAgent,
+    ImplementerAgent,
+    LiteratureReviewAgent,
+    StrategizerAgent,
+)
 from .._src.agentic.backends.base import Agent, Edge, Graph
 from .._src.agentic.backends.claude import ClaudeAdapter
 from .._src.agentic.backends.ollama import OllamaAdapter
 from .._src.agentic.graph_builder import build_graph
 from .._src.agentic.graph_state import AgenticState
 from .._src.agentic.lookup import LookupDataGenerator
-from .._src.agentic.nodes import AgentNode, ImplementerNode, StrategizerNode
+from .._src.agentic.nodes import (
+    AgentNode,
+    ImplementerNode,
+    StrategizerNode,
+    WorkerNode,
+)
 from .._src.agentic.optimizer import AgenticOptimizer
 
 __author__ = "Elvis Aguero (elvis_alexander_aguero_vera@brown.edu)"
@@ -44,8 +54,11 @@ __all__ = [
     "Delegation",
     "Edge",
     "Graph",
+    "DebuggerAgent",
     "ImplementerAgent",
+    "LiteratureReviewAgent",
     "ImplementerNode",
+    "WorkerNode",
     "LookupDataGenerator",
     "OllamaAdapter",
     "Report",
