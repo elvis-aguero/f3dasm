@@ -19,6 +19,7 @@ from .agent_prompts import (
 from .agents import ImplementerAgent, StrategizerAgent, _default_graph
 from .backends.base import Agent, Graph
 from .backends.claude import ClaudeAdapter
+from .container_runner import ContainerRunner
 from .delegation_log import DelegationLog
 from .graph_builder import build_graph
 from .graph_state import AgenticState, Delegation, Report, StudyConfig, Task
@@ -100,6 +101,8 @@ class AgenticRun:
         eval_budget: int | None = None,
         interactive: bool = False,
         max_ask: int = 1,
+        container: bool = False,
+        container_image: str = "f3dasm-agentic:latest",
     ) -> None:
         self.study_dir = Path(study_dir).resolve()
         cfg = _load_study_config(self.study_dir)
@@ -125,6 +128,8 @@ class AgenticRun:
         self._graph_spec = graph or _default_graph()
         self._interactive = interactive
         self._max_ask = max_ask
+        self._container = container
+        self._container_image = container_image
         self._run_dir = None  # set in execute()
 
     def execute(self) -> str:
@@ -133,6 +138,19 @@ class AgenticRun:
         Reads ``PROBLEM_STATEMENT.md`` from the study directory and passes it
         as the initial user message to the entry node.
         """
+        if getattr(self, "_container", False):
+            runner = ContainerRunner(
+                self.study_dir,
+                model=self._model,
+                budget=getattr(self, "_budget", None),
+                backend=getattr(self, "_backend", "claude"),
+                image=getattr(self, "_container_image", "f3dasm-agentic:latest"),
+            )
+            exit_code = runner.run()
+            if exit_code != 0:
+                raise AgenticRunError(f"Container exited with code {exit_code}")
+            return runner._latest_solution()
+
         problem_path = self.study_dir / "PROBLEM_STATEMENT.md"
         if not problem_path.exists():
             raise AgenticRunError(
