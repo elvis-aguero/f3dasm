@@ -155,6 +155,13 @@ class StrategizerNode(AgentNode):
         # Budget state — set at the start of each __call__ from AgenticState
         self._budget_seconds: float | None = None
         self._run_start: float | None = None
+        # Per-delegation pending messages (budget warnings) to prepend to
+        # worker tool results.  Keyed by delegation_id; drained on next call.
+        self._pending_worker_msgs: dict[str, list[str]] = {}
+        self._pending_worker_msgs_lock = threading.Lock()
+        # Tracks which budget % thresholds (80, 90, 100, 110 …) have already
+        # been broadcast to workers so each is sent exactly once.
+        self._budget_notified_pcts: set[int] = set()
         # Hypothesis ledger — persists hypotheses.json
         self._ledger: HypothesisLedger | None = (
             HypothesisLedger(Path(notes_dir)) if notes_dir is not None else None
@@ -205,14 +212,19 @@ class StrategizerNode(AgentNode):
             if t in node._spec.nodes
         )
         _delegate_doc = (
-            "Fire a task to a connected agent; returns a D### ID immediately.\n\n"
+            "Fire a task to a connected agent.\n\n"
+            "wait=False (default): returns a D### ID immediately; poll with\n"
+            "  GetStatus(id) to retrieve the result.\n"
+            "wait=True: blocks until the worker finishes and returns the report\n"
+            "  directly. Use this for sequential tasks where you do not need\n"
+            "  parallelism — eliminates all GetStatus() polling.\n\n"
             "CONTEXT PACKAGING: workers start each delegation with no memory of\n"
             "prior delegations. Include in the task message everything the worker\n"
-            "needs: relevant workspace paths, key findings from prior delegations,\n"
-            "and the precise question to answer. Workers can Read() the workspace\n"
-            "but need to know where to look.\n\n"
+            "needs: relevant paths, key findings from prior delegations, and the\n"
+            "precise question to answer.\n\n"
             "hypothesis_ids must be non-empty when the ledger is active.\n"
-            "The worker writes exclusively to {id}/ (relative to their workspace in debug/delegations/).\n\n"
+            "The worker writes exclusively to {id}/ (relative to their workspace\n"
+            "in debug/delegations/).\n\n"
             f"Available targets:\n  {_target_hints}"
         )
 
@@ -221,6 +233,7 @@ class StrategizerNode(AgentNode):
             intent: str,
             expected_report: str,
             hypothesis_ids: list | None = None,
+            wait: bool = False,
         ) -> str:
             if target not in outgoing:
                 return (
@@ -265,6 +278,7 @@ class StrategizerNode(AgentNode):
                     "followup_question": None,
                     "followup_answer": None,
                     "followup_event": _followup_event,
+                    "getstatus_count": 0,
                     "followup_count": 0,
                 }
 
@@ -332,7 +346,11 @@ class StrategizerNode(AgentNode):
                 def ReportEvals(count: int) -> str:
                     """Report the number of function evaluations used."""
                     evals_box["count"] = int(count)
-                    return f"Recorded {count} evaluations."
+                    # Drain any queued budget warnings for this delegation.
+                    with node._pending_worker_msgs_lock:
+                        msgs = node._pending_worker_msgs.pop(delegation_id, [])
+                    prefix = ("\n".join(msgs) + "\n\n") if msgs else ""
+                    return prefix + f"Recorded {count} evaluations."
 
                 def FollowUp(question: str) -> str:
                     """Ask your delegating party one clarifying question before proceeding.
@@ -362,7 +380,12 @@ class StrategizerNode(AgentNode):
                     with node._registry_lock:
                         answer = node._registry[delegation_id].get("followup_answer")
                         node._registry[delegation_id]["status"] = "Working"
-                    return answer or "No answer received. Proceed with best judgment."
+                    # Drain any queued budget warnings alongside the answer.
+                    with node._pending_worker_msgs_lock:
+                        msgs = node._pending_worker_msgs.pop(delegation_id, [])
+                    budget_prefix = ("\n".join(msgs) + "\n\n") if msgs else ""
+                    base = answer or "No answer received. Proceed with best judgment."
+                    return budget_prefix + base
 
                 worker.closure_tools["ReportEvals"] = ReportEvals  # not wrapped: never errors
                 worker.closure_tools["FollowUp"] = node._wrap_closure(FollowUp, target)
@@ -476,6 +499,16 @@ class StrategizerNode(AgentNode):
             # Reset two-shot Done() gate so the next Done() warns again.
             node._done_warned = False
 
+            if wait:
+                # Synchronous mode: block until the delegation finishes.
+                t.join()
+                with node._registry_lock:
+                    entry = dict(node._registry.get(delegation_id, {}))
+                status = entry.get("status", "Errored")
+                if status == "Done":
+                    return f"Done\n\n{entry['result']}"
+                return f"Errored:\n{entry.get('result', '(no details)')}"
+
             return (
                 f"Delegation started. ID: {delegation_id!r}. "
                 f"Use GetStatus('{delegation_id}') to poll for completion."
@@ -484,34 +517,116 @@ class StrategizerNode(AgentNode):
         Delegate.__doc__ = _delegate_doc
 
         def GetStatus(delegation_id: str) -> str:
-            """Poll a background delegation; also delivers any push notifications.
+            """Poll a background delegation; also delivers push notifications.
 
             Returns one of:
-              'Working'                 — task still running
-              'Done\\n\\n<full report>' — completed successfully
-              'Errored:\\n<traceback>'  — task raised an exception; read the
-                                         traceback, revise intent, re-delegate
+              'Working (running for Xs, polled N times)' — still running
+              'Done\\n\\n<full report>'                  — completed
+              'Errored:\\n<traceback>'                   — failed
 
-            Any delegations that completed since your last tool call are
-            announced as [Delegation TASK-xxx Done/Errored] lines prepended
-            to this response.
+            Tip: use Delegate(wait=True) when you do not need parallelism —
+            it blocks until the result is ready without any polling.
             """
             prefix = node._drain_notifications()
+
+            # Drain any budget warnings queued for this delegation.
+            with node._pending_worker_msgs_lock:
+                worker_msgs = node._pending_worker_msgs.pop(delegation_id, [])
+            if worker_msgs:
+                prefix += "\n".join(worker_msgs) + "\n\n"
+
             with node._registry_lock:
-                entry = dict(node._registry.get(delegation_id, {}))
-            if not entry:
-                known = list(node._registry)
-                return (
-                    prefix +
-                    f"ERROR: unknown delegation ID {delegation_id!r}. "
-                    f"Known IDs: {known}"
-                )
-            status = entry["status"]
-            if status in ("Working", "FollowUp"):
-                return prefix + "Working"
+                entry = node._registry.get(delegation_id)
+                if entry is None:
+                    known = list(node._registry)
+                    return (
+                        prefix +
+                        f"ERROR: unknown delegation ID {delegation_id!r}. "
+                        f"Known IDs: {known}"
+                    )
+                status = entry["status"]
+                if status in ("Working", "FollowUp"):
+                    # Increment poll count and record timing.
+                    entry["getstatus_count"] = entry.get("getstatus_count", 0) + 1
+                    poll_count = entry["getstatus_count"]
+                    last_poll = entry.get("last_getstatus_time")
+                    now_mono = time.monotonic()
+                    entry["last_getstatus_time"] = now_mono
+                    elapsed = int(now_mono - entry["start_time"])
+
             if status == "Done":
                 return prefix + f"Done\n\n{entry['result']}"
-            return prefix + f"Errored:\n{entry['result']}"
+            if status not in ("Working", "FollowUp"):
+                return prefix + f"Errored:\n{entry['result']}"
+
+            # --- Still working: build informative response ---
+            hints: list[str] = []
+
+            # Rate warning: polled too recently.
+            if last_poll is not None and (now_mono - last_poll) < 30:
+                hints.append(
+                    f"NOTE: you polled {delegation_id} only "
+                    f"{now_mono - last_poll:.0f}s ago. "
+                    "The worker runs in a background thread — polling faster "
+                    "does not make it finish sooner. Do other work in the "
+                    "meantime."
+                )
+
+            # Poll-count escalation.
+            if poll_count >= 30:
+                hints.append(
+                    f"WARNING: polled {poll_count} times ({elapsed}s elapsed). "
+                    "This delegation is taking very long. Strongly consider "
+                    "proceeding without this result or using Delegate(wait=True) "
+                    "for future sequential tasks."
+                )
+            elif poll_count >= 15:
+                hints.append(
+                    f"This delegation has been polled {poll_count} times "
+                    f"({elapsed}s elapsed). Consider working on other tasks "
+                    "rather than polling in a tight loop."
+                )
+            elif poll_count >= 5:
+                hints.append(
+                    f"Still running after {poll_count} polls ({elapsed}s). "
+                    "Work on other tasks and poll less frequently."
+                )
+
+            # Budget broadcast: check if a new 10%-overbudget threshold is reached.
+            budget = node._budget_seconds
+            run_start = node._run_start
+            if budget is not None and run_start is not None:
+                elapsed_wall = time.time() - run_start
+                pct = (elapsed_wall / budget) * 100
+                # Thresholds: 80, 90, 100, 110, 120, …
+                threshold = int(pct // 10) * 10
+                if threshold >= 80:
+                    with node._pending_worker_msgs_lock:
+                        already_sent = node._budget_notified_pcts
+                        if threshold not in already_sent:
+                            already_sent.add(threshold)
+                            msg = (
+                                f"BUDGET: {pct:.0f}% of time budget consumed. "
+                                "Wrap up your current work and return a partial "
+                                "report as soon as possible."
+                            )
+                            # Queue for all currently Working delegations.
+                            with node._registry_lock:
+                                active = [
+                                    did for did, e in node._registry.items()
+                                    if e["status"] in ("Working", "FollowUp")
+                                    and did != delegation_id
+                                ]
+                            for did in active:
+                                node._pending_worker_msgs.setdefault(did, []).append(msg)
+                            # Include in this response too.
+                            hints.append(msg)
+
+            hint_str = ("\n".join(hints) + "\n\n") if hints else ""
+            return (
+                prefix + hint_str +
+                f"Working (running for {elapsed}s, polled {poll_count} times)"
+            )
 
         def Reply(delegation_id: str, answer: str) -> str:
             """Answer a worker's FollowUp question and unblock it.
@@ -538,12 +653,13 @@ class StrategizerNode(AgentNode):
         def Done(summary: str) -> str:
             """Signal end of run with a summary of findings (two-shot).
 
-            First call: issues a WARNING reminding the strategizer to
-            review open delegations and open hypotheses; does NOT close.
-            Second call: checks for pending delegations, then closes.
+            First call: issues a WARNING and lists any open delegations or
+            unmet conditions; does NOT close.
+            Second call: closes the run.
 
-            Refuses if any delegation is still Working — call GetStatus()
-            on all pending delegations first.
+            Refused if any delegation is still Working — call GetStatus()
+            on all pending delegations first, or use Delegate(wait=True)
+            for sequential execution.
             """
             prefix = node._drain_notifications()
             with node._registry_lock:
@@ -556,8 +672,9 @@ class StrategizerNode(AgentNode):
                     prefix +
                     f"ERROR: {len(pending)} delegation(s) still running: "
                     f"{pending}. "
-                    "Call GetStatus() on each and wait for 'Done' or "
-                    "'Errored' before calling Done()."
+                    "Wait for all delegations to complete (Done or Errored) "
+                    "before calling Done(). Use Delegate(wait=True) next time "
+                    "to avoid this."
                 )
             # Two-shot gate: first call warns, second call closes.
             if not node._done_warned:
