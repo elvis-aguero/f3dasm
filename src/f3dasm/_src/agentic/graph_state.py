@@ -27,6 +27,10 @@ class AgenticState(MessagesState):
     return_to: str | None
     # paths relative to study_dir; checked before Done accepted
     required_deliverables: list | None
+    # Token usage accumulated across all agents; set by StrategizerNode on Done
+    token_totals: dict | None
+    # Per-node tool-call error counts (ERROR: returns + exceptions)
+    error_counts: dict | None
 
 
 # ---------------------------------------------------------------------------

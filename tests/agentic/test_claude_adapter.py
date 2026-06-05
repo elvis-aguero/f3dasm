@@ -18,7 +18,8 @@ class _AssistantMessage:
 
 
 class _ResultMessage:
-    pass
+    usage = None
+    total_cost_usd = None
 
 
 def make_async_gen_with_messages(*text_contents):
@@ -100,3 +101,50 @@ def test_non_text_blocks_are_ignored():
     adapter = ClaudeAdapter("claude-3", "sys", None, [])
     result = adapter.invoke([{"role": "user", "content": "hi"}])
     assert result == "kept also kept"
+
+
+# ---------------------------------------------------------------------------
+# Blindspot 2: last_usage populated from ResultMessage
+# ---------------------------------------------------------------------------
+
+
+def test_last_usage_populated_from_result_message():
+    """last_usage is populated with usage fields from ResultMessage after invoke."""
+
+    class _ResultMessageWithUsage:
+        usage = {"input_tokens": 50, "output_tokens": 20}
+        total_cost_usd = 0.002
+
+    async def _gen_with_usage(prompt, options):
+        yield _AssistantMessage([_TextBlock("response text")])
+        yield _ResultMessageWithUsage()
+
+    _install_fake_sdk(
+        query=_gen_with_usage,
+        ResultMessage=_ResultMessageWithUsage,
+    )
+    ClaudeAdapter = _get_adapter()
+    adapter = ClaudeAdapter("claude-3", "sys", None, [])
+    adapter.invoke([{"role": "user", "content": "hi"}])
+
+    assert adapter.last_usage["input_tokens"] == 50
+    assert adapter.last_usage["output_tokens"] == 20
+    assert adapter.last_usage["total_cost_usd"] == 0.002
+
+
+def test_last_usage_empty_when_no_result_message():
+    """last_usage is empty dict when no ResultMessage is yielded."""
+
+    async def _gen_no_result(prompt, options):
+        yield _AssistantMessage([_TextBlock("response text")])
+        # No ResultMessage yielded — generator just ends
+
+    _install_fake_sdk(query=_gen_no_result)
+    ClaudeAdapter = _get_adapter()
+    adapter = ClaudeAdapter("claude-3", "sys", None, [])
+    adapter.invoke([{"role": "user", "content": "hi"}])
+
+    # last_usage should be empty (or all zeroes / None) — not a crash
+    assert adapter.last_usage == {} or not any(
+        v for v in adapter.last_usage.values() if v
+    )

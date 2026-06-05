@@ -41,10 +41,13 @@ def make_initial_state(problem="Test problem") -> AgenticState:
 
 class StrategAgent(Agent):
     role = "strategizer"
+    description = "Test strategizer."
+    tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote"})
 
 
 class ImplAgent(Agent):
     role = "implementer"
+    description = "Test implementer."
 
 
 def test_build_graph_creates_compiledgraph():
@@ -174,9 +177,11 @@ def test_build_graph_routes_delegate_to_implementer():
 def _two_node_graph() -> Graph:
     class S(Agent):
         role = "strategizer"
+        tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote"})
+        description = "Test strategizer."
 
     class I(Agent):
-        pass
+        description = "Test worker."
 
     return Graph(
         nodes={"orch": S(), "worker": I()},
@@ -213,9 +218,11 @@ def test_to_mermaid_edge_with_preamble():
 def test_to_mermaid_edge_without_preamble():
     class A(Agent):
         role = "strategizer"
+        tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote"})
+        description = "Test strategizer."
 
     class B(Agent):
-        pass
+        description = "Test worker."
 
     g = Graph(nodes={"a": A(), "b": B()}, edges=(Edge("a", "b"),), entry="a")
     mermaid = g.to_mermaid()
@@ -228,9 +235,11 @@ def test_to_mermaid_preamble_truncated_at_35():
 
     class A(Agent):
         role = "strategizer"
+        tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote"})
+        description = "Test strategizer."
 
     class B(Agent):
-        pass
+        description = "Test worker."
 
     g = Graph(
         nodes={"a": A(), "b": B()},

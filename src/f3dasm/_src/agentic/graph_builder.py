@@ -9,6 +9,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph
 
 from .backends.base import Agent, Graph
+from .delegation_log import DelegationLog
 from .graph_state import AgenticState
 from .nodes import ImplementerNode, StrategizerNode, WorkerNode  # ImplementerNode re-exported for backward compat
 
@@ -22,6 +23,10 @@ def build_graph(
     study_dir: Any = None,
     interactive: bool = False,
     max_ask: int = 1,
+    notes_dir: Any = None,
+    lit_reviewer_notes_dir: Any = None,
+    workspace_dir: Any = None,
+    delegation_log: "DelegationLog | None" = None,
 ) -> Any:
     """Build and compile a LangGraph StateGraph from a Graph spec.
 
@@ -34,6 +39,8 @@ def build_graph(
         ``ClaudeAdapter`` or ``OllamaAdapter`` for the given node.
     checkpointer : any, optional
         LangGraph checkpointer.  Defaults to an in-memory :class:`MemorySaver`.
+    delegation_log : DelegationLog, optional
+        Graph-wide delegation log for episodic memory (RecallHistory tool).
 
     Returns
     -------
@@ -42,18 +49,18 @@ def build_graph(
     """
     builder = StateGraph(AgenticState)
 
+    # ONE adapter per named node — shared across all orchestrating nodes.
+    node_adapters = {n: make_adapter(n, spec.nodes[n]) for n in spec.nodes}
+
     for name, agent in spec.nodes.items():
-        adapter = make_adapter(name, agent)
+        adapter = node_adapters[name]  # shared instance, NOT make_adapter() again
         outgoing = spec.outgoing(name)
 
-        if agent.role == "strategizer":
-            # Pre-build worker adapters for each outgoing edge target so the
-            # Strategizer can spawn them in background threads.
-            worker_adapters = {
-                target_name: make_adapter(target_name, spec.nodes[target_name])
-                for target_name in outgoing
-                if target_name in spec.nodes
-            }
+        if outgoing:
+            # Any node with outgoing edges becomes an orchestrating node.
+            # Entry nodes get the full closure set (Done, hypotheses, etc.);
+            # delegating workers get only delegation tools — gated inside
+            # StrategizerNode by checking name == spec.entry.
             node = StrategizerNode(
                 adapter,
                 name=name,
@@ -62,10 +69,19 @@ def build_graph(
                 study_dir=study_dir,
                 interactive=interactive,
                 max_ask=max_ask,
-                worker_adapters=worker_adapters,
+                worker_adapters={n: node_adapters[n] for n in outgoing},
+                notes_dir=notes_dir if name == spec.entry else None,
+                workspace_dir=workspace_dir,
+                delegation_log=delegation_log,
             )
         else:
-            node = WorkerNode(adapter, study_dir=study_dir)
+            node = WorkerNode(
+                adapter,
+                study_dir=study_dir,
+                workspace_dir=workspace_dir,
+                delegation_log=delegation_log,
+                name=name,
+            )
 
         builder.add_node(name, node)
 

@@ -19,7 +19,7 @@ def test_agentic_state_is_dict_like():
 
 def test_graph_keeps_edge_validation():
     class A(Agent):
-        pass
+        description = "Test agent."
 
     with pytest.raises(ValueError, match="undeclared"):
         Graph(nodes={"a": A()}, edges=(Edge("a", "missing"),), entry="a")
@@ -27,7 +27,7 @@ def test_graph_keeps_edge_validation():
 
 def test_graph_outgoing():
     class A(Agent):
-        pass
+        description = "Test agent."
 
     g = Graph(nodes={"s": A(), "i": A()}, edges=(Edge("s", "i"),), entry="s")
     assert g.outgoing("s") == ["i"]

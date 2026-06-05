@@ -19,6 +19,7 @@ from .._src.agentic.agent_runtime import (
     Task,
 )
 from .._src.agentic.agents import (
+    AdversarialCritiqueAgent,
     DebuggerAgent,
     ImplementerAgent,
     LiteratureReviewAgent,
@@ -54,6 +55,7 @@ __all__ = [
     "Delegation",
     "Edge",
     "Graph",
+    "AdversarialCritiqueAgent",
     "DebuggerAgent",
     "ImplementerAgent",
     "LiteratureReviewAgent",

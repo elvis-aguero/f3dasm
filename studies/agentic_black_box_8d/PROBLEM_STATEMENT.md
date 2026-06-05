@@ -29,8 +29,10 @@ A pre-compiled evaluator lives in `workspace/`:
 
 ```python
 import sys
-sys.path.insert(0, "workspace")
-from evaluator import evaluate   # evaluate(x: list[float]) -> float
+from pathlib import Path
+# study_dir is shown in your <workspace> preamble — use it to locate the evaluator
+sys.path.insert(0, str(Path(study_dir) / "workspace"))
+from evaluator import evaluate        # evaluate(x: list[float]) -> float
 ```
 
 `evaluate(x)` takes a list or array of exactly 8 floats and returns a scalar. All inputs must lie within the bounds above; behaviour outside [−5, 5]⁸ is undefined. The function is **deterministic**.
@@ -43,3 +45,11 @@ from evaluator import evaluate   # evaluate(x: list[float]) -> float
 - Total number of evaluations used
 - The search strategy used and why
 - Evidence the reported point is not a local minimum (e.g. multiple restarts, deliberate exploration of distant regions)
+
+---
+
+## Research context
+
+This is a standard problem in numerical optimisation and experimental design.
+You have a limited evaluation budget (1000 calls) and a multimodal landscape
+you cannot see directly. Think about how to spend your budget wisely.

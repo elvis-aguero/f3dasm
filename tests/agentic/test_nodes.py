@@ -29,9 +29,11 @@ def _minimal_spec(name: str = "strategizer", target: str = "implementer") -> Gra
     """Return a minimal two-node Graph for StrategizerNode tests."""
     class A(Agent):
         role = "strategizer"
+        tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote"})
+        description = "Test strategizer."
 
     class B(Agent):
-        pass
+        description = "Test implementer."
 
     return Graph(
         nodes={name: A(), target: B()},
@@ -68,12 +70,16 @@ def make_state(
 
 
 def test_strategizer_routes_done_when_done_called():
-    """StrategizerNode returns Command(goto=END) when Done closure is called."""
+    """StrategizerNode returns Command(goto=END) when Done closure is called twice.
+
+    Done() is two-shot: first call issues a WARNING, second call closes the run.
+    """
     from f3dasm._src.agentic.nodes import StrategizerNode
 
     class DoneCallingAdapter(StubAdapter):
         def invoke(self, messages):
-            self.closure_tools["Done"](summary="Finished successfully.")
+            self.closure_tools["Done"](summary="Finished successfully.")  # WARNING
+            self.closure_tools["Done"](summary="Finished successfully.")  # close
             return "Run complete."
 
     adapter = DoneCallingAdapter()
@@ -125,7 +131,7 @@ def test_strategizer_delegate_returns_task_id():
     cmd = node(make_state())
 
     assert cmd.goto == END
-    assert received_ids and "TASK-" in received_ids[0]
+    assert received_ids and re.search(r"D[0-9]{3}", received_ids[0])
 
 
 def test_done_blocked_while_delegation_pending():
@@ -338,9 +344,11 @@ def test_strategizer_delegate_prepends_edge_preamble():
 
     class A(Agent):
         role = "strategizer"
+        tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote"})
+        description = "Test strategizer."
 
     class B(Agent):
-        pass
+        description = "Test implementer."
 
     spec = Graph(
         nodes={"strategizer": A(), "implementer": B()},
@@ -415,9 +423,11 @@ def test_parallel_two_delegations_both_complete():
 
     class A(Agent):
         role = "strategizer"
+        tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote"})
+        description = "Test strategizer."
 
     class B(Agent):
-        pass
+        description = "Test worker."
 
     spec = Graph(
         nodes={"strategizer": A(), "worker_a": B(), "worker_b": B()},
@@ -462,9 +472,9 @@ def test_get_status_returns_working_then_done():
             task_id_msg = self.closure_tools["Delegate"](
                 target="implementer", intent="Work.", expected_report=""
             )
-            # Extract TASK-xxxxxxxx from the return string
+            # Extract D### delegation ID from the return string
             import re
-            m = re.search(r"TASK-[0-9a-f]+", task_id_msg)
+            m = re.search(r"D[0-9]{3}", task_id_msg)
             assert m, f"No task ID found in: {task_id_msg!r}"
             task_id = m.group()
 
@@ -533,7 +543,7 @@ def test_get_status_unknown_id_returns_error():
 
     class PollUnknownAdapter(StubAdapter):
         def invoke(self, messages):
-            result = self.closure_tools["GetStatus"]("TASK-notreal")
+            result = self.closure_tools["GetStatus"]("D999")
             errors.append(result)
             self.closure_tools["Done"](summary="done")
             return "Done."
@@ -544,7 +554,7 @@ def test_get_status_unknown_id_returns_error():
     node(make_state())
 
     assert errors and errors[0].startswith("ERROR")
-    assert "TASK-notreal" in errors[0]
+    assert "D999" in errors[0]
 
 
 def test_errored_status_contains_traceback():
@@ -566,7 +576,7 @@ def test_errored_status_contains_traceback():
                 target="implementer", intent="task", expected_report=""
             )
             import re as _re
-            task_id = _re.search(r"TASK-[0-9a-f]+", result).group()
+            m = _re.search(r"D[0-9]{3}", result); task_id = m.group() if m else None; assert task_id, f"No D### ID in: {result!r}"
             # Poll until resolved
             for _ in range(50):
                 status = self.closure_tools["GetStatus"](task_id)
@@ -594,51 +604,60 @@ def test_errored_status_contains_traceback():
     assert "pool.csv" in msg
 
 
-def test_delegation_timeout_marks_errored():
-    """A hung delegation is marked Errored after the timeout elapses."""
+def test_delegation_still_working_returns_working_status():
+    """GetStatus returns 'Working' for a running delegation regardless of elapsed time."""
     import time
     from f3dasm._src.agentic.nodes import StrategizerNode
 
     status_seen: list[str] = []
     worker_started = threading.Event()
+    allow_finish = threading.Event()
 
-    class HungWorkerAdapter(StubAdapter):
+    class HeldWorkerAdapter(StubAdapter):
         def invoke(self, messages):
             worker_started.set()
-            time.sleep(60)  # hangs
-            return "never"
+            allow_finish.wait(timeout=5)
+            return (
+                "## Report\n### Actions taken\nDone.\n"
+                "### Files touched\n(none)\n### Conclusions\nOK\n### Numbers\nn: 0"
+            )
 
-    class TimeoutPollAdapter(StubAdapter):
+    class PollThenReleaseAdapter(StubAdapter):
         def invoke(self, messages):
             result = self.closure_tools["Delegate"](
                 target="implementer", intent="task", expected_report=""
             )
             import re as _re
-            task_id = _re.search(r"TASK-[0-9a-f]+", result).group()
+            m = _re.search(r"D[0-9]{3}", result)
+            task_id = m.group() if m else None
+            assert task_id, f"No D### ID in: {result!r}"
             worker_started.wait(timeout=2)
-            time.sleep(0.05)  # let the timeout expire
+            # Poll while worker is still held — must return Working, not Timeout
             status = self.closure_tools["GetStatus"](task_id)
             status_seen.append(status)
-            # Force Done with the errored delegation still in registry
-            # (timeout marks it Errored so Done() should now succeed)
-            self.closure_tools["Done"](summary="timed out")
+            # Release the worker and wait for it to finish
+            allow_finish.set()
+            time.sleep(0.15)
+            self.closure_tools["Done"](summary="done")
             return "Done."
 
-    adapter = TimeoutPollAdapter()
+    adapter = PollThenReleaseAdapter()
     spec = _minimal_spec()
-    worker = HungWorkerAdapter()
+    worker = HeldWorkerAdapter()
     node = StrategizerNode(
         adapter, name="strategizer", outgoing=["implementer"], spec=spec,
         worker_adapters={"implementer": worker},
     )
-    # budget_seconds=0.013 → delegation timeout = 75% * 0.013 ≈ 10ms
+    # Even with a tiny budget, GetStatus must return Working (not Timeout)
     state = make_state()
     state["budget_seconds"] = 0.013
-    state["start_time"] = 0.0  # unused but needed for budget warning path
+    state["start_time"] = 0.0
 
     cmd = node(state)
     assert cmd.goto == END
-    assert status_seen and "Timeout" in status_seen[0]
+    assert status_seen and status_seen[0] == "Working", (
+        f"Expected 'Working', got: {status_seen[0]!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -661,3 +680,1388 @@ def test_to_adapter_messages_converts_human_and_ai():
     assert result[0] == {"role": "user", "content": "Hello"}
     assert result[1] == {"role": "ai", "content": "Hi there"}
     assert result[2] == {"role": "user", "content": "Bye"}
+
+
+# ---------------------------------------------------------------------------
+# Hypothesis ledger integration tests
+# ---------------------------------------------------------------------------
+
+import re
+import time as _time
+import json as _json
+
+from f3dasm._src.agentic.hypothesis_ledger import HypothesisLedger
+
+
+def _ledger_spec():
+    return _minimal_spec()
+
+
+def test_delegate_id_is_sequential(tmp_path):
+    """Delegation IDs are D001, D002, D003 within a run."""
+    received_ids = []
+
+    class CaptureAdapter(StubAdapter):
+        def invoke(self, messages):
+            r1 = self.closure_tools["Delegate"](
+                target="implementer", intent="task A", expected_report="",
+                hypothesis_ids=["H1"],
+            )
+            r2 = self.closure_tools["Delegate"](
+                target="implementer", intent="task B", expected_report="",
+                hypothesis_ids=["H1"],
+            )
+            received_ids.extend([r1, r2])
+            _time.sleep(0.3)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    adapter = CaptureAdapter()
+    spec = _ledger_spec()
+    worker = StubAdapter()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": worker},
+        notes_dir=tmp_path,
+    )
+    node(make_state())
+    assert received_ids
+    assert re.search(r"D\d{3}", received_ids[0]), f"Expected D### in {received_ids[0]!r}"
+    assert re.search(r"D\d{3}", received_ids[1]), f"Expected D### in {received_ids[1]!r}"
+
+
+def test_delegate_requires_hypothesis_ids_when_ledger_present(tmp_path):
+    """Delegate() with empty hypothesis_ids returns ERROR when ledger is active."""
+    error_result = []
+
+    class EmptyHypoAdapter(StubAdapter):
+        def invoke(self, messages):
+            r = self.closure_tools["Delegate"](
+                target="implementer", intent="task", expected_report="",
+                hypothesis_ids=[],
+            )
+            error_result.append(r)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    adapter = EmptyHypoAdapter()
+    spec = _ledger_spec()
+    worker = StubAdapter()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": worker},
+        notes_dir=tmp_path,
+    )
+    node(make_state())
+    assert error_result and error_result[0].startswith("ERROR:")
+
+
+def test_delegate_injects_workspace_subfolder_in_task(tmp_path):
+    """Task message contains <workspace_subfolder>D001/</workspace_subfolder>."""
+    task_messages = []
+
+    class CapturingWorker(StubAdapter):
+        def invoke(self, messages):
+            task_messages.extend(messages)
+            return "## Report\n\n### Actions taken\n- done\n\n### Files touched\n- none\n\n### Conclusions\nok\n\n### Numbers\nevals: 0"
+
+    class DelegateAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["Delegate"](
+                target="implementer", intent="test", expected_report="",
+                hypothesis_ids=["H1"],
+            )
+            _time.sleep(0.3)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    adapter = DelegateAdapter()
+    spec = _ledger_spec()
+    worker = CapturingWorker()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": worker},
+        notes_dir=tmp_path,
+    )
+    node(make_state())
+    assert task_messages
+    full_task = " ".join(str(m) for m in task_messages)
+    assert "workspace_subfolder" in full_task
+    assert "D001/" in full_task
+
+
+def test_delegate_writes_delegation_jsonl_on_done(tmp_path):
+    """delegation_log.jsonl is written when a delegation completes."""
+    from f3dasm._src.agentic.delegation_log import DelegationLog
+
+    class DelegateAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["Delegate"](
+                target="implementer", intent="do analysis", expected_report="",
+                hypothesis_ids=["H1", "H2"],
+            )
+            _time.sleep(0.3)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    jsonl_path = tmp_path / "delegation_log.jsonl"
+    delegation_log = DelegationLog(jsonl_path)
+    adapter = DelegateAdapter()
+    spec = _ledger_spec()
+    worker = StubAdapter()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": worker},
+        notes_dir=tmp_path,
+        delegation_log=delegation_log,
+    )
+    node(make_state())
+    assert jsonl_path.exists(), "delegation_log.jsonl was not created"
+    lines = jsonl_path.read_text().strip().splitlines()
+    assert len(lines) == 1
+    rec = _json.loads(lines[0])
+    assert rec["from_node"] == "strategizer"
+    assert rec["to_node"] == "implementer"
+    assert rec["hypothesis_ids"] == ["H1", "H2"]
+    assert rec["status"] in ("DONE", "FAILED")
+
+
+def test_hypothesis_propose_via_strategizer_closure(tmp_path):
+    """HypothesisPropose() closure creates an entry in hypotheses.json."""
+    proposed_ids = []
+
+    class ProposeAdapter(StubAdapter):
+        def invoke(self, messages):
+            h_id = self.closure_tools["HypothesisPropose"](
+                statement="Thin longerons buckle first"
+            )
+            proposed_ids.append(h_id)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    adapter = ProposeAdapter()
+    spec = _ledger_spec()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": StubAdapter()},
+        notes_dir=tmp_path,
+    )
+    node(make_state())
+    assert proposed_ids and not proposed_ids[0].startswith("ERROR:")
+    hyp_path = tmp_path / "hypotheses.json"
+    assert hyp_path.exists()
+    data = _json.loads(hyp_path.read_text())
+    assert proposed_ids[0] in data
+
+
+def test_hypothesis_update_injects_triggered_by(tmp_path):
+    """HypothesisUpdate injects the last completed delegation ID as triggered_by."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    class UpdateAdapter(StubAdapter):
+        def invoke(self, messages):
+            h_id = self.closure_tools["HypothesisPropose"](statement="Test hyp")
+            self.closure_tools["Delegate"](
+                target="implementer", intent="test", expected_report="",
+                hypothesis_ids=[h_id],
+            )
+            _time.sleep(0.3)
+            self.closure_tools["HypothesisUpdate"](
+                hypothesis_id=h_id, status="FALSIFIED", comment="disproved"
+            )
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    adapter = UpdateAdapter()
+    spec = _ledger_spec()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": StubAdapter()},
+        notes_dir=tmp_path,
+    )
+    node(make_state())
+    data = _json.loads((tmp_path / "hypotheses.json").read_text())
+    h_id = list(data.keys())[0]
+    last_entry = data[h_id]["status_log"][-1]
+    assert last_entry["status"] == "FALSIFIED"
+    assert last_entry["triggered_by"] is not None
+    assert re.match(r"D\d{3}", last_entry["triggered_by"])
+
+
+def test_max_three_open_hypothesis_guard(tmp_path):
+    """HypothesisPropose returns ERROR when 3 OPEN hypotheses already exist."""
+    error_seen = []
+
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    class MaxAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["HypothesisPropose"](statement="A")
+            self.closure_tools["HypothesisPropose"](statement="B")
+            self.closure_tools["HypothesisPropose"](statement="C")
+            r = self.closure_tools["HypothesisPropose"](statement="D")
+            error_seen.append(r)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    adapter = MaxAdapter()
+    spec = _ledger_spec()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": StubAdapter()},
+        notes_dir=tmp_path,
+    )
+    node(make_state())
+    assert error_seen and error_seen[0].startswith("ERROR:")
+
+
+def test_worker_write_rejected_outside_delegation_subfolder(tmp_path):
+    """Worker Write is rejected for paths outside workspace/{delegation_id}/."""
+    write_results = []
+
+    class WritingWorker(StubAdapter):
+        def invoke(self, messages):
+            # Path traversal attack: ../D000/ escapes the delegation subfolder
+            r = self.closure_tools["Write"]("../D000/cross.txt", "bad data")
+            write_results.append(r)
+            return "## Report\n\n### Actions taken\n- tried write\n\n### Files touched\n- none\n\n### Conclusions\ntested\n\n### Numbers\nevals: 0"
+
+    class DelegateAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["Delegate"](
+                target="implementer", intent="test write", expected_report="",
+                hypothesis_ids=["H1"],
+            )
+            _time.sleep(0.3)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    study_tmp = tmp_path / "study"
+    study_tmp.mkdir()
+    adapter = DelegateAdapter()
+    spec = _ledger_spec()
+    worker = WritingWorker()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": worker},
+        notes_dir=tmp_path,
+        study_dir=study_tmp,
+    )
+    node(make_state(study_dir=str(study_tmp)))
+    assert write_results and "ERROR" in write_results[0]
+
+
+def test_worker_write_allowed_inside_delegation_subfolder(tmp_path):
+    """Worker Write succeeds for paths inside workspace/{delegation_id}/."""
+    write_results = []
+
+    class WritingWorker(StubAdapter):
+        def invoke(self, messages):
+            import re as _re
+            content = " ".join(str(m) for m in messages)
+            m = _re.search(r"delegations/([^/]+)/", content)
+            subfolder = m.group(1) if m else "D001"
+            r = self.closure_tools["Write"](f"{subfolder}/result.csv", "col,val\n1,2")
+            write_results.append(r)
+            return "## Report\n\n### Actions taken\n- wrote result\n\n### Files touched\n- result.csv\n\n### Conclusions\ndone\n\n### Numbers\nevals: 0"
+
+    class DelegateAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["Delegate"](
+                target="implementer", intent="test write", expected_report="",
+                hypothesis_ids=["H1"],
+            )
+            _time.sleep(0.3)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    study_tmp = tmp_path / "study"
+    study_tmp.mkdir()
+    adapter = DelegateAdapter()
+    spec = _ledger_spec()
+    worker = WritingWorker()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": worker},
+        notes_dir=tmp_path,
+        study_dir=study_tmp,
+    )
+    node(make_state(study_dir=str(study_tmp)))
+    assert write_results and "ERROR" not in write_results[0]
+
+
+# ---------------------------------------------------------------------------
+# Blindspot 1: _accumulate_usage() unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_accumulate_usage_sums_correctly(tmp_path):
+    """_accumulate_usage correctly sums token counts and ignores None cost."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    adapter = StubAdapter()
+    spec = _ledger_spec()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        notes_dir=tmp_path,
+    )
+
+    node._accumulate_usage({"input_tokens": 100, "output_tokens": 50, "total_cost_usd": 0.01})
+    node._accumulate_usage({"input_tokens": 200, "output_tokens": 30, "total_cost_usd": None})
+
+    assert node._token_totals["input_tokens"] == 300
+    assert node._token_totals["output_tokens"] == 80
+    assert node._token_totals["total_cost_usd"] == 0.01
+
+
+def test_accumulate_usage_thread_safe(tmp_path):
+    """_accumulate_usage is thread-safe under concurrent calls."""
+    import threading as _threading
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    adapter = StubAdapter()
+    spec = _ledger_spec()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        notes_dir=tmp_path,
+    )
+
+    threads = [
+        _threading.Thread(target=node._accumulate_usage, args=({"input_tokens": 10},))
+        for _ in range(10)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert node._token_totals["input_tokens"] == 100
+
+
+# ---------------------------------------------------------------------------
+# Blindspot 4: Write sandbox edge cases
+# ---------------------------------------------------------------------------
+
+
+def _make_sandboxed_write_node(tmp_path):
+    """Return a StrategizerNode + worker where the worker's Write is sandboxed."""
+    write_results = []
+
+    class CapturingWorker(StubAdapter):
+        """Worker that delegates the actual write call via closure and captures result."""
+        _pending_write = None
+
+        def invoke(self, messages):
+            if CapturingWorker._pending_write is not None:
+                path, body = CapturingWorker._pending_write
+                r = self.closure_tools["Write"](path, body)
+                write_results.append(r)
+            return (
+                "## Report\n\n### Actions taken\n- tried\n\n"
+                "### Files touched\n- none\n\n"
+                "### Conclusions\ntested\n\n### Numbers\nevals: 0"
+            )
+
+    return CapturingWorker, write_results
+
+
+def test_worker_write_rejects_absolute_path(tmp_path):
+    """Write with an absolute path outside the sandbox returns ERROR."""
+    write_results = []
+
+    class AbsPathWorker(StubAdapter):
+        def invoke(self, messages):
+            r = self.closure_tools["Write"]("/etc/passwd", "bad")
+            write_results.append(r)
+            return (
+                "## Report\n\n### Actions taken\n- tried\n\n"
+                "### Files touched\n- none\n\n"
+                "### Conclusions\ntested\n\n### Numbers\nevals: 0"
+            )
+
+    class DelegateAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["Delegate"](
+                target="implementer", intent="test", expected_report="",
+                hypothesis_ids=["H1"],
+            )
+            _time.sleep(0.3)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    study_tmp = tmp_path / "study"
+    study_tmp.mkdir()
+    adapter = DelegateAdapter()
+    spec = _ledger_spec()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": AbsPathWorker()},
+        notes_dir=tmp_path,
+        study_dir=study_tmp,
+    )
+    node(make_state(study_dir=str(study_tmp)))
+    assert write_results, "Write was never called"
+    assert write_results[0].startswith("ERROR")
+
+
+def test_worker_write_rejects_empty_path(tmp_path):
+    """Write with an empty path string must not raise an exception."""
+    write_results = []
+
+    class EmptyPathWorker(StubAdapter):
+        def invoke(self, messages):
+            try:
+                r = self.closure_tools["Write"]("", "data")
+                write_results.append(r)
+            except Exception as exc:
+                write_results.append(f"RAISED: {exc}")
+            return (
+                "## Report\n\n### Actions taken\n- tried\n\n"
+                "### Files touched\n- none\n\n"
+                "### Conclusions\ntested\n\n### Numbers\nevals: 0"
+            )
+
+    class DelegateAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["Delegate"](
+                target="implementer", intent="test", expected_report="",
+                hypothesis_ids=["H1"],
+            )
+            _time.sleep(0.3)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    study_tmp = tmp_path / "study"
+    study_tmp.mkdir()
+    adapter = DelegateAdapter()
+    spec = _ledger_spec()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": EmptyPathWorker()},
+        notes_dir=tmp_path,
+        study_dir=study_tmp,
+    )
+    node(make_state(study_dir=str(study_tmp)))
+    # Must have a result (no uncaught exception)
+    assert write_results, "Write was never called or raised before appending"
+    # It must not have raised
+    assert not write_results[0].startswith("RAISED"), (
+        f"Write raised an exception: {write_results[0]}"
+    )
+
+
+def test_worker_write_allows_nested_subdirectory(tmp_path):
+    """Write to subdir/output.json inside delegations/D001/ succeeds."""
+    write_results = []
+
+    class NestedWriteWorker(StubAdapter):
+        def invoke(self, messages):
+            import re as _re
+            content = " ".join(str(m) for m in messages)
+            m = _re.search(r"delegations/([^/]+)/", content)
+            subfolder = m.group(1) if m else "D001"
+            r = self.closure_tools["Write"](f"{subfolder}/subdir/output.json", '{"result": 1}')
+            write_results.append(r)
+            return (
+                "## Report\n\n### Actions taken\n- wrote nested\n\n"
+                "### Files touched\n- output.json\n\n"
+                "### Conclusions\ndone\n\n### Numbers\nevals: 0"
+            )
+
+    class DelegateAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["Delegate"](
+                target="implementer", intent="test", expected_report="",
+                hypothesis_ids=["H1"],
+            )
+            _time.sleep(0.3)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    study_tmp = tmp_path / "study"
+    study_tmp.mkdir()
+    adapter = DelegateAdapter()
+    spec = _ledger_spec()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": NestedWriteWorker()},
+        notes_dir=tmp_path,
+        study_dir=study_tmp,
+    )
+    node(make_state(study_dir=str(study_tmp)))
+    assert write_results, "Write was never called"
+    assert "Written:" in write_results[0], f"Expected success, got: {write_results[0]}"
+    # The file should physically exist
+    written_path = write_results[0].replace("Written: ", "").strip()
+    assert _json.loads(open(written_path).read())["result"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Blindspot 5: WriteNote and ReadNote direct tests
+# ---------------------------------------------------------------------------
+
+
+def test_write_note_creates_file_in_notes_dir(tmp_path):
+    """WriteNote closure writes .md file to _current_notes_dir."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    adapter = StubAdapter()
+    spec = _ledger_spec()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        notes_dir=tmp_path,
+    )
+    node._current_notes_dir = tmp_path
+
+    result = node.adapter.closure_tools["WriteNote"]("hypotheses.md", "# H1\ncontent")
+    assert (tmp_path / "hypotheses.md").exists(), f"File not created; result={result}"
+    assert "H1" in (tmp_path / "hypotheses.md").read_text()
+
+
+def test_write_note_rejects_non_md_extension(tmp_path):
+    """WriteNote auto-appends .md when extension is not .md."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    adapter = StubAdapter()
+    spec = _ledger_spec()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        notes_dir=tmp_path,
+    )
+    node._current_notes_dir = tmp_path
+
+    node.adapter.closure_tools["WriteNote"]("script.py", "import os")
+    # .py file must NOT exist
+    assert not (tmp_path / "script.py").exists(), ".py file should not be created"
+    # .md file should exist (auto-append)
+    assert (tmp_path / "script.py.md").exists() or (tmp_path / "script.md").exists(), (
+        "Expected a .md file to be created with appended extension"
+    )
+
+
+def test_read_note_returns_content(tmp_path):
+    """ReadNote closure returns file content from study_dir."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    (tmp_path / "data.txt").write_text("test content")
+
+    adapter = StubAdapter()
+    spec = _ledger_spec()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        notes_dir=tmp_path,
+        study_dir=tmp_path,
+    )
+    node._current_notes_dir = tmp_path
+
+    result = node.adapter.closure_tools["ReadNote"]("data.txt")
+    assert "test content" in result
+
+
+def test_read_note_returns_not_found_for_missing(tmp_path):
+    """ReadNote returns NOT FOUND or ERROR when file does not exist."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    adapter = StubAdapter()
+    spec = _ledger_spec()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        notes_dir=tmp_path,
+        study_dir=tmp_path,
+    )
+    node._current_notes_dir = tmp_path
+
+    result = node.adapter.closure_tools["ReadNote"]("does_not_exist.txt")
+    assert "NOT FOUND" in result or result.startswith("ERROR")
+
+
+# ---------------------------------------------------------------------------
+# Blindspot 6: delegations.jsonl token fields
+# ---------------------------------------------------------------------------
+
+
+def test_delegation_jsonl_contains_token_fields(tmp_path):
+    """delegation_log.jsonl records tokens_in, tokens_out, cost_usd from worker usage."""
+    from f3dasm._src.agentic.delegation_log import DelegationLog
+
+    class MockWorkerAdapter(StubAdapter):
+        last_usage = {"input_tokens": 77, "output_tokens": 33, "total_cost_usd": 0.005}
+
+        def invoke(self, messages):
+            return (
+                "## Report\n\n### Actions taken\n- done\n\n"
+                "### Files touched\n- none\n\n"
+                "### Conclusions\nok\n\n### Numbers\nevals: 0"
+            )
+
+    class DelegateAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["Delegate"](
+                target="implementer", intent="test usage", expected_report="",
+                hypothesis_ids=["H1"],
+            )
+            _time.sleep(0.3)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    jsonl_path = tmp_path / "delegation_log.jsonl"
+    delegation_log = DelegationLog(jsonl_path)
+    adapter = DelegateAdapter()
+    spec = _ledger_spec()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": MockWorkerAdapter()},
+        notes_dir=tmp_path,
+        delegation_log=delegation_log,
+    )
+    node(make_state())
+
+    assert jsonl_path.exists(), "delegation_log.jsonl was not created"
+    rec = _json.loads(jsonl_path.read_text().strip().splitlines()[0])
+    assert rec["tokens_in"] == 77
+    assert rec["tokens_out"] == 33
+    assert rec["cost_usd"] == 0.005
+
+
+# ---------------------------------------------------------------------------
+# Helpers for new feature tests
+# ---------------------------------------------------------------------------
+
+
+def _spec_with_critic():
+    """Three-node graph: strategizer → implementer + strategizer → critic."""
+
+    class S(Agent):
+        role = "strategizer"
+        tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote"})
+        description = "Test strategizer."
+
+    class W(Agent):
+        description = "Test implementer."
+
+    class C(Agent):
+        role = "critic"
+        description = "Test adversarial critic."
+
+    return Graph(
+        nodes={"strategizer": S(), "implementer": W(), "critic": C()},
+        edges=(Edge("strategizer", "implementer"), Edge("strategizer", "critic")),
+        entry="strategizer",
+    )
+
+
+class MockCriticAdapter(StubAdapter):
+    """Stub adapter that returns a full critique report with a configurable verdict."""
+
+    def __init__(self, verdict: str = "PASS") -> None:
+        super().__init__()
+        self._verdict = verdict
+
+    def invoke(self, messages: list) -> str:
+        return (
+            f"## Report\n\n"
+            f"### Actions taken\n- Read files\n\n"
+            f"### Findings\nNo issues.\n\n"
+            f"### Verdict\n{self._verdict}\n\n"
+            f"### Numbers\n"
+            f"findings_critical: 0\n"
+            f"findings_major: 0\n"
+            f"findings_minor: 0\n"
+            f"verdict: {self._verdict}\n"
+        )
+
+    def copy(self):
+        fresh = MockCriticAdapter(self._verdict)
+        fresh.closure_tools = dict(self.closure_tools)
+        return fresh
+
+
+# ---------------------------------------------------------------------------
+# _classify_response tests
+# ---------------------------------------------------------------------------
+
+
+def test_classify_response_uses_custom_sections():
+    """_classify_response with required_sections returns None when all present."""
+    from f3dasm._src.agentic.nodes import _classify_response
+
+    text = "## Report\n\n### Alpha\nsome content\n\n### Beta\nmore content\n" * 5
+    result = _classify_response(text, required_sections=["### Alpha", "### Beta"])
+    assert result is None
+
+
+def test_classify_response_missing_custom_section():
+    """_classify_response returns diagnosis when a required section is absent."""
+    from f3dasm._src.agentic.nodes import _classify_response
+
+    text = "## Report\n\n### Alpha\nsome content\n" * 5
+    result = _classify_response(text, required_sections=["### Alpha", "### Beta"])
+    assert result is not None
+    assert isinstance(result, str)
+
+
+def test_classify_response_falls_back_to_default():
+    """_classify_response(text, required_sections=None) uses the 4 default sections."""
+    from f3dasm._src.agentic.nodes import _classify_response
+
+    text = (
+        "## Report\n\n"
+        "### Actions taken\n- Did stuff\n\n"
+        "### Files touched\n- file.py\n\n"
+        "### Conclusions\nAll good.\n\n"
+        "### Numbers\nn: 0\n"
+    ) * 3  # make it long enough to pass the length check
+    result = _classify_response(text, required_sections=None)
+    assert result is None
+
+
+def test_classify_response_allows_extra_content_after_sections():
+    """Extra sections beyond the required ones do not cause a failure."""
+    from f3dasm._src.agentic.nodes import _classify_response
+
+    text = (
+        "## Report\n\n"
+        "### Alpha\ncontent here\n\n"
+        "### Beta\nmore content\n\n"
+        "### Extra stuff\nfree form content that is irrelevant\n"
+    ) * 4
+    result = _classify_response(text, required_sections=["### Alpha", "### Beta"])
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Two-shot Done() tests
+# ---------------------------------------------------------------------------
+
+
+def test_done_first_call_returns_warning():
+    """Done() first call (no pending delegations) returns a WARNING string."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    results: list[str] = []
+
+    class FirstDoneAdapter(StubAdapter):
+        def invoke(self, messages):
+            result = self.closure_tools["Done"](summary="first attempt")
+            results.append(result)
+            # Call Done() a second time so the run actually closes
+            self.closure_tools["Done"](summary="second attempt closes")
+            return "Done."
+
+    adapter = FirstDoneAdapter()
+    spec = _minimal_spec()
+    node = StrategizerNode(adapter, name="strategizer", outgoing=["implementer"], spec=spec)
+    node(make_state())
+
+    assert results, "Done() was never called"
+    assert results[0].startswith("WARNING"), (
+        f"Expected first Done() to return WARNING, got: {results[0]!r}"
+    )
+
+
+def test_done_second_call_no_critic_closes():
+    """Done() second call (no critic) sets route kind=done and returns goto=END.
+
+    The first call must return WARNING (not close immediately).  Only the
+    second call should actually close.  If the node currently closes on the
+    first call, _done_warned will never be set and the first result will NOT
+    start with WARNING — that assertion catches the current (pre-feature) state.
+    """
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    from langgraph.graph import END
+
+    first_results: list[str] = []
+
+    class TwoDoneAdapter(StubAdapter):
+        def invoke(self, messages):
+            r = self.closure_tools["Done"](summary="first – warning")
+            first_results.append(r)
+            self.closure_tools["Done"](summary="second – close")
+            return "Done."
+
+    adapter = TwoDoneAdapter()
+    spec = _minimal_spec()
+    node = StrategizerNode(adapter, name="strategizer", outgoing=["implementer"], spec=spec)
+    cmd = node(make_state())
+
+    # First call must warn, not close
+    assert first_results and first_results[0].startswith("WARNING"), (
+        f"Expected first Done() to WARNING, got: {first_results[0]!r}"
+    )
+    # Second call closes
+    assert cmd.goto == END
+    assert node._route.get("kind") == "done"
+
+
+def test_done_resets_warning_after_new_delegate():
+    """_done_warned resets to False when a new Delegate() fires."""
+    import time as _t
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    results: list[str] = []
+
+    class FastWorkerAdapter(StubAdapter):
+        def invoke(self, messages):
+            return (
+                "## Report\n### Actions taken\nDone.\n"
+                "### Files touched\n(none)\n### Conclusions\nOK\n### Numbers\nn: 0"
+            )
+
+    class ResetWarningAdapter(StubAdapter):
+        def invoke(self, messages):
+            # First Done → WARNING
+            r1 = self.closure_tools["Done"](summary="first")
+            results.append(r1)
+            # Delegate to reset the warning flag
+            self.closure_tools["Delegate"](
+                target="implementer", intent="reset task", expected_report=""
+            )
+            _t.sleep(0.15)  # let worker finish
+            # Done again after Delegate → should warn again (not close directly)
+            r2 = self.closure_tools["Done"](summary="third")
+            results.append(r2)
+            # Final Done to actually close
+            self.closure_tools["Done"](summary="final close")
+            return "Done."
+
+    adapter = ResetWarningAdapter()
+    spec = _minimal_spec()
+    worker = FastWorkerAdapter()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": worker},
+    )
+    node(make_state())
+
+    assert len(results) >= 2, f"Expected at least 2 Done() results, got {results}"
+    assert results[0].startswith("WARNING"), f"First Done should be WARNING: {results[0]!r}"
+    assert results[1].startswith("WARNING"), (
+        f"Done() after Delegate should reset to WARNING again: {results[1]!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# AskForFeedback tests
+# ---------------------------------------------------------------------------
+
+
+def test_ask_for_feedback_absent_without_critic():
+    """AskForFeedback closure is NOT registered when no critic node is in the graph.
+
+    Currently AskForFeedback doesn't exist at all, so it's naturally absent —
+    this test should still PASS after the feature lands (when the feature adds
+    AskForFeedback only when a critic is in the graph).  We make it fail *now*
+    by also asserting that AskForFeedback IS present in the critic-graph case,
+    then confirm it's absent in the non-critic case.  Because the
+    critic-in-graph variant is not yet implemented, the pairing test below will
+    fail.  This test itself only checks the no-critic case, so it reflects
+    correct future behaviour and should pass both before and after the feature.
+
+    To make it a genuine TDD fail (verifying the feature boundary) we also
+    check that the two-node spec node does NOT have _done_warned attribute
+    (pre-feature) which is the new state flag introduced with two-shot Done.
+    """
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    adapter = StubAdapter()
+    spec = _minimal_spec()  # only strategizer + implementer, no critic
+    node = StrategizerNode(adapter, name="strategizer", outgoing=["implementer"], spec=spec)
+
+    assert "AskForFeedback" not in node.adapter.closure_tools
+    # The two-shot Done feature introduces _done_warned; it must exist once the feature lands
+    assert hasattr(node, "_done_warned"), (
+        "_done_warned attribute not found — two-shot Done feature not yet implemented"
+    )
+
+
+def test_ask_for_feedback_present_with_critic():
+    """AskForFeedback closure IS registered when a critic node is in the graph."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    adapter = StubAdapter()
+    spec = _spec_with_critic()
+    node = StrategizerNode(
+        adapter, name="strategizer",
+        outgoing=["implementer", "critic"],
+        spec=spec,
+        worker_adapters={"implementer": StubAdapter(), "critic": MockCriticAdapter()},
+    )
+
+    assert "AskForFeedback" in node.adapter.closure_tools
+
+
+def test_ask_for_feedback_synchronous_returns_string():
+    """AskForFeedback() returns a non-empty string that doesn't start with ERROR."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    adapter = StubAdapter()
+    spec = _spec_with_critic()
+    node = StrategizerNode(
+        adapter, name="strategizer",
+        outgoing=["implementer", "critic"],
+        spec=spec,
+        worker_adapters={"implementer": StubAdapter(), "critic": MockCriticAdapter("PASS")},
+    )
+    # Manually set a notes_dir so the closure can run
+    node._current_notes_dir = None  # no ledger write needed for basic test
+
+    result = node.adapter.closure_tools["AskForFeedback"]()
+    assert isinstance(result, str)
+    assert len(result) > 0
+    assert not result.startswith("ERROR"), f"Got unexpected error: {result!r}"
+
+
+def test_ask_for_feedback_logged_in_jsonl(tmp_path):
+    """AskForFeedback() appends a record to delegation_log.jsonl."""
+    from f3dasm._src.agentic.delegation_log import DelegationLog
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    jsonl_path = tmp_path / "delegation_log.jsonl"
+    delegation_log = DelegationLog(jsonl_path)
+    adapter = StubAdapter()
+    spec = _spec_with_critic()
+    node = StrategizerNode(
+        adapter, name="strategizer",
+        outgoing=["implementer", "critic"],
+        spec=spec,
+        worker_adapters={"implementer": StubAdapter(), "critic": MockCriticAdapter()},
+        notes_dir=tmp_path,
+        delegation_log=delegation_log,
+    )
+    node._current_notes_dir = tmp_path
+
+    node.adapter.closure_tools["AskForFeedback"]()
+
+    assert jsonl_path.exists(), "delegation_log.jsonl not created by AskForFeedback"
+    last_line = jsonl_path.read_text().strip().splitlines()[-1]
+    rec = _json.loads(last_line)
+    assert rec["to_node"] == "critic"
+
+
+def test_ask_for_feedback_auto_injects_all_hypothesis_ids(tmp_path):
+    """AskForFeedback() with no args injects all hypothesis IDs from the ledger."""
+    from f3dasm._src.agentic.delegation_log import DelegationLog
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    from f3dasm._src.agentic.hypothesis_ledger import HypothesisLedger
+
+    # Pre-populate the ledger with H1 (OPEN) and H2 (FALSIFIED)
+    ledger = HypothesisLedger(tmp_path)
+    ledger.propose("Hypothesis one", proposed_by="test")
+    ledger.propose("Hypothesis two", proposed_by="test")
+    ledger.update("H2", "FALSIFIED", "disproved", triggered_by=None)
+
+    jsonl_path = tmp_path / "delegation_log.jsonl"
+    delegation_log = DelegationLog(jsonl_path)
+    adapter = StubAdapter()
+    spec = _spec_with_critic()
+    node = StrategizerNode(
+        adapter, name="strategizer",
+        outgoing=["implementer", "critic"],
+        spec=spec,
+        worker_adapters={"implementer": StubAdapter(), "critic": MockCriticAdapter()},
+        notes_dir=tmp_path,
+        delegation_log=delegation_log,
+    )
+    node._current_notes_dir = tmp_path
+
+    node.adapter.closure_tools["AskForFeedback"]()
+
+    rec = _json.loads(jsonl_path.read_text().strip().splitlines()[-1])
+    assert "H1" in rec["hypothesis_ids"]
+    assert "H2" in rec["hypothesis_ids"]
+
+
+def test_ask_for_feedback_respects_explicit_ids(tmp_path):
+    """AskForFeedback(hypothesis_ids=['H1']) only includes H1 in the record."""
+    from f3dasm._src.agentic.delegation_log import DelegationLog
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    from f3dasm._src.agentic.hypothesis_ledger import HypothesisLedger
+
+    ledger = HypothesisLedger(tmp_path)
+    ledger.propose("Hypothesis one", proposed_by="test")
+    ledger.propose("Hypothesis two", proposed_by="test")
+
+    jsonl_path = tmp_path / "delegation_log.jsonl"
+    delegation_log = DelegationLog(jsonl_path)
+    adapter = StubAdapter()
+    spec = _spec_with_critic()
+    node = StrategizerNode(
+        adapter, name="strategizer",
+        outgoing=["implementer", "critic"],
+        spec=spec,
+        worker_adapters={"implementer": StubAdapter(), "critic": MockCriticAdapter()},
+        notes_dir=tmp_path,
+        delegation_log=delegation_log,
+    )
+    node._current_notes_dir = tmp_path
+
+    node.adapter.closure_tools["AskForFeedback"](hypothesis_ids=["H1"])
+
+    rec = _json.loads(jsonl_path.read_text().strip().splitlines()[-1])
+    assert rec["hypothesis_ids"] == ["H1"]
+
+
+def test_done_second_call_with_critic_pass():
+    """Done() second call with critic: critic returns PASS → run closes (goto=END).
+
+    First Done() must return WARNING (two-shot gate); second Done() runs the
+    critic synchronously.  When the critic returns verdict=PASS the run closes.
+    We also assert first_result starts with WARNING to pin the two-shot contract.
+    """
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    from langgraph.graph import END
+
+    first_results: list[str] = []
+
+    class TwoDoneCriticPassAdapter(StubAdapter):
+        def invoke(self, messages):
+            r = self.closure_tools["Done"](summary="first – warning")
+            first_results.append(r)
+            self.closure_tools["Done"](summary="second – critic gate")
+            return "Done."
+
+    adapter = TwoDoneCriticPassAdapter()
+    spec = _spec_with_critic()
+    node = StrategizerNode(
+        adapter, name="strategizer",
+        outgoing=["implementer", "critic"],
+        spec=spec,
+        worker_adapters={
+            "implementer": StubAdapter(),
+            "critic": MockCriticAdapter(verdict="PASS"),
+        },
+    )
+    cmd = node(make_state())
+
+    assert first_results and first_results[0].startswith("WARNING"), (
+        f"Expected first Done() to WARNING, got: {first_results[0]!r}"
+    )
+    assert cmd.goto == END
+
+
+def test_done_second_call_with_critic_revise():
+    """Done() second call with critic returning REVISE: does NOT close, returns ERROR."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    from langgraph.graph import END
+
+    second_results: list[str] = []
+
+    class TwoDoneCriticReviseAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["Done"](summary="first – warning")
+            r = self.closure_tools["Done"](summary="second – critic gate")
+            second_results.append(r)
+            # Must call Done again to eventually close (avoid infinite loop)
+            # Simulate strategizer giving up and forcing close after REVISE
+            self.closure_tools["Done"](summary="force close after revise")
+            self.closure_tools["Done"](summary="actually close")
+            return "Done."
+
+    adapter = TwoDoneCriticReviseAdapter()
+    spec = _spec_with_critic()
+    node = StrategizerNode(
+        adapter, name="strategizer",
+        outgoing=["implementer", "critic"],
+        spec=spec,
+        worker_adapters={
+            "implementer": StubAdapter(),
+            "critic": MockCriticAdapter(verdict="REVISE"),
+        },
+    )
+    node(make_state())
+
+    assert second_results, "Second Done() was never captured"
+    assert "REVISE" in second_results[0], (
+        f"Expected REVISE in second Done() result, got: {second_results[0]!r}"
+    )
+    # _done_warned should have been reset after REVISE response
+    assert not node._done_warned, "_done_warned should reset to False after REVISE"
+
+
+# ---------------------------------------------------------------------------
+# WriteDeliverable closure tests
+# ---------------------------------------------------------------------------
+
+
+def _spec_with_write_deliverable():
+    """Minimal spec where the strategizer declares WriteDeliverable."""
+
+    class A(Agent):
+        role = "strategizer"
+        tools = frozenset(
+            {"Done", "FollowUp", "WriteNote", "ReadNote", "WriteDeliverable"}
+        )
+        description = "Test strategizer."
+
+    class B(Agent):
+        description = "Test implementer."
+
+    return Graph(
+        nodes={"strategizer": A(), "implementer": B()},
+        edges=(Edge("strategizer", "implementer"),),
+        entry="strategizer",
+    )
+
+
+def test_write_deliverable_injected_when_in_tools(tmp_path):
+    """WriteDeliverable closure is present when declared in agent tools."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    adapter = StubAdapter()
+    spec = _spec_with_write_deliverable()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        notes_dir=tmp_path,
+    )
+    assert "WriteDeliverable" in node.adapter.closure_tools
+
+
+def test_write_deliverable_absent_when_not_in_tools():
+    """WriteDeliverable closure is NOT registered when not in agent tools."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    adapter = StubAdapter()
+    spec = _minimal_spec()  # tools without WriteDeliverable
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+    )
+    assert "WriteDeliverable" not in node.adapter.closure_tools
+
+
+def test_write_deliverable_writes_py_file(tmp_path):
+    """WriteDeliverable writes a .py file to the run directory."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    # Simulate the run dir layout: run_dir/debug/strategizer_notes/
+    run_dir = tmp_path / "run_dir"
+    notes_dir = run_dir / "debug" / "strategizer_notes"
+    notes_dir.mkdir(parents=True)
+
+    adapter = StubAdapter()
+    spec = _spec_with_write_deliverable()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        notes_dir=notes_dir,
+    )
+    node._current_notes_dir = notes_dir
+
+    result = node.adapter.closure_tools["WriteDeliverable"](
+        "replicate.py", "import f3dasm\nprint('hello')"
+    )
+    assert result.startswith("Written:"), f"Unexpected result: {result!r}"
+    written = run_dir / "replicate.py"
+    assert written.exists(), f"File not found at {written}"
+    assert "import f3dasm" in written.read_text()
+
+
+def test_write_deliverable_writes_md_file(tmp_path):
+    """WriteDeliverable writes a .md file to the run directory."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    run_dir = tmp_path / "run_dir"
+    notes_dir = run_dir / "debug" / "strategizer_notes"
+    notes_dir.mkdir(parents=True)
+
+    adapter = StubAdapter()
+    spec = _spec_with_write_deliverable()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        notes_dir=notes_dir,
+    )
+    node._current_notes_dir = notes_dir
+
+    result = node.adapter.closure_tools["WriteDeliverable"](
+        "summary.md", "# Summary\nAll done."
+    )
+    assert result.startswith("Written:")
+    assert (run_dir / "summary.md").exists()
+
+
+def test_write_deliverable_rejects_unsupported_extension(tmp_path):
+    """WriteDeliverable returns ERROR for extensions other than .py and .md."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    run_dir = tmp_path / "run_dir"
+    notes_dir = run_dir / "debug" / "strategizer_notes"
+    notes_dir.mkdir(parents=True)
+
+    adapter = StubAdapter()
+    spec = _spec_with_write_deliverable()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        notes_dir=notes_dir,
+    )
+    node._current_notes_dir = notes_dir
+
+    result = node.adapter.closure_tools["WriteDeliverable"](
+        "output.csv", "col,val\n1,2"
+    )
+    assert result.startswith("ERROR:"), f"Expected ERROR, got: {result!r}"
+    assert ".csv" in result or "allowed" in result.lower() or "must end in" in result
+
+
+def test_write_deliverable_rejects_path_separators(tmp_path):
+    """WriteDeliverable returns ERROR when filename contains a path separator."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    run_dir = tmp_path / "run_dir"
+    notes_dir = run_dir / "debug" / "strategizer_notes"
+    notes_dir.mkdir(parents=True)
+
+    adapter = StubAdapter()
+    spec = _spec_with_write_deliverable()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        notes_dir=notes_dir,
+    )
+    node._current_notes_dir = notes_dir
+
+    result = node.adapter.closure_tools["WriteDeliverable"](
+        "sub/replicate.py", "code"
+    )
+    assert result.startswith("ERROR:"), f"Expected ERROR, got: {result!r}"
+
+
+def test_write_deliverable_returns_error_without_notes_dir(tmp_path):
+    """WriteDeliverable returns ERROR when _current_notes_dir is None."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    adapter = StubAdapter()
+    spec = _spec_with_write_deliverable()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        notes_dir=tmp_path,
+    )
+    node._current_notes_dir = None  # simulate pre-run state
+
+    result = node.adapter.closure_tools["WriteDeliverable"](
+        "replicate.py", "code"
+    )
+    assert result.startswith("ERROR:"), f"Expected ERROR, got: {result!r}"
+
+
+def test_strategizer_agent_tools_includes_write_deliverable():
+    """StrategizerAgent.tools frozenset includes WriteDeliverable."""
+    from f3dasm._src.agentic.agents.strategizer import StrategizerAgent
+
+    assert "WriteDeliverable" in StrategizerAgent.tools, (
+        "StrategizerAgent.tools must include 'WriteDeliverable'"
+    )
+
+
+# ---------------------------------------------------------------------------
+# RecallHistory closure tests
+# ---------------------------------------------------------------------------
+
+
+def test_recall_history_tool_present_in_strategizer_closures(tmp_path):
+    """RecallHistory closure is registered on StrategizerNode when delegation_log is set."""
+    from f3dasm._src.agentic.delegation_log import DelegationLog
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    delegation_log = DelegationLog(tmp_path / "delegation_log.jsonl")
+    adapter = StubAdapter()
+    spec = _minimal_spec()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        delegation_log=delegation_log,
+    )
+    assert "RecallHistory" in node.adapter.closure_tools
+
+
+def test_recall_history_returns_empty_when_no_prior(tmp_path):
+    """RecallHistory returns 'No prior delegations found.' when log is empty."""
+    from f3dasm._src.agentic.delegation_log import DelegationLog
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    delegation_log = DelegationLog(tmp_path / "delegation_log.jsonl")
+    adapter = StubAdapter()
+    spec = _minimal_spec()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        delegation_log=delegation_log,
+    )
+    result = node.adapter.closure_tools["RecallHistory"]()
+    assert "No prior delegations found." in result
+
+
+def test_recall_history_returns_formatted_pairs(tmp_path):
+    """RecallHistory returns formatted (task, deliverable) pairs from delegation log."""
+    from f3dasm._src.agentic.delegation_log import DelegationLog
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    jsonl_path = tmp_path / "delegation_log.jsonl"
+    delegation_log = DelegationLog(jsonl_path)
+
+    # Write two records directed to "strategizer"
+    delegation_log.record(
+        id="D001", from_node="other", to_node="strategizer",
+        task="First task", deliverable="First result",
+        hypothesis_ids=["H1"],
+        started_at="2026-01-01T00:00:00+00:00",
+        completed_at="2026-01-01T00:01:00+00:00",
+        status="DONE",
+    )
+    delegation_log.record(
+        id="D002", from_node="other", to_node="strategizer",
+        task="Second task", deliverable="Second result",
+        hypothesis_ids=["H2"],
+        started_at="2026-01-01T00:02:00+00:00",
+        completed_at="2026-01-01T00:03:00+00:00",
+        status="DONE",
+    )
+
+    adapter = StubAdapter()
+    spec = _minimal_spec()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        delegation_log=delegation_log,
+    )
+    result = node.adapter.closure_tools["RecallHistory"](n=5)
+    assert "First task" in result
+    assert "First result" in result
+    assert "Second task" in result
+    assert "Second result" in result
+    assert "Prior delegation 1" in result
+    assert "Prior delegation 2" in result
+
+
+def test_worker_node_has_recall_history_closure(tmp_path):
+    """WorkerNode registers RecallHistory when delegation_log is passed."""
+    from f3dasm._src.agentic.delegation_log import DelegationLog
+    from f3dasm._src.agentic.nodes import WorkerNode
+
+    delegation_log = DelegationLog(tmp_path / "delegation_log.jsonl")
+    adapter = StubAdapter()
+    node = WorkerNode(adapter, delegation_log=delegation_log, name="implementer")
+    assert "RecallHistory" in node.adapter.closure_tools
+
+
+def test_recall_history_gated_on_delegation_log_presence():
+    """RecallHistory closure is NOT registered when delegation_log is None."""
+    from f3dasm._src.agentic.nodes import StrategizerNode, WorkerNode
+
+    # StrategizerNode without delegation_log
+    adapter1 = StubAdapter()
+    spec = _minimal_spec()
+    node1 = StrategizerNode(
+        adapter1, name="strategizer", outgoing=["implementer"], spec=spec,
+        delegation_log=None,
+    )
+    assert "RecallHistory" not in node1.adapter.closure_tools
+
+    # WorkerNode without delegation_log
+    adapter2 = StubAdapter()
+    node2 = WorkerNode(adapter2, delegation_log=None, name="implementer")
+    assert "RecallHistory" not in node2.adapter.closure_tools

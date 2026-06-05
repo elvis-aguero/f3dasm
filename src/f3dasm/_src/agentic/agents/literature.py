@@ -27,7 +27,7 @@ If the corpus does not contain evidence, write: "Not found in corpus."
   CorpusGetPaper(paper_id)        — full extracted text of one paper
   CorpusList()                    — metadata table of all corpus papers
 
-  Corpus location: delegations/literature/
+  Corpus location: debug/lit_reviewer_notes/
     corpus.csv             — metadata index
     papers/{id}/paper.md   — page-annotated extracted text
 </corpus_tools>
@@ -63,10 +63,10 @@ If the corpus does not contain evidence, write: "Not found in corpus."
    Search mcp__arxiv__search_papers, search_semantic_scholar, AND search_openalex.
    Use get_semantic_scholar_recommendations(paper_id) on any seed paper found.
 2. For each relevant paper, get its text via ONE of:
-   a) mcp__arxiv__read_paper(paper_id) → write to delegations/{delegation_id}/{paper_id}.md, then
-      CorpusAdd(source="delegations/{delegation_id}/{paper_id}.md", arxiv_id=paper_id, title=..., ...)
-   b) mcp__arxiv__download_paper(paper_id, dir="delegations/{delegation_id}/") → then
-      CorpusAdd(source="delegations/{delegation_id}/{paper_id}.pdf", arxiv_id=paper_id, title=..., ...)
+   a) mcp__arxiv__read_paper(paper_id) → write to {delegation_id}/{paper_id}.md, then
+      CorpusAdd(source="{delegation_id}/{paper_id}.md", arxiv_id=paper_id, title=..., ...)
+   b) mcp__arxiv__download_paper(paper_id, dir="{delegation_id}/") → then
+      CorpusAdd(source="{delegation_id}/{paper_id}.pdf", arxiv_id=paper_id, title=..., ...)
 3. CorpusSearch() for passages. Call with multiple phrasings. CorpusRank() to
    merge and reorder results from different queries before quoting.
 4. Quote verbatim; don't paraphrase.
@@ -113,7 +113,7 @@ quotes_used: Q
 class LiteratureReviewAgent(Agent):
     """Literature reviewer: answers epistemic questions from a primary-source corpus.
 
-    Owns delegations/literature/corpus.csv and delegations/literature/papers/.
+    Owns debug/lit_reviewer_notes/corpus.csv and debug/lit_reviewer_notes/papers/.
     Never answers from memory — all claims must cite exact passages from corpus.
     inject_problem_statement=True ensures the research domain is always visible.
     """
@@ -139,7 +139,7 @@ class LiteratureReviewAgent(Agent):
 
     system_prompt = LITERATURE_REVIEW_SYSTEM_PROMPT
 
-    def build_closure_tools(self, study_dir, delegation_id=None):
+    def build_closure_tools(self, study_dir, delegation_id=None, lit_reviewer_notes_dir=None):
         """Inject corpus + Semantic Scholar tools as runtime closures."""
         import json as _json
         from pathlib import Path as _Path
@@ -149,7 +149,12 @@ class LiteratureReviewAgent(Agent):
         except ImportError:
             return {}
 
-        corpus = LiteratureCorpus(_Path(study_dir) / "delegations" / "literature")
+        corpus_dir = (
+            _Path(lit_reviewer_notes_dir)
+            if lit_reviewer_notes_dir is not None
+            else _Path(study_dir) / "delegations" / "literature"  # fallback for tests
+        )
+        corpus = LiteratureCorpus(corpus_dir)
 
         tools = {
             "CorpusAdd": lambda source, title="", authors="", year="", doi="", arxiv_id="", venue="", abstract="", citation_count=0: corpus.add(

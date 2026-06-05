@@ -188,7 +188,7 @@ def test_strategizer_mentions_all_five_tools():
         STRATEGIZER_SYSTEM_PROMPT,
     )
 
-    required_tools = ["Read", "WriteMarkdown", "Ask", "Delegate", "Done"]
+    required_tools = ["Read", "WriteNote", "FollowUp", "Delegate", "Done"]
     for tool in required_tools:
         assert tool in STRATEGIZER_SYSTEM_PROMPT, (
             f"STRATEGIZER_SYSTEM_PROMPT does not mention tool '{tool}'"
@@ -200,36 +200,29 @@ def test_strategizer_mentions_all_five_tools():
 # ---------------------------------------------------------------------------
 
 def test_strategizer_briefing_clarification_ritual():
-    """Prompt encodes the Ask-before-hypothesis briefing ritual.
-
-    Notes
-    -----
-    A loose proximity check (within 150 chars) is used rather than an
-    exact sentence match, to remain robust to minor prose edits.
-    """
+    """Prompt encodes the FollowUp-before-hypothesis briefing ritual."""
     from f3dasm._src.agentic.agent_prompts import (
         STRATEGIZER_SYSTEM_PROMPT,
     )
 
     lower = STRATEGIZER_SYSTEM_PROMPT.lower()
 
-    # 'Ask' literal tool name must appear.
-    assert "ask" in lower, (
-        "STRATEGIZER_SYSTEM_PROMPT does not mention 'Ask' tool"
+    # FollowUp tool must appear (replaced Ask).
+    assert "followup" in lower, (
+        "STRATEGIZER_SYSTEM_PROMPT does not mention 'FollowUp' tool"
     )
 
-    # 'clarif' root must appear (covers 'clarification', 'clarify', etc.).
-    assert "clarif" in lower, (
-        "STRATEGIZER_SYSTEM_PROMPT does not contain 'clarif' root"
+    # BRIEFING-CLARIFICATION RITUAL section must exist.
+    assert "briefing" in lower, (
+        "STRATEGIZER_SYSTEM_PROMPT does not contain 'briefing' ritual"
     )
 
-    # 'before' and 'clarif' must appear within 150 chars of each other,
-    # encoding the ritual that clarification precedes hypothesis formation.
-    idx_clarif = lower.find("clarif")
-    window = lower[max(0, idx_clarif - 150): idx_clarif + 150]
+    # 'before' and 'briefing' must appear within 200 chars of each other.
+    idx = lower.find("briefing")
+    window = lower[max(0, idx - 200): idx + 200]
     assert "before" in window, (
-        "STRATEGIZER_SYSTEM_PROMPT does not link 'clarif' and 'before' "
-        "within a 150-char window — briefing ritual may be missing"
+        "STRATEGIZER_SYSTEM_PROMPT does not link 'briefing' and 'before' "
+        "within a 200-char window — briefing ritual may be missing"
     )
 
 
@@ -242,7 +235,7 @@ def test_implementer_xml_sections_appear_exactly_once():
 
     Notes
     -----
-    Includes the f3dasm-specific ``<f3dasm_primer>`` tag that teaches the
+    Includes the f3dasm-specific ``<f3dasm_api>`` tag that teaches the
     Implementer how to use the framework.
     """
     from f3dasm._src.agentic.agent_prompts import (
@@ -252,7 +245,7 @@ def test_implementer_xml_sections_appear_exactly_once():
     required_tags = [
         "role",
         "deliverable",
-        "f3dasm_primer",
+        "f3dasm_api",
         "operating_principles",
         "failure_modes_to_avoid",
         "tool_usage",
@@ -568,12 +561,12 @@ def test_runtime_imports_all_four_constants():
 # ---------------------------------------------------------------------------
 
 def test_strategizer_hypothesis_log_tag_appears_once():
-    """STRATEGIZER_SYSTEM_PROMPT has exactly one <hypothesis_log> pair."""
+    """STRATEGIZER_SYSTEM_PROMPT has exactly one <hypothesis_ledger> pair."""
     from f3dasm._src.agentic.agent_prompts import (
         STRATEGIZER_SYSTEM_PROMPT,
     )
 
-    _assert_tag_once(STRATEGIZER_SYSTEM_PROMPT, "hypothesis_log")
+    _assert_tag_once(STRATEGIZER_SYSTEM_PROMPT, "hypothesis_ledger")
 
 
 # ---------------------------------------------------------------------------
@@ -581,23 +574,23 @@ def test_strategizer_hypothesis_log_tag_appears_once():
 # ---------------------------------------------------------------------------
 
 def test_strategizer_hypothesis_log_content():
-    """hypothesis_log section mentions all required fields."""
+    """hypothesis_ledger section mentions all required concepts."""
     from f3dasm._src.agentic.agent_prompts import (
         STRATEGIZER_SYSTEM_PROMPT,
     )
 
     lower = STRATEGIZER_SYSTEM_PROMPT.lower()
     required_terms = [
-        "hypotheses.md",
-        "comment",
-        "confidence",
-        "evidence",
-        "status",
-        "last_updated_delegation",
+        "hypotheses.json",
+        "hypothesispropose",
+        "hypothesisupdate",
+        "hypothesislist",
+        "hypothesis_ids",
+        "falsified",
     ]
     for term in required_terms:
         assert term in lower, (
-            f"STRATEGIZER_SYSTEM_PROMPT hypothesis_log missing '{term}'"
+            f"STRATEGIZER_SYSTEM_PROMPT hypothesis_ledger missing '{term}'"
         )
 
 
@@ -741,7 +734,7 @@ def test_run_paths_preamble_template_exists_and_is_string():
 # ---------------------------------------------------------------------------
 
 def test_run_paths_preamble_template_placeholders():
-    """Template substitutes study_dir and notes_dir; missing kwarg raises.
+    """Template substitutes study_dir, run_dir, debug_dir, notes_dir; missing kwarg raises.
 
     Notes
     -----
@@ -755,6 +748,8 @@ def test_run_paths_preamble_template_placeholders():
 
     result = RUN_PATHS_PREAMBLE_TEMPLATE.format(
         study_dir="/a/study",
+        run_dir="/a/study/runs/ts",
+        debug_dir="/a/study/runs/ts/debug",
         notes_dir="/a/notes",
     )
     assert "/a/study" in result, (
@@ -800,7 +795,7 @@ def test_workspace_preamble_template_exists_and_is_string():
 # ---------------------------------------------------------------------------
 
 def test_workspace_preamble_template_placeholder_and_no_tmp():
-    """Template substitutes workspace_dir; warns against /tmp.
+    """Template substitutes workspace_dir and study_dir; warns against /tmp.
 
     Notes
     -----
@@ -814,6 +809,7 @@ def test_workspace_preamble_template_placeholder_and_no_tmp():
 
     result = WORKSPACE_PREAMBLE_TEMPLATE.format(
         workspace_dir="/a/workspace",
+        study_dir="/a/study",
     )
     assert "/a/workspace" in result, (
         "workspace_dir substitution not found in result"

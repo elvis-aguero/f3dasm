@@ -259,3 +259,53 @@ def test_integration_stateless_between_calls():
     r2 = adapter.invoke([{"role": "user", "content": "Say only: SECOND"}])
     # Neither response should bleed context from the other call
     assert isinstance(r1, str) and isinstance(r2, str)
+
+
+# ---------------------------------------------------------------------------
+# Blindspot 3: last_usage populated after invoke
+# ---------------------------------------------------------------------------
+
+
+def test_last_usage_populated_from_usage_metadata():
+    """last_usage is populated with input/output token counts from AIMessage.usage_metadata."""
+    from langchain_core.messages import AIMessage
+
+    fake_msg = AIMessage(content="result")
+    fake_msg.usage_metadata = {"input_tokens": 75, "output_tokens": 30}
+
+    fake_agent = MagicMock()
+    fake_agent.invoke.return_value = {"messages": [fake_msg]}
+
+    adapter = _make_adapter()
+    adapter._agent = fake_agent
+
+    adapter.invoke([{"role": "user", "content": "go"}])
+
+    assert adapter.last_usage["input_tokens"] == 75
+    assert adapter.last_usage["output_tokens"] == 30
+
+
+def test_last_usage_empty_when_no_metadata():
+    """last_usage defaults to zeros when AIMessage has no usage_metadata."""
+    from langchain_core.messages import AIMessage
+
+    # AIMessage without usage_metadata attribute set
+    fake_msg = AIMessage(content="result")
+    # Ensure usage_metadata is None (not set by default in some versions)
+    if not hasattr(fake_msg, "usage_metadata"):
+        object.__setattr__(fake_msg, "usage_metadata", None)
+    else:
+        fake_msg.usage_metadata = None
+
+    fake_agent = MagicMock()
+    fake_agent.invoke.return_value = {"messages": [fake_msg]}
+
+    adapter = _make_adapter()
+    adapter._agent = fake_agent
+
+    # Must not raise
+    adapter.invoke([{"role": "user", "content": "go"}])
+
+    # Defaults to zeros (not a crash)
+    assert adapter.last_usage.get("input_tokens", 0) == 0
+    assert adapter.last_usage.get("output_tokens", 0) == 0

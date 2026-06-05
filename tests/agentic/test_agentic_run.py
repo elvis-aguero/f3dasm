@@ -39,10 +39,11 @@ def make_stub_run(tmp_path, strat_responses=None, impl_responses=None):
 
     class DoneStratAdapter(StubAdapter):
         def invoke(self, messages):
-            # Call Done closure then return text
+            # Call Done closure twice (two-shot: first warns, second closes)
             resp = super().invoke(messages)
             if "Done" in (self.closure_tools or {}):
-                self.closure_tools["Done"](summary="Task complete.")
+                self.closure_tools["Done"](summary="Task complete.")  # WARNING
+                self.closure_tools["Done"](summary="Task complete.")  # close
             return resp
 
     graph_spec = _default_graph()

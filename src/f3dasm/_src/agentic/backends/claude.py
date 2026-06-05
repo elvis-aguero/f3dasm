@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import inspect as _inspect
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -121,31 +122,39 @@ class ClaudeAdapter:
         study_dir: Path | None = None,
         native_tools: list[str] | None = None,
         closure_tools: dict[str, Any] | None = None,
+        extra_mcp_servers: dict | None = None,
+        extra_allowed_tools: list[str] | None = None,
+        persistent: bool = False,
+        max_history_pairs: int = 5,
     ) -> None:
         self.model = model
         self.system_prompt = system_prompt
         self.study_dir = Path(study_dir) if study_dir else None
         self.native_tools = list(native_tools or [])
         self.closure_tools = dict(closure_tools or {})
+        self.extra_mcp_servers: dict = dict(extra_mcp_servers or {})
+        self.extra_allowed_tools: list[str] = list(extra_allowed_tools or [])
+        # persistent and max_history_pairs kept for backward compatibility with
+        # Agent subclasses and tests that read these attributes; not used
+        # in the core invocation path (history is demand-driven via DelegationLog).
+        self.persistent: bool = persistent
+        self.max_history_pairs: int = max_history_pairs
+        # Lock serializes concurrent delegations to the same shared adapter.
+        self._lock: threading.Lock = threading.Lock()
         # Set by StrategizerNode; when truthy, the generator is closed after
         # the next AssistantMessage so the session ends on a routing decision.
         self.route_watcher: Any = None
+        # Populated after each ainvoke() with token counts from ResultMessage.
+        self.last_usage: dict = {}
 
     def copy(self) -> "ClaudeAdapter":
-        """Return a fresh adapter with the same config but independent closure_tools.
+        """Always return self.
 
-        Use this to create a per-delegation adapter so concurrent background
-        threads never race on a shared closure_tools dict.
+        Concurrent delegations share this adapter instance and are serialized
+        via _lock in invoke(). Episodic memory is demand-driven via RecallHistory
+        (backed by DelegationLog) rather than per-adapter history injection.
         """
-        fresh = ClaudeAdapter(
-            model=self.model,
-            system_prompt=self.system_prompt,
-            study_dir=self.study_dir,
-            native_tools=list(self.native_tools),
-            closure_tools=dict(self.closure_tools),
-        )
-        # route_watcher is intentionally not copied — worker adapters don't use it
-        return fresh
+        return self
 
     async def ainvoke(self, messages: list[dict]) -> str:
         """Run one agent turn asynchronously; return assembled text."""
@@ -209,6 +218,13 @@ class ClaudeAdapter:
                 f"mcp__{server_name}__{t.name}" for t in sdk_tools
             ]
 
+        # Merge external stdio MCP servers declared by the Agent subclass.
+        if self.extra_mcp_servers:
+            mcp_servers.update(self.extra_mcp_servers)
+
+        _base_disallowed = ["WebSearch", "WebFetch", "Task", "ExitPlanMode", "computer"]
+        _effective_disallowed = [t for t in _base_disallowed if t not in self.extra_allowed_tools]
+
         options = ClaudeAgentOptions(
             system_prompt=self.system_prompt,
             model=self.model,
@@ -216,23 +232,18 @@ class ClaudeAdapter:
             tools=self.native_tools or [],
             mcp_servers=mcp_servers if mcp_servers else {},
             allowed_tools=(
-                (qualified_mcp_tools + self.native_tools)
+                (qualified_mcp_tools + self.native_tools + self.extra_allowed_tools)
                 or None
             ),
-            disallowed_tools=[
-                "WebSearch",
-                "WebFetch",
-                "Task",
-                "ExitPlanMode",
-                "computer",
-            ],
+            disallowed_tools=_effective_disallowed,
             permission_mode="bypassPermissions",
-            strict_mcp_config=bool(mcp_servers),
+            strict_mcp_config=bool(mcp_servers) or bool(self.extra_mcp_servers),
         )
 
         prompt_str = _format_messages_as_prompt(messages)
 
         last_assistant = None
+        last_result: Any = None
         gen = query(prompt=prompt_str, options=options)
         try:
             async for msg in gen:
@@ -241,6 +252,7 @@ class ClaudeAdapter:
                     if self.route_watcher and self.route_watcher():
                         break
                 elif isinstance(msg, ResultMessage):
+                    last_result = msg
                     break
         finally:
             aclose = getattr(gen, "aclose", None)
@@ -250,6 +262,15 @@ class ClaudeAdapter:
                 except Exception:
                     pass
 
+        # Capture token usage from ResultMessage for run-level accounting.
+        if last_result is not None:
+            self.last_usage = {
+                **(last_result.usage or {}),
+                "total_cost_usd": last_result.total_cost_usd,
+            }
+        else:
+            self.last_usage = {}
+
         text = ""
         if last_assistant is not None:
             for block in last_assistant.content:
@@ -258,5 +279,10 @@ class ClaudeAdapter:
         return text
 
     def invoke(self, messages: list[dict]) -> str:
-        """Synchronous wrapper around :meth:`ainvoke`."""
-        return _run_async_safe(self.ainvoke(messages))
+        """Synchronous wrapper around :meth:`ainvoke`.
+
+        Acquires _lock to serialize concurrent callers (e.g. parallel
+        delegations to the same shared worker adapter).
+        """
+        with self._lock:
+            return _run_async_safe(self.ainvoke(messages))

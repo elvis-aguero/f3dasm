@@ -28,7 +28,7 @@ class Agent:
        these to the backend session's native tool executor.
 
     2. **Protocol closure tools** — names from
-       :data:`PROTOCOL_CLOSURE_NAMES` (``"Done"``, ``"WriteMarkdown"``,
+       :data:`PROTOCOL_CLOSURE_NAMES` (``"Done"``, ``"WriteNote"``,
        ``"ReadNote"``).  The runtime builds Python callables for these and
        passes them as ``closure_tools`` to the session factory.
 
@@ -37,6 +37,13 @@ class Agent:
        and ``"FollowUp"`` (incoming edges).  **Never declare these in**
        ``Agent.tools``.  The runtime injects them automatically from the
        graph topology; any declaration here is ignored.
+
+    4. **External MCP server tools** — names declared in
+       ``extra_allowed_tools`` (e.g.
+       ``"mcp__arxiv__search_papers"``).  The runtime passes these to the
+       backend together with ``mcp_servers``, a dict of
+       ``{server_name: McpStdioServerConfig}`` that declares which external
+       MCP servers to start.
 
     Default is ``frozenset()`` — no tools (opt-in, conservative).
 
@@ -49,15 +56,39 @@ class Agent:
     system_prompt: str = ""
     tools: frozenset[str] = frozenset()
     reset_on_checkpoint: bool = True
-    description: str | None = None
+    description: str = ""
     role: str = "implementer"
     backend: str | None = None
+    mcp_servers: dict = {}
+    extra_allowed_tools: frozenset[str] = frozenset()
+    inject_problem_statement: bool = False
+    max_history_pairs: int = 5
+    report_sections: tuple[str, ...] = (
+        "### Actions taken",
+        "### Files touched",
+        "### Conclusions",
+        "### Numbers",
+    )
 
     def __init__(self, model: str | None = None) -> None:
         self.model = model
 
     def forward(self) -> None:
         """ADAS hook — override for inspectable Python orchestration."""
+
+    def build_closure_tools(
+        self,
+        study_dir: "Path",
+        delegation_id: str | None = None,
+        lit_reviewer_notes_dir: "Path | None" = None,
+    ) -> dict:
+        """Return runtime closure tools for this agent. Override in subclasses.
+
+        Called by the runtime when constructing the worker adapter so agents can
+        inject Python callables (e.g. corpus management tools) without declaring
+        them in Agent.tools.
+        """
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +164,12 @@ class Graph:
             raise ValueError(
                 f"entry={self.entry!r} not in nodes (entry node undeclared). "
                 f"Declared names: {sorted(names)}"
+            )
+        missing_desc = [n for n, a in self.nodes.items() if not a.description]
+        if missing_desc:
+            raise ValueError(
+                f"All agents must define a non-empty description. "
+                f"Missing in: {sorted(missing_desc)}"
             )
 
     def outgoing(self, name: str) -> list[str]:

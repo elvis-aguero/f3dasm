@@ -11,11 +11,15 @@ import threading
 import time
 import traceback
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .graph_state import AgenticState
+
+from .delegation_log import DelegationLog
+from .hypothesis_ledger import HypothesisLedger
 
 __all__ = [
     "AgentNode", "StrategizerNode", "WorkerNode", "ImplementerNode",
@@ -59,14 +63,29 @@ def _to_adapter_messages(lc_messages: list) -> list[dict]:
     return result
 
 
-def _classify_response(text: str) -> str | None:
-    """Return a REFLECT diagnosis string if text is malformed, else None."""
+def _classify_response(
+    text: str,
+    required_sections: list[str] | None = None,
+) -> str | None:
+    """Return a REFLECT diagnosis string if text is malformed, else None.
+
+    Parameters
+    ----------
+    text : str
+        The raw response text from a worker agent.
+    required_sections : list[str] or None
+        Subsection headers that must appear in the ``## Report`` block.
+        When ``None`` the four default sections from
+        ``_REQUIRED_SUBSECTIONS`` are used.
+    """
     from .agent_prompts import (
         REFLECT_DIAGNOSIS_CAPABILITY_LIMIT,
         REFLECT_DIAGNOSIS_MISSING_SUBSECTIONS_TEMPLATE,
         REFLECT_DIAGNOSIS_NO_REPORT_HEADING,
         REFLECT_DIAGNOSIS_SHORT,
     )
+
+    sections = _REQUIRED_SUBSECTIONS if required_sections is None else required_sections
 
     if len(text.strip()) < 100:
         return REFLECT_DIAGNOSIS_SHORT
@@ -75,7 +94,7 @@ def _classify_response(text: str) -> str | None:
         return REFLECT_DIAGNOSIS_CAPABILITY_LIMIT
     if "## report" not in low:
         return REFLECT_DIAGNOSIS_NO_REPORT_HEADING
-    missing = [s for s in _REQUIRED_SUBSECTIONS if s.lower() not in low]
+    missing = [s for s in sections if s.lower() not in low]
     if missing:
         return REFLECT_DIAGNOSIS_MISSING_SUBSECTIONS_TEMPLATE.format(
             missing_subsections=", ".join(f"'{s}'" for s in missing)
@@ -110,6 +129,9 @@ class StrategizerNode(AgentNode):
         interactive: bool = False,
         max_ask: int = 1,
         worker_adapters: dict | None = None,
+        notes_dir: Any = None,
+        workspace_dir: Any = None,
+        delegation_log: "DelegationLog | None" = None,
     ) -> None:
         super().__init__(adapter)
         self._name = name
@@ -117,11 +139,12 @@ class StrategizerNode(AgentNode):
         self._spec = spec
         self._route: dict = {}
         self._study_dir = study_dir
+        self._workspace_dir = Path(workspace_dir) if workspace_dir is not None else None
         self._interactive = interactive
         self._max_ask = max_ask
         self._ask_count = 0
         self._current_notes_dir: Path | None = None
-        # Parallel delegation registry: id → {"status", "result", "evals"}
+        # Parallel delegation registry: id → {"status", "result", "evals", "hypothesis_ids", "started_at"}
         self._worker_adapters: dict[str, Any] = worker_adapters or {}
         self._registry: dict[str, dict] = {}
         self._registry_lock = threading.Lock()
@@ -132,6 +155,29 @@ class StrategizerNode(AgentNode):
         # Budget state — set at the start of each __call__ from AgenticState
         self._budget_seconds: float | None = None
         self._run_start: float | None = None
+        # Hypothesis ledger — persists hypotheses.json
+        self._ledger: HypothesisLedger | None = (
+            HypothesisLedger(Path(notes_dir)) if notes_dir is not None else None
+        )
+        # Graph-wide delegation log (demand-driven episodic memory)
+        self._delegation_log: DelegationLog | None = delegation_log
+        # Running total of delegations at the START of the current __call__
+        # Used to compute sequential delegation IDs (D001, D002, …)
+        self._state_total_delegations: int = 0
+        # Two-shot Done() gate: first call warns, second call closes.
+        # Resets to False whenever a new Delegate() fires.
+        self._done_warned: bool = False
+        # Accumulated token usage across strategizer + all workers this run.
+        self._token_totals: dict = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "total_cost_usd": 0.0,
+        }
+        # Per-node raw tool-call error count: any ERROR: return or raised
+        # exception from any injected closure counts as one error for that node.
+        self._error_counts: dict[str, int] = {}
         self.adapter.closure_tools.update(self._build_routing_closures())
         self.adapter.route_watcher = lambda: self._route.get("kind") == "done"
 
@@ -152,8 +198,30 @@ class StrategizerNode(AgentNode):
         study_dir = self._study_dir
         interactive = self._interactive
 
-        def Delegate(target: str, intent: str, expected_report: str) -> str:
-            """Fire a task concurrently; returns a TASK-xxxxxxxx ID immediately."""
+        # Build target hints from each connected agent's description.
+        _target_hints = "\n  ".join(
+            f"{t}: {node._spec.nodes[t].description}"
+            for t in outgoing
+            if t in node._spec.nodes
+        )
+        _delegate_doc = (
+            "Fire a task to a connected agent; returns a D### ID immediately.\n\n"
+            "CONTEXT PACKAGING: workers start each delegation with no memory of\n"
+            "prior delegations. Include in the task message everything the worker\n"
+            "needs: relevant workspace paths, key findings from prior delegations,\n"
+            "and the precise question to answer. Workers can Read() the workspace\n"
+            "but need to know where to look.\n\n"
+            "hypothesis_ids must be non-empty when the ledger is active.\n"
+            "The worker writes exclusively to {id}/ (relative to their workspace in debug/delegations/).\n\n"
+            f"Available targets:\n  {_target_hints}"
+        )
+
+        def Delegate(
+            target: str,
+            intent: str,
+            expected_report: str,
+            hypothesis_ids: list | None = None,
+        ) -> str:
             if target not in outgoing:
                 return (
                     f"ERROR: unknown target {target!r}."
@@ -166,10 +234,47 @@ class StrategizerNode(AgentNode):
                     f" Available: {list(node._worker_adapters)}"
                 )
 
-            # Build task message (same as previous sequential logic)
+            # Enforce hypothesis linkage when ledger is active
+            h_ids: list[str] = list(hypothesis_ids or [])
+            if node._ledger is not None and not h_ids:
+                return (
+                    "ERROR: hypothesis_ids must not be empty. "
+                    "Every delegation must be linked to at least one hypothesis. "
+                    "Call HypothesisList() to see open hypotheses."
+                )
+
+            # Sequential delegation ID: D001, D002, …
+            with node._registry_lock:
+                offset = len(node._registry)
+            global_n = node._state_total_delegations + offset + 1
+            delegation_id = f"D{global_n:03d}"
+
+            start_time_mono = time.monotonic()
+            started_at = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
+
+            _followup_event = threading.Event()
+            with node._registry_lock:
+                node._registry[delegation_id] = {
+                    "status": "Working",
+                    "result": None,
+                    "evals": 0,
+                    "start_time": start_time_mono,
+                    "hypothesis_ids": h_ids,
+                    "started_at": started_at,
+                    "target": target,
+                    "followup_question": None,
+                    "followup_answer": None,
+                    "followup_event": _followup_event,
+                    "followup_count": 0,
+                }
+
+            # Build task message
             edge = node._spec.edge(node._name, target)
             preamble = edge.preamble if edge else ""
-            task_msg = intent
+            task_msg = (
+                f"<workspace_subfolder>{delegation_id}/</workspace_subfolder>\n\n"
+                + intent
+            )
             if expected_report:
                 task_msg += (
                     f"\n\n**Required deliverables / acceptance"
@@ -178,21 +283,48 @@ class StrategizerNode(AgentNode):
             if preamble:
                 task_msg = preamble + "\n\n" + task_msg
 
-            delegation_id = "TASK-" + uuid.uuid4().hex[:8]
-            start_time_mono = time.monotonic()
+            # Inject PROBLEM_STATEMENT for agents that request it
+            _target_agent = node._spec.nodes.get(target) if node._spec else None
+            if getattr(_target_agent, "inject_problem_statement", False) and node._study_dir:
+                _ps_path = Path(node._study_dir) / "PROBLEM_STATEMENT.md"
+                if _ps_path.exists():
+                    _ps_text = _ps_path.read_text(encoding="utf-8")
+                    task_msg = (
+                        f"<problem_statement>\n{_ps_text}\n</problem_statement>\n\n"
+                        + task_msg
+                    )
 
-            with node._registry_lock:
-                node._registry[delegation_id] = {
-                    "status": "Working",
-                    "result": None,
-                    "evals": 0,
-                    "start_time": start_time_mono,
-                }
-
-            # Each delegation gets its OWN adapter copy so concurrent
-            # delegations to the same target never race on closure_tools (D1/D2).
-            # Adapters that don't implement copy() are used as-is (e.g. test stubs).
+            # Each delegation gets its OWN adapter copy (D1/D2 concurrency fix).
             worker = worker_template.copy() if hasattr(worker_template, "copy") else worker_template
+
+            # Inject per-delegation Write sandbox: writes go to {delegation_id}/ only.
+            _study = node._study_dir
+            if _study is not None:
+                _workspace = (
+                    node._workspace_dir.resolve()
+                    if node._workspace_dir is not None
+                    else (Path(node._study_dir or ".") / "debug" / "delegations").resolve()
+                )
+                _delegation_ws = (_workspace / delegation_id).resolve()
+
+                def _sandboxed_write(path: str, body: str, _ws=_delegation_ws, _did=delegation_id) -> str:
+                    """Write restricted to {delegation_id}/."""
+                    try:
+                        candidate = (_ws / path).resolve()
+                    except Exception as exc:  # noqa: BLE001
+                        return f"ERROR: invalid path {path!r}: {exc}"
+                    try:
+                        candidate.relative_to(_ws)
+                    except ValueError:
+                        return (
+                            f"ERROR: write rejected — {candidate} is outside "
+                            f"{_ws}. Write only to {_did}/."
+                        )
+                    candidate.parent.mkdir(parents=True, exist_ok=True)
+                    candidate.write_text(body, encoding="utf-8")
+                    return f"Written: {candidate}"
+
+                worker.closure_tools["Write"] = node._wrap_closure(_sandboxed_write, target)
 
             def _run() -> None:
                 evals_box: dict = {"count": 0}
@@ -202,7 +334,38 @@ class StrategizerNode(AgentNode):
                     evals_box["count"] = int(count)
                     return f"Recorded {count} evaluations."
 
-                worker.closure_tools["ReportEvals"] = ReportEvals
+                def FollowUp(question: str) -> str:
+                    """Ask your delegating party one clarifying question before proceeding.
+
+                    Routes to whoever sent you this task: the agent that delegated
+                    to you.  One FollowUp per delegation.  The answer is injected
+                    directly into your context.  If no answer arrives, proceed with
+                    best judgment.
+                    """
+                    with node._registry_lock:
+                        entry = node._registry.get(delegation_id, {})
+                        if entry.get("followup_count", 0) >= 1:
+                            return (
+                                "FollowUp limit reached (1 per delegation). "
+                                "Proceed with best judgment."
+                            )
+                        node._registry[delegation_id]["followup_question"] = question
+                        node._registry[delegation_id]["followup_count"] = 1
+                        node._registry[delegation_id]["status"] = "FollowUp"
+                        evt = node._registry[delegation_id]["followup_event"]
+                    with node._notifications_lock:
+                        node._notifications.append(
+                            f"[{delegation_id} FollowUp: {question!r} "
+                            f"→ call Reply('{delegation_id}', answer)]"
+                        )
+                    evt.wait(timeout=300)  # 5-minute patience; proceed if no reply
+                    with node._registry_lock:
+                        answer = node._registry[delegation_id].get("followup_answer")
+                        node._registry[delegation_id]["status"] = "Working"
+                    return answer or "No answer received. Proceed with best judgment."
+
+                worker.closure_tools["ReportEvals"] = ReportEvals  # not wrapped: never errors
+                worker.closure_tools["FollowUp"] = node._wrap_closure(FollowUp, target)
                 try:
                     from .agent_prompts import IMPLEMENTER_REPORT_RETRY_PROMPT
 
@@ -223,27 +386,86 @@ class StrategizerNode(AgentNode):
                         ]
                         text = worker.invoke(retry_messages)
 
+                    # Accumulate token usage from this worker invocation.
+                    _usage = getattr(worker, "last_usage", {}) or {}
+                    node._accumulate_usage(_usage)
+
+                    # Scan worker report for MCP tool errors (infrastructure, not agent fault).
+                    # MCP errors appear as lines containing "error" near tool names in the report.
+                    import re as _re
+                    _MCP_ERROR_PATTERNS = [
+                        r"(mcp__\w+__\w+)[^\n]*?(429|rate.?limit|timeout|timed.?out|unavailable|connection.?error)",
+                        r"(HTTP\s+(?:429|500|502|503))[^\n]*",
+                        r"(rate.?limit(?:ed|ing)?)[^\n]*",
+                    ]
+                    for _pat in _MCP_ERROR_PATTERNS:
+                        for _m in _re.finditer(_pat, text, _re.IGNORECASE):
+                            node._record_tool_error(
+                                target,
+                                _m.group(1) if _m.lastindex and _m.lastindex >= 1 else "mcp_tool",
+                                "MCP_REPORTED",
+                                _m.group(0)[:200],
+                            )
+                            # Override fault to "system" for MCP infrastructure errors
+                            # (already classified correctly by _record_tool_error)
+                            break  # one log entry per pattern match per delegation
+
                     with node._registry_lock:
                         node._registry[delegation_id].update({
                             "status": "Done",
                             "result": text,
                             "evals": evals_box["count"],
+                            "usage": _usage,
                         })
                     with node._notifications_lock:
                         node._notifications.append(
                             f"[Delegation {delegation_id} Done]"
                         )
+                    # Write delegation record to graph-wide delegation log
+                    if node._delegation_log is not None:
+                        node._delegation_log.record(
+                            id=delegation_id,
+                            from_node=node._name,
+                            to_node=target,
+                            task=intent,
+                            deliverable=text,
+                            hypothesis_ids=h_ids,
+                            started_at=started_at,
+                            completed_at=datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
+                            status="DONE",
+                            tokens_in=_usage.get("input_tokens", 0) or 0,
+                            tokens_out=_usage.get("output_tokens", 0) or 0,
+                            cost_usd=_usage.get("total_cost_usd"),
+                        )
                 except Exception:  # noqa: BLE001
                     tb = traceback.format_exc()
+                    _usage = getattr(worker, "last_usage", {}) or {}
+                    node._accumulate_usage(_usage)
                     with node._registry_lock:
                         node._registry[delegation_id].update({
                             "status": "Errored",
                             "result": tb,
                             "evals": evals_box["count"],
+                            "usage": _usage,
                         })
                     with node._notifications_lock:
                         node._notifications.append(
                             f"[Delegation {delegation_id} Errored]"
+                        )
+                    if node._delegation_log is not None:
+                        node._delegation_log.record(
+                            id=delegation_id,
+                            from_node=node._name,
+                            to_node=target,
+                            task=intent,
+                            deliverable="ERROR: " + tb[:2000],
+                            hypothesis_ids=h_ids,
+                            started_at=started_at,
+                            completed_at=datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
+                            status="FAILED",
+                            tokens_in=_usage.get("input_tokens", 0) or 0,
+                            tokens_out=_usage.get("output_tokens", 0) or 0,
+                            cost_usd=_usage.get("total_cost_usd"),
                         )
 
             t = threading.Thread(target=_run, daemon=True, name=delegation_id)
@@ -251,10 +473,15 @@ class StrategizerNode(AgentNode):
                 node._threads[delegation_id] = t  # A3: inside lock
             t.start()
 
+            # Reset two-shot Done() gate so the next Done() warns again.
+            node._done_warned = False
+
             return (
                 f"Delegation started. ID: {delegation_id!r}. "
                 f"Use GetStatus('{delegation_id}') to poll for completion."
             )
+
+        Delegate.__doc__ = _delegate_doc
 
         def GetStatus(delegation_id: str) -> str:
             """Poll a background delegation; also delivers any push notifications.
@@ -280,36 +507,40 @@ class StrategizerNode(AgentNode):
                     f"Known IDs: {known}"
                 )
             status = entry["status"]
-            if status == "Working":
-                # Lazy timeout: 75% of the run's total time budget.
-                # No budget → no timeout (B2 fix, but respects user's config).
-                budget = node._budget_seconds
-                if budget is not None and budget > 0:
-                    timeout = 0.75 * budget
-                    elapsed = time.monotonic() - entry["start_time"]
-                    if elapsed > timeout:
-                        with node._registry_lock:
-                            node._registry[delegation_id].update({
-                                "status": "Errored",
-                                "result": (
-                                    f"Timeout: delegation exceeded {timeout:.0f}s "
-                                    f"(75% of {budget:.0f}s run budget; "
-                                    f"elapsed {elapsed:.0f}s)."
-                                ),
-                            })
-                        return (
-                            prefix +
-                            f"Errored:\nTimeout: delegation exceeded {timeout:.0f}s "
-                            f"(75% of run budget). Re-delegate with a simpler "
-                            "or more focused task."
-                        )
+            if status in ("Working", "FollowUp"):
                 return prefix + "Working"
             if status == "Done":
                 return prefix + f"Done\n\n{entry['result']}"
             return prefix + f"Errored:\n{entry['result']}"
 
+        def Reply(delegation_id: str, answer: str) -> str:
+            """Answer a worker's FollowUp question and unblock it.
+
+            Call this after GetStatus returns 'FollowUp: <question>'.
+            The answer is injected into the worker's context and it resumes.
+            """
+            prefix = node._drain_notifications()
+            with node._registry_lock:
+                entry = node._registry.get(delegation_id)
+                if entry is None:
+                    return prefix + f"ERROR: unknown delegation {delegation_id!r}."
+                if entry.get("status") != "FollowUp":
+                    return (
+                        prefix +
+                        f"ERROR: delegation {delegation_id!r} is not awaiting a "
+                        f"FollowUp (status: {entry.get('status')!r})."
+                    )
+                entry["followup_answer"] = answer
+                evt = entry["followup_event"]
+            evt.set()
+            return prefix + f"Reply sent to {delegation_id}. Worker resuming."
+
         def Done(summary: str) -> str:
-            """Signal end of run with a summary of findings.
+            """Signal end of run with a summary of findings (two-shot).
+
+            First call: issues a WARNING reminding the strategizer to
+            review open delegations and open hypotheses; does NOT close.
+            Second call: checks for pending delegations, then closes.
 
             Refuses if any delegation is still Working — call GetStatus()
             on all pending delegations first.
@@ -328,30 +559,118 @@ class StrategizerNode(AgentNode):
                     "Call GetStatus() on each and wait for 'Done' or "
                     "'Errored' before calling Done()."
                 )
+            # Two-shot gate: first call warns, second call closes.
+            if not node._done_warned:
+                node._done_warned = True
+                open_hypotheses: list[str] = []
+                if node._ledger is not None:
+                    open_hypotheses = [
+                        h["id"]
+                        for h in node._ledger.list_all()
+                        if h.get("current_status") == "OPEN"
+                    ]
+                warn_parts = [
+                    "WARNING: first Done() call — confirm you are ready to close.",
+                    "Call Done() again to confirm and end the run.",
+                ]
+                if open_hypotheses:
+                    warn_parts.append(
+                        f"Open hypotheses still in OPEN state: "
+                        f"{open_hypotheses}. "
+                        "Consider updating their status before closing."
+                    )
+                # WARNING goes first; then any pending notifications.
+                return "  ".join(warn_parts) + (("\n\n" + prefix.rstrip()) if prefix.strip() else "")
+            # Second call — run critic gate if critic is in the graph.
+            _critic_adapter = None
+            _spec = node._spec
+            if _spec is not None and hasattr(_spec, "nodes"):
+                for _target in node._outgoing:
+                    _agent = _spec.nodes.get(_target)
+                    if (
+                        _agent is not None
+                        and getattr(_agent, "role", None) == "critic"
+                        and _target in node._worker_adapters
+                    ):
+                        _critic_adapter = node._worker_adapters[_target]
+                        break
+
+            if _critic_adapter is not None:
+                # Synchronous critic gate
+                notes_path = str(node._current_notes_dir or "")
+                task_msg = (
+                    "<mode>FEEDBACK</mode>\n\n"
+                    "Final gate check before run closes.  "
+                    "Read strategizer notes and workspace outputs under: "
+                    f"{notes_path}\n\n"
+                    f"Proposed conclusion: {summary[:500]}"
+                )
+                _worker = (
+                    _critic_adapter.copy()
+                    if hasattr(_critic_adapter, "copy")
+                    else _critic_adapter
+                )
+                try:
+                    critique_text = _worker.invoke(
+                        [{"role": "user", "content": task_msg}]
+                    )
+                except Exception:  # noqa: BLE001
+                    critique_text = f"ERROR: {traceback.format_exc()}"
+
+                # Parse verdict from critique text
+                import re as _re
+                _verdict_match = _re.search(
+                    r"###\s*Verdict\s*\n\s*(\w+)", critique_text, _re.IGNORECASE
+                )
+                verdict = _verdict_match.group(1).upper() if _verdict_match else "UNKNOWN"
+
+                if verdict == "PASS":
+                    node._done_warned = False
+                    route["kind"] = "done"
+                    route["summary"] = summary
+                    return prefix + "Run complete."
+                else:
+                    # Critic found issues — reset warning so next Done() warns again
+                    node._done_warned = False
+                    return (
+                        prefix +
+                        f"Critic verdict: {verdict}.  Review the findings and "
+                        f"revise before calling Done() again.\n\n"
+                        f"{critique_text}"
+                    )
+
+            # No critic — close directly.
+            node._done_warned = False
             route["kind"] = "done"
             route["summary"] = summary
             return prefix + "Run complete."
 
-        def Ask(question: str) -> str:
-            """Ask the human operator a question and wait for input."""
+        def FollowUp(question: str) -> str:
+            """Ask your delegating party one clarifying question before proceeding.
+
+            Routes to whoever sent you this task: the human operator if you are
+            the entry node, or the agent that delegated to you if you are a worker.
+            One FollowUp per delegation.  The answer is injected directly into
+            your context.  If no answer is available, proceed with best judgment.
+            """
             if node._ask_count >= node._max_ask:
                 return (
-                    f"Ask limit reached ({node._max_ask} allowed). "
+                    f"FollowUp limit reached ({node._max_ask} per run). "
                     "Proceed autonomously with the information you have."
                 )
             node._ask_count += 1
             if interactive:
-                print(f"\n[Strategizer] {question}\nAnswer: ", end="", flush=True)
+                print(f"\n[Node {node._name}] {question}\nAnswer: ", end="", flush=True)
                 return input()
             # Non-interactive: auto-respond so run proceeds autonomously.
             return (
-                "No human operator is present. Proceed autonomously "
-                "using only information available in the problem statement "
+                "No operator is present. Proceed autonomously "
+                "using only information available in the task message "
                 "and files in the study directory."
             )
 
-        def WriteMarkdown(path: str, body: str) -> str:
-            """Write a Markdown (.md) file to strategizer_notes/."""
+        def WriteNote(path: str, body: str) -> str:
+            """Write a Markdown (.md) note to strategizer_notes/."""
             prefix = node._drain_notifications()
             notes_dir = node._current_notes_dir
             if notes_dir is None:
@@ -374,13 +693,328 @@ class StrategizerNode(AgentNode):
                 return prefix + f"NOT FOUND: {target}"
             return prefix + target.read_text(encoding="utf-8")
 
-        return {
+        # RecallHistory: demand-driven episodic memory via delegation log.
+        if node._delegation_log is not None:
+            _dlog = node._delegation_log
+
+            def RecallHistory(n: int = 5) -> str:
+                """Return the last n delegations received by this node as (task, deliverable) pairs.
+                Call at the start of a delegation to recall prior work. Returns oldest-first."""
+                records = _dlog.query_received(node._name, n)
+                if not records:
+                    return "No prior delegations found."
+                parts = []
+                for i, r in enumerate(records, 1):
+                    parts.append(
+                        f"== Prior delegation {i} ==\n"
+                        f"Task: {r['task']}\n\n"
+                        f"Deliverable:\n{r['deliverable']}"
+                    )
+                return "\n\n---\n\n".join(parts)
+
+        # Topology-injected tools go to every orchestrating node.
+        closures: dict = {
             "Delegate": Delegate,
             "GetStatus": GetStatus,
-            "Done": Done,
-            "Ask": Ask,
-            "WriteMarkdown": WriteMarkdown,
-            "ReadNote": ReadNote,
+            "Reply": Reply,
+            "FollowUp": FollowUp,
+        }
+
+        if node._delegation_log is not None:
+            closures["RecallHistory"] = RecallHistory
+
+        # Agent-declared closure tools: inject only what the subclass opted in to.
+        # Done / WriteNote / ReadNote are declared in StrategizerAgent.tools;
+        # an ImplementerAgent or DebuggerAgent that gains outgoing edges does not
+        # declare them and therefore does not receive them.
+        _agent_tools: frozenset = frozenset()
+        if self._spec is not None:
+            _ag = self._spec.nodes.get(self._name)
+            if _ag is not None:
+                _agent_tools = _ag.tools
+
+        def WriteDeliverable(filename: str, content: str) -> str:
+            """Write a final deliverable file to runs/<timestamp>/ (alongside solution.md).
+
+            Use to produce replicate.py or other top-level artifacts.
+            filename must end in .py or .md. Content is written verbatim.
+            """
+            prefix = node._drain_notifications()
+            notes = node._current_notes_dir
+            if notes is None:
+                return "ERROR: run_dir not available yet."
+            # notes is debug/strategizer_notes/ — run_dir is two levels up
+            resolved_run_dir = notes.parent.parent  # strategizer_notes/ → debug/ → run_dir/
+
+            allowed_exts = {".py", ".md"}
+            from pathlib import Path as _Path
+            p = _Path(filename)
+            if p.suffix not in allowed_exts:
+                return (
+                    f"ERROR: filename must end in {allowed_exts}, got {filename!r}."
+                )
+            if "/" in filename or "\\" in filename:
+                return "ERROR: filename must be a bare name (no path separators)."
+
+            target = resolved_run_dir / p.name
+            target.write_text(content, encoding="utf-8")
+            return prefix + f"Written: {target}"
+
+        if "Done" in _agent_tools:
+            closures["Done"] = Done
+        if "WriteNote" in _agent_tools:
+            closures["WriteNote"] = WriteNote
+        if "ReadNote" in _agent_tools:
+            closures["ReadNote"] = ReadNote
+        if "WriteDeliverable" in _agent_tools:
+            closures["WriteDeliverable"] = WriteDeliverable
+
+        # Hypothesis closures: always built but functionally inert without a
+        # ledger (notes_dir only provided to the entry node).
+        closures.update(self._build_hypothesis_closures())
+
+        # AskForFeedback is only injected when a critic node is connected AND
+        # this is the entry node (only the entry node gates Done).
+        critic_name: str | None = None
+        spec = self._spec
+        if spec is not None and hasattr(spec, "nodes"):
+            for target in self._outgoing:
+                agent = spec.nodes.get(target)
+                if (
+                    agent is not None
+                    and getattr(agent, "role", None) == "critic"
+                    and target in self._worker_adapters
+                ):
+                    critic_name = target
+                    break
+
+        if critic_name is not None:
+            _critic_name = critic_name
+            _node = node
+            _critic_desc = spec.nodes[critic_name].description if spec else ""
+
+            def AskForFeedback(hypothesis_ids: list | None = None) -> str:
+                """Placeholder — __doc__ overridden below."""
+                # Resolve hypothesis IDs
+                h_ids: list[str] = []
+                if hypothesis_ids is not None:
+                    h_ids = list(hypothesis_ids)
+                elif _node._ledger is not None:
+                    h_ids = [h["id"] for h in _node._ledger.list_all()]
+
+                started_at = datetime.now(tz=timezone.utc).isoformat(
+                    timespec="seconds"
+                )
+                notes_path = str(_node._current_notes_dir or "")
+                task_msg = (
+                    "<mode>FEEDBACK</mode>\n\n"
+                    "Perform a synchronous find-only adversarial audit.  "
+                    "PASS is not an available verdict — return REVISE or REJECT "
+                    "with your findings.  Read strategizer notes and workspace "
+                    f"outputs under: {notes_path}\n\n"
+                    f"Focus hypotheses: {h_ids if h_ids else 'all'}"
+                )
+
+                critic_adapter = _node._worker_adapters.get(_critic_name)
+                if critic_adapter is None:
+                    return f"ERROR: critic adapter {_critic_name!r} not found."
+
+                worker = (
+                    critic_adapter.copy()
+                    if hasattr(critic_adapter, "copy")
+                    else critic_adapter
+                )
+                try:
+                    text = worker.invoke([{"role": "user", "content": task_msg}])
+                except Exception:  # noqa: BLE001
+                    tb = traceback.format_exc()
+                    return f"ERROR: critic invocation failed:\n{tb}"
+
+                # Log to delegation log
+                if _node._delegation_log is not None:
+                    _node._delegation_log.record(
+                        id=f"FB{datetime.now(tz=timezone.utc).strftime('%H%M%S')}",
+                        from_node=_node._name,
+                        to_node=_critic_name,
+                        task="AskForFeedback (synchronous audit)",
+                        deliverable=text,
+                        hypothesis_ids=h_ids,
+                        started_at=started_at,
+                        completed_at=datetime.now(tz=timezone.utc).isoformat(
+                            timespec="seconds"
+                        ),
+                        status="FEEDBACK",
+                        tokens_in=0,
+                        tokens_out=0,
+                        cost_usd=None,
+                    )
+
+                return text
+
+            AskForFeedback.__doc__ = (
+                f"Synchronous find-only audit by: {_critic_desc} "
+                "PASS is not a valid verdict — only REVISE or REJECT. "
+                "hypothesis_ids: H-ids to focus on; None = all hypotheses auto-injected. "
+                "Use Done() for the final gate check."
+            )
+            closures["AskForFeedback"] = AskForFeedback
+
+        # Wrap every closure so ERROR returns and exceptions are counted.
+        _node_name = self._name
+        return {k: self._wrap_closure(v, _node_name) for k, v in closures.items()}
+
+    def _record_tool_error(
+        self,
+        node_name: str,
+        tool_name: str,
+        error_type: str,
+        message: str,
+        tb: str | None = None,
+    ) -> None:
+        """Increment error counter and append to diagnostics.jsonl (thread-safe)."""
+        import json as _json
+
+        # Classify fault: system (rate limit / network / API) vs agent (bad args / wrong usage)
+        _SYSTEM_EXC_TYPES = {
+            "ConnectionError", "Timeout", "ReadTimeout", "ConnectTimeout",
+            "HTTPError", "ChunkedEncodingError", "ProxyError", "SSLError",
+        }
+        _SYSTEM_MSG_PATTERNS = [
+            "429", "rate limit", "rate-limit", "timeout", "timed out",
+            "connection", "503", "502", "500", "network", "unavailable",
+            "temporary", "retry",
+        ]
+        msg_lower = (message or "").lower()
+        if error_type in _SYSTEM_EXC_TYPES or any(p in msg_lower for p in _SYSTEM_MSG_PATTERNS):
+            fault = "system"
+        else:
+            fault = "agent"
+
+        with self._registry_lock:
+            self._error_counts[node_name] = self._error_counts.get(node_name, 0) + 1
+        notes = self._current_notes_dir
+        if notes is None:
+            return
+        # _current_notes_dir is debug/strategizer_notes/; parent is debug/
+        debug_dir = Path(notes).parent
+        record: dict = {
+            "ts": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
+            "node": node_name,
+            "tool": tool_name,
+            "error_type": error_type,
+            "fault": fault,
+            "message": message,
+        }
+        if tb:
+            record["traceback"] = tb
+        try:
+            with (debug_dir / "diagnostics.jsonl").open("a", encoding="utf-8") as f:
+                f.write(_json.dumps(record) + "\n")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _wrap_closure(self, fn: Any, node_name: str) -> Any:
+        """Return a version of *fn* that records ERROR returns and exceptions.
+
+        Uses functools.wraps so inspect.signature() follows __wrapped__ to the
+        original function — _infer_schema_from_callable must see the real
+        parameter names, not (*args, **kwargs).
+        """
+        import functools as _functools
+        node = self
+        tool_name = getattr(fn, "__name__", repr(fn))
+
+        @_functools.wraps(fn)
+        def _wrapped(*args, **kwargs):
+            try:
+                result = fn(*args, **kwargs)
+                if isinstance(result, str) and result.lstrip().startswith("ERROR:"):
+                    node._record_tool_error(
+                        node_name, tool_name, "ERROR_RETURN", result[:300]
+                    )
+                return result
+            except Exception as exc:
+                node._record_tool_error(
+                    node_name,
+                    tool_name,
+                    type(exc).__name__,
+                    str(exc)[:300],
+                    tb=traceback.format_exc(),
+                )
+                raise
+
+        return _wrapped
+
+    def _accumulate_usage(self, usage: dict) -> None:
+        """Thread-safe accumulation of token counts from adapter.last_usage."""
+        with self._registry_lock:
+            self._token_totals["input_tokens"] += usage.get("input_tokens", 0) or 0
+            self._token_totals["output_tokens"] += usage.get("output_tokens", 0) or 0
+            self._token_totals["cache_read_input_tokens"] += usage.get("cache_read_input_tokens", 0) or 0
+            self._token_totals["cache_creation_input_tokens"] += usage.get("cache_creation_input_tokens", 0) or 0
+            cost = usage.get("total_cost_usd")
+            if cost is not None:
+                self._token_totals["total_cost_usd"] += cost
+
+    def _build_hypothesis_closures(self) -> dict:
+        """Build HypothesisPropose/Update/List/Get closures (no-ops when no ledger)."""
+        node = self
+
+        def HypothesisPropose(statement: str) -> str:
+            """Propose a new hypothesis. Returns the assigned ID (H1, H2, …).
+            Max 3 OPEN hypotheses at any time. Returns ERROR if limit reached."""
+            if node._ledger is None:
+                return "ERROR: hypothesis ledger not available in this run."
+            return node._ledger.propose(statement, proposed_by=node._name)
+
+        def HypothesisUpdate(hypothesis_id: str, status: str, comment: str) -> str:
+            """Update hypothesis status. Call ONLY when status changes.
+            status must be one of: OPEN, SUPPORTED, FALSIFIED, INCONCLUSIVE.
+            triggered_by is auto-injected from the last completed delegation."""
+            if node._ledger is None:
+                return "ERROR: hypothesis ledger not available in this run."
+            # Inject triggered_by from delegation log (persistent across calls)
+            triggered_by: str | None = (
+                node._delegation_log.last_completed_id(node._name)
+                if node._delegation_log is not None else None
+            )
+            # Fall back to in-memory registry if no delegation log
+            if triggered_by is None:
+                with node._registry_lock:
+                    done_entries = [
+                        (d_id, entry)
+                        for d_id, entry in node._registry.items()
+                        if entry.get("status") in ("Done", "Errored")
+                    ]
+                if done_entries:
+                    triggered_by = done_entries[-1][0]
+            return node._ledger.update(hypothesis_id, status, comment, triggered_by)
+
+        def HypothesisList() -> str:
+            """List all hypotheses: id, statement, current status. No logs returned."""
+            if node._ledger is None:
+                return "ERROR: hypothesis ledger not available in this run."
+            items = node._ledger.list_all()
+            if not items:
+                return "No hypotheses proposed yet."
+            lines = [f"- {h['id']} [{h['current_status']}]: {h['statement']}" for h in items]
+            return "\n".join(lines)
+
+        def HypothesisGet(hypothesis_id: str) -> str:
+            """Get full hypothesis entry including status_log."""
+            if node._ledger is None:
+                return "ERROR: hypothesis ledger not available in this run."
+            import json as _json
+            entry = node._ledger.get(hypothesis_id)
+            if entry is None:
+                return f"ERROR: hypothesis {hypothesis_id!r} not found."
+            return _json.dumps(entry, indent=2)
+
+        return {
+            "HypothesisPropose": HypothesisPropose,
+            "HypothesisUpdate": HypothesisUpdate,
+            "HypothesisList": HypothesisList,
+            "HypothesisGet": HypothesisGet,
         }
 
     def _missing_deliverables(self, state: AgenticState) -> list[str]:
@@ -399,7 +1033,14 @@ class StrategizerNode(AgentNode):
         # Update notes_dir from current state run_dir
         run_dir = state.get("run_dir")
         if run_dir:
-            self._current_notes_dir = Path(run_dir) / "strategizer_notes"
+            self._current_notes_dir = (
+                Path(run_dir) / "debug" / "strategizer_notes"
+            )
+            if self._ledger is None:
+                self._ledger = HypothesisLedger(self._current_notes_dir)
+
+        # Capture total_delegations so Delegate() can compute sequential IDs
+        self._state_total_delegations = state.get("total_delegations", 0)
 
         # Soft budget warnings — appended to context, run is NOT stopped.
         # 95%: early warning, start wrapping up.
@@ -449,6 +1090,7 @@ class StrategizerNode(AgentNode):
         # A1/A2: reset per-turn state so a reused node starts clean each call
         self._route.clear()
         self._ask_count = 0
+        self._done_warned = False
         with self._registry_lock:
             self._registry.clear()
             self._threads.clear()
@@ -457,6 +1099,8 @@ class StrategizerNode(AgentNode):
 
         messages = _to_adapter_messages(state["messages"]) + budget_warnings
         text = self.adapter.invoke(messages)
+        # Accumulate strategizer's own token usage.
+        self._accumulate_usage(getattr(self.adapter, "last_usage", {}) or {})
         ai_msg = AIMessage(content=text)
 
         route = self._route
@@ -494,6 +1138,8 @@ class StrategizerNode(AgentNode):
                 "last_report": summary,
                 "total_delegations": state["total_delegations"] + total_new,
                 "evals_used": state.get("evals_used", 0) + evals_new,
+                "token_totals": dict(self._token_totals),
+                "error_counts": dict(self._error_counts),
             },
         )
 
@@ -506,25 +1152,57 @@ class WorkerNode(AgentNode):
     distinguishes agents — not the node class.
     """
 
-    def __init__(self, adapter: Any, study_dir: Any = None) -> None:
+    def __init__(
+        self,
+        adapter: Any,
+        study_dir: Any = None,
+        workspace_dir: Any = None,
+        delegation_log: "DelegationLog | None" = None,
+        name: str = "worker",
+    ) -> None:
         super().__init__(adapter)
+        self._name = name
+        self._delegation_log = delegation_log
         self._evals_reported: dict = {}
-        self._workspace_dir = (
-            Path(study_dir) / "workspace" if study_dir else None
-        )
+        self._workspace_dir = Path(workspace_dir) if workspace_dir else None
         self._setup_sandboxed_write()
         self.adapter.closure_tools.update(self._build_eval_closures())
+        if delegation_log is not None:
+            self.adapter.closure_tools["RecallHistory"] = self._make_recall_history()
+
+    def _make_recall_history(self) -> Any:
+        """Build the RecallHistory closure for this worker node."""
+        node = self
+
+        def RecallHistory(n: int = 5) -> str:
+            """Return the last n delegations received by this node as (task, deliverable) pairs.
+            Call at the start of a delegation to recall prior work. Returns oldest-first."""
+            if node._delegation_log is None:
+                return "No delegation log available."
+            records = node._delegation_log.query_received(node._name, n)
+            if not records:
+                return "No prior delegations found."
+            parts = []
+            for i, r in enumerate(records, 1):
+                parts.append(
+                    f"== Prior delegation {i} ==\n"
+                    f"Task: {r['task']}\n\n"
+                    f"Deliverable:\n{r['deliverable']}"
+                )
+            return "\n\n---\n\n".join(parts)
+
+        return RecallHistory
 
     def _setup_sandboxed_write(self) -> None:
-        """Replace native Write with a workspace/-sandboxed closure (D1/D2 fix).
+        """Replace native Write with a workspace-sandboxed closure.
 
         Removes 'Write' from native_tools so the SDK doesn't expose it,
         then injects a closure that hard-rejects any path that resolves
-        outside workspace/.  Path.resolve() collapses '..' and symlinks,
+        outside the workspace.  Path.resolve() collapses '..' and symlinks,
         so traversal attacks are blocked at the tool level, not just the prompt.
 
         Bash is kept native but cwd is already set to study_dir by the adapter;
-        the prompt further constrains it to workspace/.
+        the prompt further constrains it to the workspace.
         """
         if self._workspace_dir is None:
             return  # no sandboxing if study_dir unknown (e.g. tests)
@@ -538,21 +1216,21 @@ class WorkerNode(AgentNode):
             ]
 
         def Write(path: str, body: str) -> str:
-            """Write a file.  Restricted to workspace/ — no exceptions."""
+            """Write a file.  Restricted to workspace — no exceptions."""
             try:
-                # Resolve against workspace/ so relative paths land there
+                # Resolve against workspace so relative paths land there
                 candidate = (workspace / path).resolve()
             except Exception as exc:  # noqa: BLE001
                 return f"ERROR: invalid path {path!r}: {exc}"
 
-            # Reject anything that escapes the workspace tree
+            # Reject anything that escapes the delegations tree
             try:
                 candidate.relative_to(workspace)
             except ValueError:
                 return (
                     f"ERROR: write rejected — path resolves to {candidate}, "
-                    f"which is outside workspace/ ({workspace}). "
-                    "Only paths inside workspace/ are permitted."
+                    f"which is outside the workspace ({workspace}). "
+                    "Only paths inside the workspace are permitted."
                 )
 
             candidate.parent.mkdir(parents=True, exist_ok=True)
