@@ -19,6 +19,7 @@ from .agent_prompts import (
 from .agents import ImplementerAgent, StrategizerAgent, _default_graph
 from .backends.base import Agent, Graph
 from .backends.claude import ClaudeAdapter
+from .delegation_log import DelegationLog
 from .graph_builder import build_graph
 from .graph_state import AgenticState, Delegation, Report, StudyConfig, Task
 
@@ -32,6 +33,7 @@ __all__ = [
     "AgenticRun",
     "AgenticRunError",
     "DEFAULT_MODEL",
+    "DEFAULT_OLLAMA_MODEL",
     "Delegation",
     "ImplementerAgent",
     "Report",
@@ -41,6 +43,7 @@ __all__ = [
 ]
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+DEFAULT_OLLAMA_MODEL = "qwen2.5:1.5b"
 
 
 class AgenticRunError(Exception):
@@ -96,12 +99,16 @@ class AgenticRun:
         budget: float | None = None,
         eval_budget: int | None = None,
         interactive: bool = False,
+        max_ask: int = 1,
     ) -> None:
         self.study_dir = Path(study_dir).resolve()
         cfg = _load_study_config(self.study_dir)
 
-        self._model = model or cfg.get("model") or DEFAULT_MODEL
-        self._backend = cfg.get("backend", "claude")
+        _backend_cfg = cfg.get("backend", "claude")
+        self._backend = _backend_cfg
+        self._model = model or cfg.get("model") or (
+            DEFAULT_OLLAMA_MODEL if _backend_cfg == "ollama" else DEFAULT_MODEL
+        )
         self._eval_budget = (
             eval_budget if eval_budget is not None else cfg.get("eval_budget")
         )
@@ -117,6 +124,7 @@ class AgenticRun:
 
         self._graph_spec = graph or _default_graph()
         self._interactive = interactive
+        self._max_ask = max_ask
         self._run_dir = None  # set in execute()
 
     def execute(self) -> str:
@@ -135,14 +143,18 @@ class AgenticRun:
         # Create run directory
         ts = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S")
         run_dir = self.study_dir / "runs" / ts
-        notes_dir = run_dir / "strategizer_notes"
+        debug_dir = run_dir / "debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        notes_dir = debug_dir / "strategizer_notes"
         notes_dir.mkdir(parents=True, exist_ok=True)
+        lit_reviewer_notes_dir = debug_dir / "lit_reviewer_notes"
+        lit_reviewer_notes_dir.mkdir(parents=True, exist_ok=True)
         self._run_dir = run_dir
 
         # Set up run.log
         log = logging.getLogger(f"f3dasm.agentic.{ts}")
         log.setLevel(logging.INFO)
-        handler = logging.FileHandler(run_dir / "run.log")
+        handler = logging.FileHandler(debug_dir / "run.log")
         handler.setFormatter(
             logging.Formatter(
                 "[%(asctime)s] %(levelname)s %(message)s",
@@ -154,11 +166,18 @@ class AgenticRun:
 
         start_time = time.time()
 
+        # Create graph-wide delegation log for episodic memory.
+        delegation_log_path = debug_dir / "delegation_log.jsonl"
+        delegation_log = DelegationLog(delegation_log_path)
+
         # Build the graph now (after _run_dir is set) so _make_adapter sees it
         # If a pre-built graph was injected (e.g. in tests), use it directly.
         graph = getattr(self, "_graph", None) or build_graph(
             self._graph_spec, self._make_adapter, study_dir=self.study_dir,
-            interactive=self._interactive,
+            interactive=self._interactive, max_ask=self._max_ask,
+            notes_dir=notes_dir,
+            lit_reviewer_notes_dir=lit_reviewer_notes_dir,
+            delegation_log=delegation_log,
         )
 
         config: dict[str, Any] = {
@@ -185,10 +204,22 @@ class AgenticRun:
         result = graph.invoke(initial_state, config=config)
         report = result.get("last_report") or ""
         evals = result.get("evals_used", 0)
+        tokens = result.get("token_totals") or {}
+        error_counts = result.get("error_counts") or {}
 
         # Write solution.md
         solution_path = run_dir / "solution.md"
         now_ts = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
+        elapsed = time.time() - start_time
+        h, m, s = int(elapsed // 3600), int((elapsed % 3600) // 60), int(elapsed % 60)
+
+        tokens_in = tokens.get("input_tokens", 0) or 0
+        tokens_out = tokens.get("output_tokens", 0) or 0
+        cache_read = tokens.get("cache_read_input_tokens", 0) or 0
+        cache_create = tokens.get("cache_creation_input_tokens", 0) or 0
+        cost = tokens.get("total_cost_usd")
+        cost_str = f"${cost:.4f}" if cost is not None else "n/a"
+
         solution_path.write_text(
             f"# Solution\n\n"
             f"{report}\n\n"
@@ -197,10 +228,54 @@ class AgenticRun:
             f"- model: {self._model}\n"
             f"- total_delegations: {result.get('total_delegations', 0)}\n"
             f"- evals_used: {evals}\n"
-            f"- run_dir: {run_dir}\n",
+            f"- run_dir: {run_dir}\n"
+            f"- time_used: {h:02d}:{m:02d}:{s:02d}\n\n"
+            f"## Token usage\n\n"
+            f"| Metric | Value |\n"
+            f"|--------|-------|\n"
+            f"| input_tokens | {tokens_in:,} |\n"
+            f"| output_tokens | {tokens_out:,} |\n"
+            f"| cache_read_tokens | {cache_read:,} |\n"
+            f"| cache_creation_tokens | {cache_create:,} |\n"
+            f"| total_tokens | {tokens_in + tokens_out:,} |\n"
+            f"| estimated_cost | {cost_str} |\n"
+            + (
+                f"\n## Tool-call errors per node\n\n"
+                + "| node | error_count |\n"
+                + "|------|-------------|\n"
+                + "".join(
+                    f"| {node} | {count} |\n"
+                    for node, count in sorted(error_counts.items())
+                )
+                if error_counts else ""
+            ),
             encoding="utf-8",
         )
-        log.info(f"Run complete. Evals used: {evals}. solution.md written.")
+        # Collect replicate.py from delegations/ if agent wrote one
+        replicate_py_content = ""
+        replicate_candidates = sorted(
+            (self.study_dir / "delegations").glob("**/replicate.py"),
+            key=lambda p: p.stat().st_mtime if p.exists() else 0,
+            reverse=True,
+        )
+        if replicate_candidates:
+            try:
+                replicate_py_content = replicate_candidates[0].read_text(
+                    encoding="utf-8"
+                )
+            except Exception:
+                pass
+
+        if replicate_py_content:
+            (run_dir / "replicate.py").write_text(
+                replicate_py_content, encoding="utf-8"
+            )
+
+        log.info(
+            f"Run complete. Evals: {evals}. "
+            f"Tokens in/out: {tokens_in}/{tokens_out}. "
+            f"Cost: {cost_str}. solution.md written."
+        )
         log.removeHandler(handler)
         handler.close()
 
@@ -208,8 +283,8 @@ class AgenticRun:
 
     def _make_adapter(self, name: str, agent: Agent):
         run_dir = self._run_dir
-        workspace_dir = self.study_dir / "workspace"
-        workspace_dir.mkdir(parents=True, exist_ok=True)
+        delegations_dir = self.study_dir / "delegations"
+        delegations_dir.mkdir(parents=True, exist_ok=True)
 
         has_outgoing = (
             run_dir
@@ -217,7 +292,7 @@ class AgenticRun:
             and self._graph_spec.outgoing(name)
         )
         if has_outgoing:
-            notes_dir = Path(run_dir) / "strategizer_notes"
+            notes_dir = Path(run_dir) / "debug" / "strategizer_notes"
             preamble = RUN_PATHS_PREAMBLE_TEMPLATE.format(
                 study_dir=self.study_dir,
                 notes_dir=notes_dir,
@@ -226,33 +301,54 @@ class AgenticRun:
             cwd = self.study_dir
         else:
             preamble = WORKSPACE_PREAMBLE_TEMPLATE.format(
-                workspace_dir=workspace_dir,
+                workspace_dir=delegations_dir,
             )
             system_prompt = preamble + agent.system_prompt
-            cwd = workspace_dir
+            cwd = delegations_dir
 
         model = agent.model or self._model
         backend = agent.backend or self._backend
 
+        _persistent = not agent.reset_on_checkpoint
+        _max_history_pairs = getattr(agent, "max_history_pairs", 5)
+
         if backend == "ollama":
+            import os
             from .backends.ollama import OllamaAdapter
             _closure_tool_names = {
-                "Done", "Ask", "WriteMarkdown", "ReadNote", "ReportEvals"
+                "Done", "FollowUp", "WriteNote", "ReadNote", "ReportEvals"
             }
             ollama_native = [
                 t for t in agent.tools if t not in _closure_tool_names
             ]
-            return OllamaAdapter(
+            adapter = OllamaAdapter(
                 model=model,
                 system_prompt=system_prompt,
                 study_dir=cwd,
                 native_tools=ollama_native,
+                extra_mcp_servers=dict(getattr(agent, "mcp_servers", {})),
+                extra_allowed_tools=list(getattr(agent, "extra_allowed_tools", frozenset())),
+                base_url=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
+                persistent=_persistent,
+                max_history_pairs=_max_history_pairs,
             )
+            extra_closures = agent.build_closure_tools(self.study_dir)
+            if extra_closures:
+                adapter.closure_tools.update(extra_closures)
+            return adapter
 
         native = [t for t in agent.tools if t in _CLAUDE_NATIVE_TOOLS]
-        return ClaudeAdapter(
+        adapter = ClaudeAdapter(
             model=model,
             system_prompt=system_prompt,
             study_dir=cwd,
             native_tools=native,
+            extra_mcp_servers=dict(getattr(agent, "mcp_servers", {})),
+            extra_allowed_tools=list(getattr(agent, "extra_allowed_tools", frozenset())),
+            persistent=_persistent,
+            max_history_pairs=_max_history_pairs,
         )
+        extra_closures = agent.build_closure_tools(self.study_dir)
+        if extra_closures:
+            adapter.closure_tools.update(extra_closures)
+        return adapter
