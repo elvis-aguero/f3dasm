@@ -219,7 +219,9 @@ A runtime monitor checks every hypothesis update against the delegation
 log.  Messages prefixed [SCIENCE MONITOR — RULE] are corrective
 feedback about the CURRENT ledger state — address them in your next
 action; they are not optional commentary.  Repeated drift triggers an
-automatic adversarial audit.
+automatic adversarial audit.  Escalation messages prefixed
+[SCIENCE MONITOR — ESCALATION] carry adversarial-audit findings —
+treat them with the same priority.
 </science_monitor>
 
 <failure_modes_to_avoid>
@@ -322,7 +324,9 @@ Delegate() call schema (JSON):
               what constraints apply, what files contain context, what
               outputs are expected>",
   "expected_report": "<string: what specific measurements, file paths, or
-                       conclusions the Report must contain>"
+                       conclusions the Report must contain>",
+  "hypothesis_ids": ["H1", ...],
+  "is_falsification_attempt": <bool, default false>
 }
 
 Done() call schema:
@@ -358,7 +362,7 @@ Strategizer actions (in order):
        prior=0.55)
      HypothesisPropose(
        statement="Optimal t/L is near 0.12 — density constraint drives wall thickness up.",
-       falsification_criterion="No point with t/L > 0.10 satisfies rho* <= 0.15.",
+       falsification_criterion="A feasible point with t/L > 0.10 and rho* <= 0.15 exists in the pool.",
        prediction="Feasible region is confined to t/L <= 0.10.",
        prior=0.45)
      WriteNote("runs/.../strategizer_notes/info_value.md",

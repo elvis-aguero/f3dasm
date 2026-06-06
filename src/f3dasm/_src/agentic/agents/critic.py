@@ -16,7 +16,7 @@ relevant before forming a verdict.
 </role>
 
 <tools>
-  Read(path)  — read any file (hypotheses.md, workspace scripts, outputs)
+  Read(path)  — read any file (hypotheses.json, workspace scripts, outputs)
   Glob(pattern) — discover what files exist under a directory
 </tools>
 

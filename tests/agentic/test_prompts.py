@@ -18,6 +18,7 @@ def test_no_stale_hypotheses_md_references():
     assert "hypotheses.md" not in STRATEGIZER_SYSTEM_PROMPT
     assert "hypotheses.md" not in CHECKPOINT_STRATEGIZER_PROMPT
     assert "hypotheses.md" not in RUN_PATHS_PREAMBLE_TEMPLATE
+    assert "hypotheses.md" not in ADVERSARIAL_CRITIQUE_SYSTEM_PROMPT
 
 
 def test_no_false_runtime_enforcement_claim():
