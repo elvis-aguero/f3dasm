@@ -1,228 +1,232 @@
-"""Tests for HypothesisLedger — written before implementation (TDD)."""
+"""Tests for HypothesisLedger — Popperian schema."""
 
 from __future__ import annotations
 
 import json
 import threading
-import time
 from pathlib import Path
 
 import pytest
 
-from f3dasm._src.agentic.hypothesis_ledger import HypothesisLedger
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+from f3dasm._src.agentic.hypothesis_ledger import (
+    HypothesisEntry,
+    HypothesisLedger,
+)
 
 
 def fresh_ledger(tmp_path: Path) -> HypothesisLedger:
     return HypothesisLedger(tmp_path)
 
 
-# ---------------------------------------------------------------------------
-# HypothesisPropose
-# ---------------------------------------------------------------------------
+def propose_ok(ledger, statement="Optimal t/L lies in [0.07, 0.10]",
+               prior=0.55):
+    return ledger.propose(
+        statement=statement,
+        falsification_criterion=(
+            "Any feasible design outside [0.07, 0.10] with load "
+            "exceeding the best in-range value"
+        ),
+        prediction="Dense in-range sweep beats load 1.47",
+        prior=prior,
+        proposed_by="strategizer",
+    )
 
 
-def test_propose_creates_open_entry(tmp_path):
+EVIDENCE = {"delegation": "D001", "numbers": {"best_y": 1.47}}
+
+
+# ------------------------- propose -------------------------
+
+def test_propose_creates_open_entry_with_schema(tmp_path):
     ledger = fresh_ledger(tmp_path)
-    h_id = ledger.propose("Thin longerons buckle first", "strategizer")
+    h_id = propose_ok(ledger)
     entry = ledger.get(h_id)
-    assert entry is not None
-    assert entry["statement"] == "Thin longerons buckle first"
-    assert entry["proposed_by"] == "strategizer"
+    assert entry["statement"].startswith("Optimal t/L")
+    assert entry["falsification_criterion"]
+    assert entry["prediction"]
+    assert entry["prior"] == 0.55
     assert entry["status_log"][-1]["status"] == "OPEN"
-    assert entry["status_log"][-1]["triggered_by"] is None
 
 
-def test_propose_assigns_sequential_ids(tmp_path):
+def test_propose_rejects_prior_zero_one_and_nonfloat(tmp_path):
     ledger = fresh_ledger(tmp_path)
-    h1 = ledger.propose("H1 statement", "strategizer")
-    h2 = ledger.propose("H2 statement", "strategizer")
-    h3 = ledger.propose("H3 statement", "strategizer")
-    assert h1 == "H1"
-    assert h2 == "H2"
-    assert h3 == "H3"
+    assert propose_ok(ledger, prior=0.0).startswith("ERROR:")
+    assert propose_ok(ledger, prior=1.0).startswith("ERROR:")
+    assert propose_ok(ledger, prior="high").startswith("ERROR:")
+    assert propose_ok(ledger, prior=1.3).startswith("ERROR:")
 
 
-def test_propose_rejects_fourth_when_three_open(tmp_path):
+def test_propose_rejects_empty_or_oversized_fields(tmp_path):
     ledger = fresh_ledger(tmp_path)
-    ledger.propose("A", "strategizer")
-    ledger.propose("B", "strategizer")
-    ledger.propose("C", "strategizer")
-    result = ledger.propose("D", "strategizer")
-    assert result.startswith("ERROR:")
-    assert ledger.get("H4") is None
+    r = ledger.propose(statement="", falsification_criterion="c",
+                       prediction="p", prior=0.5,
+                       proposed_by="strategizer")
+    assert r.startswith("ERROR:")
+    r = ledger.propose(statement="x" * 501, falsification_criterion="c",
+                       prediction="p", prior=0.5,
+                       proposed_by="strategizer")
+    assert r.startswith("ERROR:")
 
 
-def test_propose_allows_fourth_after_close(tmp_path):
+def test_propose_rejects_compound_statement(tmp_path):
     ledger = fresh_ledger(tmp_path)
-    ledger.propose("A", "strategizer")
-    ledger.propose("B", "strategizer")
-    ledger.propose("C", "strategizer")
-    ledger.update("H1", "FALSIFIED", "disproved", None)
-    h4 = ledger.propose("D", "strategizer")
-    assert h4 == "H4"
-    assert not h4.startswith("ERROR:")
+    r = propose_ok(ledger, statement=(
+        "Optimum is near t/L=0.08 and the surrogate search will "
+        "find a design exceeding 95 kPa"
+    ))
+    assert r.startswith("ERROR:")
+    assert "split" in r.lower()
 
 
-# ---------------------------------------------------------------------------
-# HypothesisUpdate
-# ---------------------------------------------------------------------------
-
-
-def test_update_appends_to_status_log(tmp_path):
+def test_propose_allows_borderline_non_compound(tmp_path):
+    # ' and ' without quantities on both sides must pass.
     ledger = fresh_ledger(tmp_path)
-    h_id = ledger.propose("Statement", "strategizer")
-    ledger.update(h_id, "FALSIFIED", "disproved by D001", "D001")
-    entry = ledger.get(h_id)
-    assert len(entry["status_log"]) == 2
-    last = entry["status_log"][-1]
-    assert last["status"] == "FALSIFIED"
-    assert last["comment"] == "disproved by D001"
+    r = propose_ok(ledger, statement=(
+        "The landscape is rugged and multimodal near the origin "
+        "region below radius 2.0"
+    ))
+    assert r == "H1"
 
 
-def test_update_injects_triggered_by(tmp_path):
+def test_propose_rejects_numbered_subclaims(tmp_path):
     ledger = fresh_ledger(tmp_path)
-    h_id = ledger.propose("Statement", "strategizer")
-    ledger.update(h_id, "SUPPORTED", "confirmed", "D002")
-    last = ledger.get(h_id)["status_log"][-1]
-    assert last["triggered_by"] == "D002"
+    r = propose_ok(ledger, statement=(
+        "(1) the optimum is at high ratio_d (2) the search will "
+        "exceed 95 kPa"
+    ))
+    assert r.startswith("ERROR:")
 
 
-def test_update_triggered_by_nullable(tmp_path):
+def test_propose_max_three_open(tmp_path):
     ledger = fresh_ledger(tmp_path)
-    h_id = ledger.propose("Statement", "strategizer")
-    ledger.update(h_id, "INCONCLUSIVE", "ambiguous", None)
-    last = ledger.get(h_id)["status_log"][-1]
-    assert last["triggered_by"] is None
+    for i in range(3):
+        assert propose_ok(
+            ledger, statement=f"Claim {i} below threshold 1.{i}"
+        ).startswith("H")
+    assert propose_ok(
+        ledger, statement="Fourth claim below 9.9"
+    ).startswith("ERROR:")
 
 
-def test_update_rejects_invalid_status(tmp_path):
+# ------------------------- update -------------------------
+
+def test_update_closing_requires_evidence_delegation(tmp_path):
     ledger = fresh_ledger(tmp_path)
-    h_id = ledger.propose("Statement", "strategizer")
-    result = ledger.update(h_id, "BANANA", "bad", None)
-    assert result.startswith("ERROR:")
-    # status_log still has only the OPEN entry
-    assert len(ledger.get(h_id)["status_log"]) == 1
+    h = propose_ok(ledger)
+    r = ledger.update(h, "SUPPORTED", "looks good",
+                      evidence=None, posterior=0.9, triggered_by="D001")
+    assert r.startswith("ERROR:")
+    r = ledger.update(h, "SUPPORTED", "looks good",
+                      evidence={"numbers": {}}, posterior=0.9,
+                      triggered_by="D001")
+    assert r.startswith("ERROR:")
+    r = ledger.update(h, "SUPPORTED", "looks good",
+                      evidence=EVIDENCE, posterior=0.9,
+                      triggered_by="D001")
+    assert not r.startswith("ERROR:")
 
 
-def test_update_rejects_unknown_hypothesis_id(tmp_path):
+def test_update_requires_posterior_in_bounds(tmp_path):
     ledger = fresh_ledger(tmp_path)
-    result = ledger.update("H99", "FALSIFIED", "nope", None)
-    assert result.startswith("ERROR:")
+    h = propose_ok(ledger)
+    for bad in (None, "high", -0.1, 1.1):
+        r = ledger.update(h, "SUPPORTED", "c", evidence=EVIDENCE,
+                          posterior=bad, triggered_by="D001")
+        assert r.startswith("ERROR:"), bad
 
 
-def test_update_ts_is_present(tmp_path):
+def test_update_rejects_noop_same_status_no_new_evidence(tmp_path):
     ledger = fresh_ledger(tmp_path)
-    h_id = ledger.propose("Statement", "strategizer")
-    ledger.update(h_id, "SUPPORTED", "confirmed", "D001")
-    last = ledger.get(h_id)["status_log"][-1]
-    assert "ts" in last
-    assert last["ts"]  # non-empty string
+    h = propose_ok(ledger)
+    ledger.update(h, "SUPPORTED", "first", evidence=EVIDENCE,
+                  posterior=0.8, triggered_by="D001")
+    # same status, same evidence delegation → no-op
+    r = ledger.update(h, "SUPPORTED", "again", evidence=EVIDENCE,
+                      posterior=0.85, triggered_by="D001")
+    assert r.startswith("ERROR:")
+    # same status, NEW evidence delegation → allowed
+    r = ledger.update(h, "SUPPORTED", "more evidence",
+                      evidence={"delegation": "D002"},
+                      posterior=0.9, triggered_by="D002")
+    assert not r.startswith("ERROR:")
 
 
-# ---------------------------------------------------------------------------
-# HypothesisList
-# ---------------------------------------------------------------------------
-
-
-def test_list_returns_only_summary_fields(tmp_path):
+def test_update_reopen_requires_evidence(tmp_path):
     ledger = fresh_ledger(tmp_path)
-    ledger.propose("First hypothesis", "strategizer")
-    ledger.propose("Second hypothesis", "strategizer")
+    h = propose_ok(ledger)
+    ledger.update(h, "FALSIFIED", "dead", evidence=EVIDENCE,
+                  posterior=0.05, triggered_by="D001")
+    r = ledger.update(h, "OPEN", "second thoughts", evidence=None,
+                      posterior=0.4, triggered_by=None)
+    assert r.startswith("ERROR:")
+    r = ledger.update(h, "OPEN", "new data contradicts",
+                      evidence={"delegation": "D003"},
+                      posterior=0.4, triggered_by="D003")
+    assert not r.startswith("ERROR:")
+
+
+def test_update_rejects_unknown_id_and_status(tmp_path):
+    ledger = fresh_ledger(tmp_path)
+    h = propose_ok(ledger)
+    assert ledger.update("H99", "SUPPORTED", "c", evidence=EVIDENCE,
+                         posterior=0.9,
+                         triggered_by=None).startswith("ERROR:")
+    assert ledger.update(h, "MAYBE", "c", evidence=EVIDENCE,
+                         posterior=0.9,
+                         triggered_by=None).startswith("ERROR:")
+
+
+# ------------------------- list / belief -------------------------
+
+def test_list_all_includes_belief_trajectory(tmp_path):
+    ledger = fresh_ledger(tmp_path)
+    h = propose_ok(ledger)
     items = ledger.list_all()
-    assert len(items) == 2
-    for item in items:
-        assert set(item.keys()) == {"id", "statement", "current_status"}
-        assert "status_log" not in item
-        assert "proposed_by" not in item
-
-
-def test_list_reflects_current_status(tmp_path):
-    ledger = fresh_ledger(tmp_path)
-    h_id = ledger.propose("To be falsified", "strategizer")
-    ledger.update(h_id, "FALSIFIED", "gone", "D001")
+    assert items[0]["prior"] == 0.55
+    assert items[0]["belief"] == 0.55          # no update yet → prior
+    ledger.update(h, "SUPPORTED", "c", evidence=EVIDENCE,
+                  posterior=0.9, triggered_by="D001")
     items = ledger.list_all()
-    assert items[0]["current_status"] == "FALSIFIED"
+    assert items[0]["belief"] == 0.9
+    assert items[0]["current_status"] == "SUPPORTED"
 
 
-def test_list_empty_when_no_hypotheses(tmp_path):
-    ledger = fresh_ledger(tmp_path)
-    assert ledger.list_all() == []
+# ------------------------- strict from_dict -------------------------
+
+def test_from_dict_raises_on_missing_fields():
+    with pytest.raises((KeyError, ValueError, TypeError)):
+        HypothesisEntry.from_dict({
+            "id": "H1", "statement": "s",
+            "proposed_by": "x", "proposed_at": "t",
+        })
 
 
-# ---------------------------------------------------------------------------
-# HypothesisGet
-# ---------------------------------------------------------------------------
-
-
-def test_get_returns_full_entry(tmp_path):
-    ledger = fresh_ledger(tmp_path)
-    h_id = ledger.propose("Full entry", "D001")
-    entry = ledger.get(h_id)
-    required_keys = {"id", "statement", "proposed_by", "proposed_at", "status_log"}
-    assert required_keys.issubset(set(entry.keys()))
-    assert entry["proposed_by"] == "D001"
-
-
-def test_get_returns_none_for_missing(tmp_path):
-    ledger = fresh_ledger(tmp_path)
-    assert ledger.get("H99") is None
-
-
-# ---------------------------------------------------------------------------
-# Persistence
-# ---------------------------------------------------------------------------
-
-
-def test_persists_and_reloads_from_disk(tmp_path):
-    ledger = fresh_ledger(tmp_path)
-    h_id = ledger.propose("Persistent statement", "strategizer")
-    ledger.update(h_id, "SUPPORTED", "confirmed", "D001")
-
-    # new ledger instance reads same file
-    ledger2 = HypothesisLedger(tmp_path)
-    entry = ledger2.get(h_id)
-    assert entry is not None
-    assert entry["statement"] == "Persistent statement"
-    assert entry["status_log"][-1]["status"] == "SUPPORTED"
-
-
-def test_hypotheses_json_is_valid_json(tmp_path):
-    ledger = fresh_ledger(tmp_path)
-    ledger.propose("Test", "strategizer")
-    raw = (tmp_path / "hypotheses.json").read_text()
-    data = json.loads(raw)
-    assert "H1" in data
-
-
-# ---------------------------------------------------------------------------
-# Thread safety
-# ---------------------------------------------------------------------------
-
+# ------------------------- thread safety -------------------------
 
 def test_concurrent_propose_is_thread_safe(tmp_path):
     """Two threads propose concurrently; max 3 OPEN must be respected."""
     ledger = fresh_ledger(tmp_path)
-    errors = []
     results = []
     lock = threading.Lock()
 
-    def propose(stmt):
-        r = ledger.propose(stmt, "strategizer")
+    def propose(i):
+        r = ledger.propose(
+            statement=f"Claim {i} below threshold 1.{i}",
+            falsification_criterion="Any design exceeding the bound",
+            prediction="Dense sweep finds better",
+            prior=0.5,
+            proposed_by="strategizer",
+        )
         with lock:
             results.append(r)
 
-    threads = [threading.Thread(target=propose, args=(f"H {i}",)) for i in range(6)]
+    threads = [
+        threading.Thread(target=propose, args=(i,)) for i in range(6)
+    ]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
 
-    open_count = sum(
-        1 for r in results if not r.startswith("ERROR:")
-    )
+    open_count = sum(1 for r in results if not r.startswith("ERROR:"))
     assert open_count <= 3

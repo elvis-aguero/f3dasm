@@ -1,16 +1,24 @@
 """Structured hypothesis ledger for agentic runs.
 
-Manages one file under ``debug/strategizer_notes/``:
+Manages one file under the study directory:
 
-- ``hypotheses.json``   — keyed by hypothesis ID; append-only status_log
+- ``hypotheses.json``   — keyed by hypothesis ID; append-only
+                          status_log following a Popperian schema.
 
-Delegation logging has moved to :class:`~delegation_log.DelegationLog`
+Every hypothesis must carry a falsification criterion, a prediction,
+and a prior probability.  Every status update must carry evidence and
+a posterior probability.  The schema is strict: ``from_dict`` raises
+on missing fields; old ledger files are not compatible.
+
+Delegation logging has moved to
+:class:`~delegation_log.DelegationLog`
 (``debug/delegation_log.jsonl``).
 """
 
 from __future__ import annotations
 
 import json
+import re
 import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -18,18 +26,41 @@ from pathlib import Path
 
 __all__ = ["HypothesisLedger", "HypothesisEntry", "StatusLogEntry"]
 
-VALID_STATUSES = frozenset({"OPEN", "SUPPORTED", "FALSIFIED", "INCONCLUSIVE"})
+VALID_STATUSES = frozenset(
+    {"OPEN", "SUPPORTED", "FALSIFIED", "INCONCLUSIVE"})
+CLOSING_STATUSES = frozenset(
+    {"SUPPORTED", "FALSIFIED", "INCONCLUSIVE"})
 MAX_OPEN = 3
+MAX_FIELD_LEN = 500
+
+_QUANT_RE = re.compile(r"[<>=≤≥]|\d")
+_NUMBERED_RE = re.compile(
+    r"\(1\).*\(2\)|\b1\.\s.*\b2\.\s", re.DOTALL
+)
 
 
 def _now_iso() -> str:
     return datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
 
 
+def _is_compound(statement: str) -> bool:
+    """Heuristic: claim contains two quantified sub-claims."""
+    if _NUMBERED_RE.search(statement):
+        return True
+    for conn in (" and ", "; "):
+        if conn in statement:
+            left, right = statement.split(conn, 1)
+            if _QUANT_RE.search(left) and _QUANT_RE.search(right):
+                return True
+    return False
+
+
 @dataclass
 class StatusLogEntry:
     status: str
     comment: str
+    evidence: dict | None
+    posterior: float | None
     triggered_by: str | None
     ts: str = field(default_factory=_now_iso)
 
@@ -38,18 +69,26 @@ class StatusLogEntry:
 class HypothesisEntry:
     id: str
     statement: str
+    falsification_criterion: str
+    prediction: str
+    prior: float
     proposed_by: str
     proposed_at: str
     status_log: list[StatusLogEntry] = field(default_factory=list)
 
     @property
     def current_status(self) -> str:
-        return self.status_log[-1].status if self.status_log else "OPEN"
+        return (
+            self.status_log[-1].status if self.status_log else "OPEN"
+        )
 
     def to_dict(self) -> dict:
         return {
             "id": self.id,
             "statement": self.statement,
+            "falsification_criterion": self.falsification_criterion,
+            "prediction": self.prediction,
+            "prior": self.prior,
             "proposed_by": self.proposed_by,
             "proposed_at": self.proposed_at,
             "status_log": [asdict(e) for e in self.status_log],
@@ -57,10 +96,14 @@ class HypothesisEntry:
 
     @classmethod
     def from_dict(cls, data: dict) -> "HypothesisEntry":
-        log = [StatusLogEntry(**e) for e in data.get("status_log", [])]
+        # STRICT: missing fields raise.  Old ledger files do not load.
+        log = [StatusLogEntry(**e) for e in data["status_log"]]
         return cls(
             id=data["id"],
             statement=data["statement"],
+            falsification_criterion=data["falsification_criterion"],
+            prediction=data["prediction"],
+            prior=float(data["prior"]),
             proposed_by=data["proposed_by"],
             proposed_at=data["proposed_at"],
             status_log=log,
@@ -71,7 +114,8 @@ class HypothesisLedger:
     """Manages ``hypotheses.json`` on disk.
 
     All mutating operations are atomic under a threading lock so that
-    concurrent delegation threads (background workers) cannot corrupt state.
+    concurrent delegation threads (background workers) cannot corrupt
+    state.
     """
 
     def __init__(self, notes_dir: Path) -> None:
@@ -83,30 +127,76 @@ class HypothesisLedger:
     # Hypothesis operations
     # ------------------------------------------------------------------
 
-    def propose(self, statement: str, proposed_by: str) -> str:
-        """Propose a new hypothesis; returns the assigned ID (e.g. 'H1').
-
-        Returns an error string if 3 OPEN hypotheses already exist.
-        """
+    def propose(
+        self,
+        statement: str,
+        falsification_criterion: str,
+        prediction: str,
+        prior,
+        proposed_by: str,
+    ) -> str:
+        """Propose a hypothesis; returns its ID or an ERROR string."""
+        try:
+            prior_f = float(prior)
+        except (TypeError, ValueError):
+            return (
+                f"ERROR: prior must be a float in (0, 1), "
+                f"got {prior!r}."
+            )
+        if not 0.0 < prior_f < 1.0:
+            return (
+                "ERROR: prior must be strictly between 0 and 1 — a "
+                "hypothesis you are certain about is not a hypothesis."
+            )
+        for name, value in (
+            ("statement", statement),
+            ("falsification_criterion", falsification_criterion),
+            ("prediction", prediction),
+        ):
+            if not value or not str(value).strip():
+                return f"ERROR: {name} must be non-empty."
+            if len(str(value)) > MAX_FIELD_LEN:
+                return (
+                    f"ERROR: {name} exceeds {MAX_FIELD_LEN} chars. "
+                    "State a single concise claim."
+                )
+        if _is_compound(statement):
+            return (
+                "ERROR: statement looks like a compound claim "
+                "(multiple quantified sub-claims). Split it into "
+                "separate hypotheses, one falsifiable claim each."
+            )
         with self._lock:
             data = self._load()
             open_count = sum(
                 1 for h in data.values()
-                if h["status_log"] and h["status_log"][-1]["status"] == "OPEN"
+                if h["status_log"]
+                and h["status_log"][-1]["status"] == "OPEN"
             )
             if open_count >= MAX_OPEN:
                 return (
-                    f"ERROR: {MAX_OPEN} OPEN hypotheses already exist. "
-                    "Close one (SUPPORTED, FALSIFIED, or INCONCLUSIVE) before proposing a new one."
+                    f"ERROR: {MAX_OPEN} OPEN hypotheses already "
+                    "exist. Close one (SUPPORTED, FALSIFIED, or "
+                    "INCONCLUSIVE) before proposing a new one."
                 )
             h_id = f"H{len(data) + 1}"
             ts = _now_iso()
             entry = HypothesisEntry(
                 id=h_id,
                 statement=statement,
+                falsification_criterion=falsification_criterion,
+                prediction=prediction,
+                prior=prior_f,
                 proposed_by=proposed_by,
                 proposed_at=ts,
-                status_log=[StatusLogEntry(status="OPEN", comment="initial proposal", triggered_by=None, ts=ts)],
+                status_log=[StatusLogEntry(
+                    status="OPEN",
+                    comment="initial proposal",
+                    evidence=None,
+                    posterior=prior_f,
+                    triggered_by=None,
+                    ts=ts,
+                )],
             )
             data[h_id] = entry.to_dict()
             self._save(data)
@@ -117,40 +207,100 @@ class HypothesisLedger:
         h_id: str,
         status: str,
         comment: str,
+        evidence: dict | None,
+        posterior,
         triggered_by: str | None,
     ) -> str:
-        """Append a status-change entry to the hypothesis's status_log.
-
-        Returns an error string on invalid input.
+        """Append a status-change entry; returns confirmation or ERROR.
         """
         if status not in VALID_STATUSES:
             return (
                 f"ERROR: invalid status {status!r}. "
                 f"Must be one of: {sorted(VALID_STATUSES)}"
             )
+        try:
+            post_f = float(posterior)
+        except (TypeError, ValueError):
+            return (
+                f"ERROR: posterior must be a float in [0, 1], "
+                f"got {posterior!r}."
+            )
+        if not 0.0 <= post_f <= 1.0:
+            return f"ERROR: posterior {post_f} outside [0, 1]."
+        has_delegation = (
+            isinstance(evidence, dict) and "delegation" in evidence
+        )
+        if status in CLOSING_STATUSES and not has_delegation:
+            return (
+                f"ERROR: closing status {status!r} requires evidence "
+                "with a 'delegation' key, e.g. "
+                '{"delegation": "D004", "numbers": {"best_y": 1.62}}.'
+            )
         with self._lock:
             data = self._load()
             if h_id not in data:
                 return f"ERROR: hypothesis {h_id!r} not found."
+            log = data[h_id]["status_log"]
+            current = log[-1]["status"] if log else "OPEN"
+            cited = {
+                (e.get("evidence") or {}).get("delegation")
+                for e in log
+                if e.get("evidence")
+            }
+            new_d = (evidence or {}).get("delegation")
+            if status == current and (
+                new_d is None or new_d in cited
+            ):
+                return (
+                    f"ERROR: no-op update — {h_id} is already "
+                    f"{current} and the evidence delegation is not "
+                    "new. Update only when the status changes or "
+                    "new evidence arrives."
+                )
+            if (
+                status == "OPEN"
+                and current != "OPEN"
+                and not has_delegation
+            ):
+                return (
+                    "ERROR: reopening a closed hypothesis requires "
+                    "new evidence with a 'delegation' key."
+                )
             entry = StatusLogEntry(
                 status=status,
                 comment=comment,
+                evidence=evidence,
+                posterior=post_f,
                 triggered_by=triggered_by,
                 ts=_now_iso(),
             )
-            data[h_id]["status_log"].append(asdict(entry))
+            log.append(asdict(entry))
             self._save(data)
-            return f"Updated {h_id}: status → {status}."
+            return (
+                f"Updated {h_id}: status → {status} "
+                f"(belief {post_f})."
+            )
 
     def list_all(self) -> list[dict]:
-        """Return summary dicts ``{id, statement, current_status}`` for all hypotheses."""
+        """Summaries: id, statement, current_status, prior, belief."""
         with self._lock:
             data = self._load()
         result = []
         for h in data.values():
             log = h.get("status_log", [])
             current = log[-1]["status"] if log else "OPEN"
-            result.append({"id": h["id"], "statement": h["statement"], "current_status": current})
+            posts = [
+                e["posterior"] for e in log
+                if e.get("posterior") is not None
+            ]
+            belief = posts[-1] if posts else h["prior"]
+            result.append({
+                "id": h["id"],
+                "statement": h["statement"],
+                "current_status": current,
+                "prior": h["prior"],
+                "belief": belief,
+            })
         return result
 
     def get(self, h_id: str) -> dict | None:
@@ -167,7 +317,9 @@ class HypothesisLedger:
         """Load hypotheses from disk; returns {} if file absent."""
         if not self._hypotheses_path.exists():
             return {}
-        return json.loads(self._hypotheses_path.read_text(encoding="utf-8"))
+        return json.loads(
+            self._hypotheses_path.read_text(encoding="utf-8")
+        )
 
     def _save(self, data: dict) -> None:
         """Atomically write hypotheses to disk."""
