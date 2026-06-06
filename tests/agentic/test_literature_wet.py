@@ -81,22 +81,34 @@ def test_literature_review_wet(tmp_path):
 
     class LitReviewStrategist(StubAdapter):
         def invoke(self, messages):
-            # Propose a hypothesis to satisfy the ledger (if active)
+            # Propose a hypothesis to satisfy the ledger (if active).
+            # On re-invocation (graph loop), reuse the existing open
+            # hypothesis instead of proposing duplicates until the
+            # MAX_OPEN cap rejects and the ID fallback loops forever.
+            h_id = None
             if "HypothesisPropose" in self.closure_tools:
-                h_id = self.closure_tools["HypothesisPropose"](
-                    statement="GP surrogates with acquisition functions are"
-                              " the dominant approach for expensive DOE.",
-                    falsification_criterion=(
-                        "a non-GP method outperforms GP on benchmark"
-                    ),
-                    prediction="GP wins on majority of DOE benchmarks",
-                    prior=0.7,
-                )
-            else:
-                h_id = None
+                listing = self.closure_tools["HypothesisList"]()
+                m_existing = re.search(r"\bH\d+\b", listing or "")
+                if m_existing:
+                    h_id = m_existing.group()
+                else:
+                    h_id = self.closure_tools["HypothesisPropose"](
+                        statement="GP surrogates with acquisition"
+                                  " functions are the dominant approach"
+                                  " for expensive DOE.",
+                        falsification_criterion=(
+                            "a non-GP method outperforms GP on benchmark"
+                        ),
+                        prediction="GP wins on majority of DOE benchmarks",
+                        prior=0.7,
+                    )
 
             # Delegate to literature reviewer
-            h_ids = [h_id] if h_id and not h_id.startswith("ERROR") else ["H0"]
+            if not h_id or h_id.startswith("ERROR"):
+                raise AssertionError(
+                    f"could not obtain a hypothesis ID: {h_id!r}"
+                )
+            h_ids = [h_id]
             result = self.closure_tools["Delegate"](
                 target="literature_reviewer",
                 intent=DELEGATION_TASK,
@@ -122,6 +134,13 @@ def test_literature_review_wet(tmp_path):
                     _time.sleep(0.5)
 
             summary = worker_report or "Literature review complete."
+            # replicate.py is a hard Done() requirement.
+            if "WriteDeliverable" in self.closure_tools:
+                self.closure_tools["WriteDeliverable"](
+                    "replicate.py",
+                    "# Reproduce: re-run the literature review "
+                    "delegation in this test.\n",
+                )
             # Two-shot Done(): first call → warning; second → closes.
             # If delegation is still working, wait briefly and retry.
             r1 = self.closure_tools["Done"](summary=summary)
@@ -166,6 +185,9 @@ def test_literature_review_wet(tmp_path):
         from f3dasm._src.agentic.backends.claude import ClaudeAdapter
         native = [t for t in agent.tools
                   if t in {"Bash", "Edit", "Read", "Write", "Glob", "Grep"}]
+        # The adapter spawns the claude CLI with cwd=study_dir; a
+        # nonexistent cwd makes subprocess.Popen fail instantly.
+        (study / "workspace").mkdir(parents=True, exist_ok=True)
         adapter = ClaudeAdapter(
             model="claude-haiku-4-5-20251001",
             system_prompt=agent.system_prompt,

@@ -638,7 +638,9 @@ class StrategizerNode(AgentNode):
                             from_node=node._name,
                             to_node=target,
                             task=intent,
-                            deliverable="ERROR: " + tb[:2000],
+                            # Keep the TAIL: the root exception is on
+                            # the last line of a traceback.
+                            deliverable="ERROR: " + tb[-2000:],
                             hypothesis_ids=h_ids,
                             started_at=started_at,
                             completed_at=datetime.now(
