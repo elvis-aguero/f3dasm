@@ -201,6 +201,19 @@ def test_from_dict_raises_on_missing_fields():
         })
 
 
+# ------------------------- schema validation at load boundary -----
+
+def test_load_raises_on_old_schema_file(tmp_path):
+    (tmp_path / "hypotheses.json").write_text(json.dumps({
+        "H1": {"id": "H1", "statement": "s",
+               "proposed_by": "x", "proposed_at": "t",
+               "status_log": []}
+    }))
+    ledger = HypothesisLedger(tmp_path)
+    with pytest.raises((KeyError, ValueError, TypeError)):
+        ledger.list_all()
+
+
 # ------------------------- thread safety -------------------------
 
 def test_concurrent_propose_is_thread_safe(tmp_path):

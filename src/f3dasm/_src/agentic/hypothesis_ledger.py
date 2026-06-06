@@ -18,6 +18,7 @@ Delegation logging has moved to
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 from dataclasses import asdict, dataclass, field
@@ -47,6 +48,9 @@ def _is_compound(statement: str) -> bool:
     """Heuristic: claim contains two quantified sub-claims."""
     if _NUMBERED_RE.search(statement):
         return True
+    # Connectors are deliberately narrow (" and ", "; " only).
+    # False negatives are preferred over blocking legitimate single
+    # claims; the critic catches what the heuristic misses.
     for conn in (" and ", "; "):
         if conn in statement:
             left, right = statement.split(conn, 1)
@@ -314,16 +318,30 @@ class HypothesisLedger:
     # ------------------------------------------------------------------
 
     def _load(self) -> dict:
-        """Load hypotheses from disk; returns {} if file absent."""
+        """Load and validate hypotheses from disk.
+
+        Returns an empty dict if the file is absent.  Validates every
+        entry through ``HypothesisEntry.from_dict``; raises
+        ``KeyError`` / ``TypeError`` / ``ValueError`` on schema
+        mismatch or on-disk corruption — this is intentional (no
+        backward compatibility).
+        """
         if not self._hypotheses_path.exists():
             return {}
-        return json.loads(
+        raw: dict = json.loads(
             self._hypotheses_path.read_text(encoding="utf-8")
         )
+        for entry in raw.values():
+            HypothesisEntry.from_dict(entry)  # raises on bad schema
+        return raw
 
     def _save(self, data: dict) -> None:
-        """Atomically write hypotheses to disk."""
-        self._hypotheses_path.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        """Atomically write hypotheses to disk.
+
+        Writes to a sibling temp file then calls ``os.replace`` so
+        that a crash mid-write cannot leave a truncated file.
+        """
+        text = json.dumps(data, indent=2, ensure_ascii=False)
+        tmp = self._hypotheses_path.with_suffix(".json.tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, self._hypotheses_path)
