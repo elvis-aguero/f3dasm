@@ -197,8 +197,70 @@ class StrategizerNode(AgentNode):
         self.adapter.closure_tools.update(self._build_routing_closures())
         self.adapter.route_watcher = lambda: self._route.get("kind") == "done"
 
+    def _find_critic_name(self) -> str | None:
+        """Name of the first connected critic worker, or None."""
+        spec = self._spec
+        if spec is None or not hasattr(spec, "nodes"):
+            return None
+        for target in self._outgoing:
+            agent = spec.nodes.get(target)
+            if (
+                agent is not None
+                and getattr(agent, "role", None) == "critic"
+                and target in self._worker_adapters
+            ):
+                return target
+        return None
+
+    def _invoke_critic(self, task_msg: str) -> str:
+        """Synchronously invoke the connected critic; returns its
+        text or an ERROR string."""
+        critic_name = self._find_critic_name()
+        if critic_name is None:
+            return "ERROR: no critic connected."
+        adapter = self._worker_adapters[critic_name]
+        worker = (
+            adapter.copy() if hasattr(adapter, "copy") else adapter
+        )
+        try:
+            return worker.invoke(
+                [{"role": "user", "content": task_msg}]
+            )
+        except Exception:  # noqa: BLE001
+            return (
+                "ERROR: critic invocation failed:\n"
+                f"{traceback.format_exc()}"
+            )
+
+    def _build_feedback_task_msg(self, h_ids: list) -> str:
+        """<mode>FEEDBACK</mode> task message with paths block."""
+        notes_path = str(self._current_notes_dir or "")
+        _notes_dir = self._current_notes_dir
+        _study_dir = self._study_dir
+        _debug_dir = (
+            _notes_dir.parent if _notes_dir is not None else None
+        )
+        return (
+            "<mode>FEEDBACK</mode>\n\n"
+            "Perform a synchronous find-only adversarial audit.  "
+            "PASS is not an available verdict — return REVISE or "
+            "REJECT with your findings.\n\n"
+            "<paths>\n"
+            f"study_dir             = {_study_dir}\n"
+            f"debug_dir             = {_debug_dir}\n"
+            f"delegation_log        = {_debug_dir}/delegation_log.jsonl\n"
+            f"diagnostics           = {_debug_dir}/diagnostics.jsonl\n"
+            f"strategizer_notes     = {notes_path}\n"
+            f"delegations_workspace = {_debug_dir}/delegations/\n"
+            f"deliverables          = {_study_dir}/replicate.py, "
+            f"{_study_dir}/solution.md\n"
+            "</paths>\n\n"
+            f"Focus hypotheses: {h_ids if h_ids else 'all'}"
+        )
+
     def _drain_notifications(self) -> str:
-        """Return and clear any pending push notifications, or empty string."""
+        """Return and clear any pending push notifications, or empty
+        string."""
         with self._notifications_lock:
             if not self._notifications:
                 text = ""
@@ -210,6 +272,36 @@ class StrategizerNode(AgentNode):
             drift = self._science_monitor.drain()
             if drift:
                 text += drift
+        if self._science_monitor is not None:
+            offenders = self._science_monitor.escalation_due()
+            if offenders and self._find_critic_name() is not None:
+                task_msg = self._build_feedback_task_msg(offenders)
+                findings = self._invoke_critic(task_msg)
+                self._science_monitor.note_escalated()
+                if self._delegation_log is not None:
+                    self._delegation_log.record(
+                        id=f"FB{datetime.now(tz=timezone.utc).strftime('%H%M%S')}",
+                        from_node=self._name,
+                        to_node=self._find_critic_name() or "",
+                        task="ScienceMonitor escalation audit",
+                        deliverable=findings,
+                        hypothesis_ids=offenders,
+                        started_at=datetime.now(
+                            tz=timezone.utc
+                        ).isoformat(timespec="seconds"),
+                        completed_at=datetime.now(
+                            tz=timezone.utc
+                        ).isoformat(timespec="seconds"),
+                        status="FEEDBACK",
+                        tokens_in=0,
+                        tokens_out=0,
+                        cost_usd=None,
+                    )
+                text += (
+                    "[SCIENCE MONITOR — ESCALATION] Repeated drift "
+                    f"on {', '.join(offenders)}. Critic audit "
+                    f"findings:\n{findings}\n"
+                )
         return text
 
     def _build_routing_closures(self) -> dict:
@@ -761,58 +853,45 @@ class StrategizerNode(AgentNode):
                 # WARNING goes first; then any pending notifications.
                 return "  ".join(warn_parts) + (("\n\n" + prefix.rstrip()) if prefix.strip() else "")
             # Second call — run critic gate if critic is in the graph.
-            _critic_adapter = None
-            _spec = node._spec
-            if _spec is not None and hasattr(_spec, "nodes"):
-                for _target in node._outgoing:
-                    _agent = _spec.nodes.get(_target)
-                    if (
-                        _agent is not None
-                        and getattr(_agent, "role", None) == "critic"
-                        and _target in node._worker_adapters
-                    ):
-                        _critic_adapter = node._worker_adapters[_target]
-                        break
-
-            if _critic_adapter is not None:
+            if node._find_critic_name() is not None:
                 # Synchronous critic gate
-                notes_path = str(node._current_notes_dir or "")
                 _notes_dir = node._current_notes_dir
                 _study_dir = node._study_dir
-                _debug_dir = _notes_dir.parent if _notes_dir is not None else None
+                _debug_dir = (
+                    _notes_dir.parent
+                    if _notes_dir is not None else None
+                )
+                notes_path = str(_notes_dir or "")
                 task_msg = (
                     "<mode>FEEDBACK</mode>\n\n"
                     "Final gate check before run closes.\n\n"
                     "<paths>\n"
                     f"study_dir             = {_study_dir}\n"
                     f"debug_dir             = {_debug_dir}\n"
-                    f"delegation_log        = {_debug_dir}/delegation_log.jsonl\n"
+                    "delegation_log        = "
+                    f"{_debug_dir}/delegation_log.jsonl\n"
                     f"diagnostics           = {_debug_dir}/diagnostics.jsonl\n"
                     f"strategizer_notes     = {notes_path}\n"
-                    f"delegations_workspace = {_debug_dir}/delegations/\n"
+                    "delegations_workspace = "
+                    f"{_debug_dir}/delegations/\n"
                     f"deliverables          = {_study_dir}/replicate.py, "
                     f"{_study_dir}/solution.md\n"
                     "</paths>\n\n"
                     f"Proposed conclusion: {summary[:500]}"
                 )
-                _worker = (
-                    _critic_adapter.copy()
-                    if hasattr(_critic_adapter, "copy")
-                    else _critic_adapter
-                )
-                try:
-                    critique_text = _worker.invoke(
-                        [{"role": "user", "content": task_msg}]
-                    )
-                except Exception:  # noqa: BLE001
-                    critique_text = f"ERROR: {traceback.format_exc()}"
+                critique_text = node._invoke_critic(task_msg)
 
                 # Parse verdict from critique text
                 import re as _re
                 _verdict_match = _re.search(
-                    r"###\s*Verdict\s*\n\s*(\w+)", critique_text, _re.IGNORECASE
+                    r"###\s*Verdict\s*\n\s*(\w+)",
+                    critique_text,
+                    _re.IGNORECASE,
                 )
-                verdict = _verdict_match.group(1).upper() if _verdict_match else "UNKNOWN"
+                verdict = (
+                    _verdict_match.group(1).upper()
+                    if _verdict_match else "UNKNOWN"
+                )
 
                 if verdict == "PASS":
                     node._done_warned = False
@@ -820,12 +899,14 @@ class StrategizerNode(AgentNode):
                     route["summary"] = summary
                     return prefix + "Run complete."
                 else:
-                    # Critic found issues — reset warning so next Done() warns again
+                    # Critic found issues — reset warning so next
+                    # Done() warns again
                     node._done_warned = False
                     return (
                         prefix +
-                        f"Critic verdict: {verdict}.  Review the findings and "
-                        f"revise before calling Done() again.\n\n"
+                        f"Critic verdict: {verdict}.  Review the "
+                        "findings and revise before calling "
+                        f"Done() again.\n\n"
                         f"{critique_text}"
                     )
 
@@ -961,20 +1042,11 @@ class StrategizerNode(AgentNode):
         # ledger (notes_dir only provided to the entry node).
         closures.update(self._build_hypothesis_closures())
 
-        # AskForFeedback is only injected when a critic node is connected AND
-        # this is the entry node (only the entry node gates Done).
-        critic_name: str | None = None
+        # AskForFeedback is only injected when a critic node is
+        # connected AND this is the entry node (only the entry node
+        # gates Done).
+        critic_name: str | None = self._find_critic_name()
         spec = self._spec
-        if spec is not None and hasattr(spec, "nodes"):
-            for target in self._outgoing:
-                agent = spec.nodes.get(target)
-                if (
-                    agent is not None
-                    and getattr(agent, "role", None) == "critic"
-                    and target in self._worker_adapters
-                ):
-                    critic_name = target
-                    break
 
         if critic_name is not None:
             _critic_name = critic_name
@@ -993,42 +1065,8 @@ class StrategizerNode(AgentNode):
                 started_at = datetime.now(tz=timezone.utc).isoformat(
                     timespec="seconds"
                 )
-                notes_path = str(_node._current_notes_dir or "")
-                _notes_dir = _node._current_notes_dir
-                _study_dir = _node._study_dir
-                _debug_dir = _notes_dir.parent if _notes_dir is not None else None
-                task_msg = (
-                    "<mode>FEEDBACK</mode>\n\n"
-                    "Perform a synchronous find-only adversarial audit.  "
-                    "PASS is not an available verdict — return REVISE or REJECT "
-                    "with your findings.\n\n"
-                    "<paths>\n"
-                    f"study_dir             = {_study_dir}\n"
-                    f"debug_dir             = {_debug_dir}\n"
-                    f"delegation_log        = {_debug_dir}/delegation_log.jsonl\n"
-                    f"diagnostics           = {_debug_dir}/diagnostics.jsonl\n"
-                    f"strategizer_notes     = {notes_path}\n"
-                    f"delegations_workspace = {_debug_dir}/delegations/\n"
-                    f"deliverables          = {_study_dir}/replicate.py, "
-                    f"{_study_dir}/solution.md\n"
-                    "</paths>\n\n"
-                    f"Focus hypotheses: {h_ids if h_ids else 'all'}"
-                )
-
-                critic_adapter = _node._worker_adapters.get(_critic_name)
-                if critic_adapter is None:
-                    return f"ERROR: critic adapter {_critic_name!r} not found."
-
-                worker = (
-                    critic_adapter.copy()
-                    if hasattr(critic_adapter, "copy")
-                    else critic_adapter
-                )
-                try:
-                    text = worker.invoke([{"role": "user", "content": task_msg}])
-                except Exception:  # noqa: BLE001
-                    tb = traceback.format_exc()
-                    return f"ERROR: critic invocation failed:\n{tb}"
+                task_msg = _node._build_feedback_task_msg(h_ids)
+                text = _node._invoke_critic(task_msg)
 
                 # Log to delegation log
                 if _node._delegation_log is not None:
@@ -1040,9 +1078,9 @@ class StrategizerNode(AgentNode):
                         deliverable=text,
                         hypothesis_ids=h_ids,
                         started_at=started_at,
-                        completed_at=datetime.now(tz=timezone.utc).isoformat(
-                            timespec="seconds"
-                        ),
+                        completed_at=datetime.now(
+                            tz=timezone.utc
+                        ).isoformat(timespec="seconds"),
                         status="FEEDBACK",
                         tokens_in=0,
                         tokens_out=0,

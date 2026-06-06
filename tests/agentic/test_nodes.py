@@ -2605,3 +2605,107 @@ def test_science_drift_written_to_diagnostics(tmp_path):
     assert "rule" in drift_records[0], (
         f"SCIENCE_DRIFT record missing 'rule': {drift_records[0]!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 4.2: critic escalation on repeated science drift
+# ---------------------------------------------------------------------------
+
+
+def test_escalation_invokes_critic_and_injects_findings(tmp_path):
+    """ScienceMonitor escalation invokes critic and injects findings.
+
+    Setup: ledger + delegation_log + critic worker adapter.
+    Monkeypatch node._science_monitor.escalation_due to return ["H1"]
+    once (stateful fake, then returns None), and note_escalated to record
+    it was called.
+    The critic StubAdapter returns a canned report containing
+    "### Verdict\nREVISE".
+    Drive a draining closure (WriteNote) from the strategizer adapter and
+    assert its result contains "[SCIENCE MONITOR — ESCALATION]" and
+    "REVISE", and that note_escalated was called.
+    """
+    from f3dasm._src.agentic.delegation_log import DelegationLog
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    drain_results: list[str] = []
+    escalated_calls: list[bool] = []
+
+    class ReviseCriticAdapter(StubAdapter):
+        """Returns a critique report with REVISE verdict."""
+
+        def invoke(self, messages: list) -> str:
+            return (
+                "## Report\n\n"
+                "### Actions taken\n- Reviewed work\n\n"
+                "### Findings\nSeveral issues noted.\n\n"
+                "### Verdict\nREVISE\n\n"
+                "### Numbers\nfindings_critical: 1\n"
+            )
+
+        def copy(self):
+            fresh = ReviseCriticAdapter()
+            fresh.closure_tools = dict(self.closure_tools)
+            return fresh
+
+    class WriteNoteAdapter(StubAdapter):
+        """Calls WriteNote which drains notifications (including escalation)."""
+
+        def invoke(self, messages):
+            r = self.closure_tools["WriteNote"]("escalation_test.md", "x")
+            drain_results.append(r)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    jsonl_path = tmp_path / "delegation_log.jsonl"
+    delegation_log = DelegationLog(jsonl_path)
+
+    debug_dir = tmp_path / "debug"
+    debug_dir.mkdir()
+    notes_dir = debug_dir / "strategizer_notes"
+    notes_dir.mkdir()
+
+    adapter = WriteNoteAdapter()
+    spec = _spec_with_critic()
+    node = StrategizerNode(
+        adapter,
+        name="strategizer",
+        outgoing=["implementer", "critic"],
+        spec=spec,
+        worker_adapters={
+            "implementer": StubAdapter(),
+            "critic": ReviseCriticAdapter(),
+        },
+        notes_dir=notes_dir,
+        delegation_log=delegation_log,
+    )
+    node._current_notes_dir = notes_dir
+
+    # Stateful fake: escalation_due returns ["H1"] on first call, then None
+    _escalation_calls = []
+
+    def _fake_escalation_due():
+        if not _escalation_calls:
+            _escalation_calls.append(True)
+            return ["H1"]
+        return None
+
+    def _fake_note_escalated():
+        escalated_calls.append(True)
+
+    node._science_monitor.escalation_due = _fake_escalation_due
+    node._science_monitor.note_escalated = _fake_note_escalated
+
+    node(make_state(study_dir=str(tmp_path)))
+
+    assert drain_results, "WriteNote was never called"
+    combined = "\n".join(drain_results)
+    assert "[SCIENCE MONITOR — ESCALATION]" in combined, (
+        f"Expected '[SCIENCE MONITOR — ESCALATION]' in drain, got: {combined!r}"
+    )
+    assert "REVISE" in combined, (
+        f"Expected 'REVISE' in drain result, got: {combined!r}"
+    )
+    assert escalated_calls, (
+        "note_escalated() was never called — escalation not acknowledged"
+    )
