@@ -770,11 +770,20 @@ class TestDownloadPdf:
 # ---------------------------------------------------------------------------
 
 class TestPreflightWarnings:
+    def setup_method(self):
+        # Reset the subprocess-embedder tri-state cache before each test
+        # so the probe path is exercised fresh.
+        lc_mod._subprocess_embedder_state = None
+        lc_mod._subprocess_embedder_warned = False
+
+    def teardown_method(self):
+        lc_mod._subprocess_embedder_state = None
+        lc_mod._subprocess_embedder_warned = False
+
     def test_fastembed_missing_logs_warning(self, tmp_path, caplog):
-        """ImportError from fastembed triggers a warning log."""
+        """ImportError from fastembed AND no uv → warning logged; result is None."""
         import logging
         corpus = _make_corpus(tmp_path)
-        corpus._fastembed_warned = False  # ensure fresh state
 
         import builtins
         real_import = builtins.__import__
@@ -786,7 +795,8 @@ class TestPreflightWarnings:
 
         with caplog.at_level(logging.WARNING, logger="f3dasm._src.agentic.literature_corpus"):
             with patch("builtins.__import__", side_effect=mock_import):
-                result = corpus._get_embedding_model()
+                with patch("shutil.which", return_value=None):
+                    result = corpus._get_embedding_model()
 
         assert result is None
         warning_messages = [r.message for r in caplog.records]
@@ -795,10 +805,9 @@ class TestPreflightWarnings:
         ), f"No fastembed warning found in: {warning_messages}"
 
     def test_fastembed_warning_emitted_only_once(self, tmp_path, caplog):
-        """The fastembed warning is logged only once (flag guard)."""
+        """The fastembed+worker warning is logged only once (tri-state cache)."""
         import logging
         corpus = _make_corpus(tmp_path)
-        corpus._fastembed_warned = False
 
         import builtins
         real_import = builtins.__import__
@@ -810,9 +819,12 @@ class TestPreflightWarnings:
 
         with caplog.at_level(logging.WARNING, logger="f3dasm._src.agentic.literature_corpus"):
             with patch("builtins.__import__", side_effect=mock_import):
-                corpus._get_embedding_model()
-                corpus._get_embedding_model()
-                corpus._get_embedding_model()
+                with patch("shutil.which", return_value=None):
+                    corpus._get_embedding_model()
+                    corpus._embedding_model = None
+                    corpus._get_embedding_model()
+                    corpus._embedding_model = None
+                    corpus._get_embedding_model()
 
         fastembed_warnings = [
             r for r in caplog.records

@@ -50,6 +50,52 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _sleep = _time_module.sleep
 
+# ---------------------------------------------------------------------------
+# Out-of-process embedder (numpy<2 ephemeral env via uv)
+# ---------------------------------------------------------------------------
+
+_EMBED_WITH = "fastembed>=0.3,onnxruntime<1.20,numpy<2"
+
+# Tri-state cache for subprocess embedder availability:
+#   None   → not yet probed
+#   instance of _SubprocessEmbedder → available and ready
+#   False  → probed and unavailable (log once, never re-probe)
+_subprocess_embedder_state: "_SubprocessEmbedder | None | bool" = None
+_subprocess_embedder_warned = False
+
+
+class _SubprocessEmbedder:
+    """.embed(texts) via _embed_worker.py in an ephemeral uv env.
+
+    Used when fastembed cannot import in-process (NumPy-2 host env
+    with only NumPy-1.x onnxruntime wheels, e.g. Intel macOS). The
+    ephemeral env is resolved once by uv and cached; the model cache
+    persists across calls. First call may take minutes (downloads).
+    """
+
+    def __init__(self, timeout: float = 600.0) -> None:
+        self._timeout = timeout
+
+    def embed(self, texts):
+        import json as _json
+        import subprocess
+        from pathlib import Path as _P
+        worker = _P(__file__).parent / "_embed_worker.py"
+        cmd = [
+            "uv", "run", "--no-project", "--quiet",
+            "--with", _EMBED_WITH,
+            "python", str(worker),
+        ]
+        proc = subprocess.run(
+            cmd, input=_json.dumps({"texts": list(texts)}),
+            capture_output=True, text=True, timeout=self._timeout,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"embed worker failed: {proc.stderr[-500:]}"
+            )
+        return _json.loads(proc.stdout)["vectors"]
+
 
 # ---------------------------------------------------------------------------
 # Per-domain rate limiting (min-interval + circuit breaker)
@@ -613,25 +659,66 @@ class LiteratureCorpus:
     def _get_embedding_model(self):
         """Lazy-load bge-small-en-v1.5 via fastembed.
 
-        Returns None if unavailable; emits a warning once.
+        Resolution order:
+        1. In-process fastembed (fast path).
+        2. Out-of-process via _embed_worker.py in an ephemeral uv env
+           with numpy<2 (for Intel macOS where onnxruntime wheels are
+           NumPy-1.x builds).  Probed once per process.
+        3. None — BM25-only fallback (warning emitted once when BOTH
+           routes fail).
         """
+        global _subprocess_embedder_state, _subprocess_embedder_warned
+
         if self._embedding_model is not None:
             return self._embedding_model
+
+        # --- fast path: in-process fastembed ---
         try:
             from fastembed import TextEmbedding
             self._embedding_model = TextEmbedding(
                 "BAAI/bge-small-en-v1.5"
             )
+            return self._embedding_model
         except ImportError:
-            if not self._fastembed_warned:
-                log.warning(
-                    "fastembed not installed — CorpusSearch falls"
-                    " back to BM25-only (no bge-small dense retrieval)"
-                )
-                self._fastembed_warned = True
-            self._embedding_model = None
+            pass  # fall through to subprocess route
         except Exception:
             self._embedding_model = None
+            return self._embedding_model
+
+        # --- subprocess route (probe once per process) ---
+        if _subprocess_embedder_state is None:
+            # Not yet probed — check uv availability then probe
+            import shutil
+            if shutil.which("uv") is not None:
+                candidate = _SubprocessEmbedder()
+                try:
+                    candidate.embed(["probe"])
+                    _subprocess_embedder_state = candidate
+                    log.info(
+                        "dense retrieval via out-of-process embed"
+                        " worker (ephemeral numpy<2 env)"
+                    )
+                except Exception:
+                    _subprocess_embedder_state = False
+            else:
+                _subprocess_embedder_state = False
+
+            if _subprocess_embedder_state is False:
+                if not _subprocess_embedder_warned:
+                    log.warning(
+                        "fastembed unavailable in-process and embed"
+                        " worker probe failed — CorpusSearch falls"
+                        " back to BM25-only"
+                    )
+                    _subprocess_embedder_warned = True
+
+        if _subprocess_embedder_state is not False and \
+                _subprocess_embedder_state is not None:
+            self._embedding_model = _subprocess_embedder_state
+            return self._embedding_model
+
+        # Both routes failed
+        self._embedding_model = None
         return self._embedding_model
 
     def _load_all_embeddings(self) -> "tuple[list[dict], object]":

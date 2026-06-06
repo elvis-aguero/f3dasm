@@ -78,8 +78,10 @@ figures = [
   "matplotlib>=3.7.5"
 ]
 lit = [
-  # onnxruntime (fastembed dep) ships no Intel-macOS wheels —
-  # bge-small dense retrieval is unavailable there (BM25 fallback).
+  # onnxruntime's Intel-macOS wheels are NumPy-1.x builds, incompatible
+  # with this project's numpy>=2 pin — in-process fastembed is skipped
+  # there; dense retrieval still works via the out-of-process embed
+  # worker (_embed_worker.py).
   "fastembed>=0.3.0; sys_platform != 'darwin' or platform_machine == 'arm64'",
   "semanticscholar>=0.8.0"
 ]
