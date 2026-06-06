@@ -2895,3 +2895,48 @@ def test_done_critic_gate_embeds_ledger_and_falsification_flags(tmp_path):
     assert "falsification_criterion" in full_msg, (
         f"Expected 'falsification_criterion' in critic message; got:\n{full_msg}"
     )
+
+
+def test_delegate_decodes_json_and_comma_string_hypothesis_ids(tmp_path):
+    """LLMs pass '["H1","H2"]' or 'H1, H2' — both decode to lists.
+
+    Observed live: Haiku strategizer sent a JSON-encoded string and a
+    comma-joined string before getting the list form right.
+    """
+    captured = []
+
+    class Adapter(StubAdapter):
+        def invoke(self, messages):
+            for stmt in ("Claim alpha below 1.0", "Claim beta below 2.0"):
+                self.closure_tools["HypothesisPropose"](
+                    statement=stmt,
+                    falsification_criterion="any counter",
+                    prediction="none found",
+                    prior=0.5,
+                )
+            captured.append(self.closure_tools["Delegate"](
+                target="implementer", intent="t", expected_report="",
+                hypothesis_ids='["H1", "H2"]',
+            ))
+            captured.append(self.closure_tools["Delegate"](
+                target="implementer", intent="t", expected_report="",
+                hypothesis_ids="H1, H2",
+            ))
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    adapter = Adapter()
+    spec = _ledger_spec()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"],
+        spec=spec, worker_adapters={"implementer": StubAdapter()},
+        notes_dir=tmp_path,
+    )
+    node(make_state())
+    assert not captured[0].startswith("ERROR:"), captured[0]
+    assert not captured[1].startswith("ERROR:"), captured[1]
+    with node._registry_lock:
+        entries = list(node._registry.values())
+    assert entries[0]["hypothesis_ids"] == ["H1", "H2"]
+    assert entries[1]["hypothesis_ids"] == ["H1", "H2"]

@@ -369,9 +369,26 @@ class StrategizerNode(AgentNode):
                     f" Available: {list(node._worker_adapters)}"
                 )
 
-            # Enforce hypothesis linkage when ledger is active
+            # Enforce hypothesis linkage when ledger is active.
+            # LLMs pass strings in several shapes — decode all of
+            # them: '["H1","H2"]' (JSON), 'H1, H2' (joined), 'H1'.
             if isinstance(hypothesis_ids, str):
-                h_ids: list[str] = [hypothesis_ids]
+                raw = hypothesis_ids.strip()
+                if raw.startswith("["):
+                    import json as _json
+                    try:
+                        decoded = _json.loads(raw)
+                        h_ids: list[str] = [
+                            str(h) for h in decoded
+                        ] if isinstance(decoded, list) else [raw]
+                    except _json.JSONDecodeError:
+                        h_ids = [raw]
+                elif "," in raw:
+                    h_ids = [
+                        p.strip() for p in raw.split(",") if p.strip()
+                    ]
+                else:
+                    h_ids = [raw]
             else:
                 h_ids = [str(h) for h in (hypothesis_ids or [])]
             if node._ledger is not None:
@@ -790,10 +807,14 @@ class StrategizerNode(AgentNode):
                             # Include in this response too.
                             hints.append(msg)
 
-            hint_str = ("\n".join(hints) + "\n\n") if hints else ""
+            # Status token FIRST (documented contract: callers may
+            # dispatch on the leading word); hints and queued
+            # notifications follow.
+            hint_str = ("\n\n" + "\n".join(hints)) if hints else ""
+            tail = ("\n\n" + prefix.rstrip()) if prefix.strip() else ""
             return (
-                prefix + hint_str +
-                f"Working (running for {elapsed}s, polled {poll_count} times)"
+                f"Working (running for {elapsed}s, "
+                f"polled {poll_count} times)" + hint_str + tail
             )
 
         def Reply(delegation_id: str, answer: str) -> str:
