@@ -269,13 +269,13 @@ class StrategizerNode(AgentNode):
                 self._notifications.clear()
                 text = "\n".join(msgs) + "\n\n"
         if self._science_monitor is not None:
-            drift = self._science_monitor.drain()
-            if drift:
-                text += drift
-        if self._science_monitor is not None:
             offenders = self._science_monitor.escalation_due()
             _critic_name = self._find_critic_name()
             if offenders and _critic_name is not None:
+                # Escalation fires: perform bookkeeping-only drain (discard
+                # text) so the critic findings are the sole corrective
+                # payload — regular drift messages would pollute context.
+                self._science_monitor.drain()
                 task_msg = self._build_feedback_task_msg(offenders)
                 findings = self._invoke_critic(task_msg)
                 self._science_monitor.note_escalated()
@@ -309,6 +309,11 @@ class StrategizerNode(AgentNode):
                     f"on {', '.join(offenders)}. Critic audit "
                     f"findings:\n{findings}\n"
                 )
+            else:
+                # No escalation: inject regular drift messages normally.
+                drift = self._science_monitor.drain()
+                if drift:
+                    text += drift
         return text
 
     def _build_routing_closures(self) -> dict:

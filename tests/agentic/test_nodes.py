@@ -2696,6 +2696,15 @@ def test_escalation_invokes_critic_and_injects_findings(tmp_path):
     node._science_monitor.escalation_due = _fake_escalation_due
     node._science_monitor.note_escalated = _fake_note_escalated
 
+    # Monkeypatch drain() to return a sentinel — if escalation fails to
+    # displace drift, this sentinel would appear alongside ESCALATION.
+    _SENTINEL = "[SCIENCE MONITOR — FAKE_RULE] x\n"
+
+    def _fake_drain():
+        return _SENTINEL
+
+    node._science_monitor.drain = _fake_drain
+
     node(make_state(study_dir=str(tmp_path)))
 
     assert drain_results, "WriteNote was never called"
@@ -2705,6 +2714,10 @@ def test_escalation_invokes_critic_and_injects_findings(tmp_path):
     )
     assert "REVISE" in combined, (
         f"Expected 'REVISE' in drain result, got: {combined!r}"
+    )
+    assert _SENTINEL.strip() not in combined, (
+        "Escalation must displace regular drift injection — sentinel "
+        f"should be absent when ESCALATION fires, got: {combined!r}"
     )
     assert escalated_calls, (
         "note_escalated() was never called — escalation not acknowledged"

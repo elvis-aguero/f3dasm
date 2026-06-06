@@ -124,7 +124,9 @@ class ScienceMonitor:
                     f"{h_id} is SUPPORTED but no delegation flagged "
                     "is_falsification_attempt targets it. Criterion: "
                     f"\"{crit}\". Delegate a falsification attempt "
-                    "or downgrade to OPEN."))
+                    "or downgrade to OPEN "
+                    "(reopening requires evidence citing the delegation"
+                    " that produced the current status)."))
         # posterior inertia on the latest closing entry
         if len(log) >= 2 and current in (
                 "SUPPORTED", "FALSIFIED", "INCONCLUSIVE"):
