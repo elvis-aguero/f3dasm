@@ -141,7 +141,10 @@ class ScienceMonitor:
                     f"{h_id} changed status to {current} but belief "
                     f"barely moved ({prev_belief} → {post}). Either "
                     "the evidence is weak (keep it OPEN) or the "
-                    "posterior is wrong — reconcile them."))
+                    "posterior is wrong — reconcile them. "
+                    "To resolve: gather new evidence (new delegation)"
+                    " and update with a posterior that reflects"
+                    " it."))
         return out
 
     def _check_stale(self, hypotheses, completed):
@@ -167,31 +170,41 @@ class ScienceMonitor:
         return out
 
     def _check_unanchored(self, hypotheses, completed):
+        """Per OPEN hypothesis: find its most-recent linked completed
+        delegation; fire if that delegation lacks ### Numbers content.
+        Older bare delegations stop nagging once a newer linked one
+        exists (self-healing).
+        """
         out = []
-        for r in completed:
-            h_ids = r.get("hypothesis_ids") or []
-            open_hs = [
-                h for h in h_ids
-                if h in hypotheses
-                and hypotheses[h]["status_log"]
-                and hypotheses[h]["status_log"][-1]["status"] == "OPEN"
-            ]
-            if not open_hs:
+        # Build id→record for O(1) lookup
+        by_id = {r["id"]: r for r in completed}
+        for h_id, h in hypotheses.items():
+            log = h.get("status_log", [])
+            if not log or log[-1]["status"] != "OPEN":
+                continue
+            # Find the most-recent completed delegation linked to h_id
+            most_recent = None
+            for r in reversed(completed):
+                if h_id in (r.get("hypothesis_ids") or []):
+                    most_recent = r
+                    break
+            if most_recent is None:
                 continue
             section = _NUMBERS_SECTION_RE.search(
-                r.get("deliverable", ""))
+                most_recent.get("deliverable", ""))
             has_numbers = bool(
                 section
-                and any(_NUM_LINE_RE.match(ln)
-                        for ln in section.group(1).splitlines()))
+                and any(
+                    _NUM_LINE_RE.match(ln)
+                    for ln in section.group(1).splitlines()))
             if not has_numbers:
                 out.append(Violation(
-                    "UNANCHORED_DELEGATION", "warn", open_hs[0],
-                    f"Delegation {r['id']} completed with no "
-                    "### Numbers content while "
-                    f"{', '.join(open_hs)} remain OPEN. Its result "
-                    "cannot anchor a hypothesis update — re-delegate "
-                    "for concrete measurements."))
+                    "UNANCHORED_DELEGATION", "warn", h_id,
+                    f"Delegation {most_recent['id']} (most recent "
+                    f"linked to {h_id}) completed with no "
+                    "### Numbers content. Its result cannot anchor "
+                    "a hypothesis update — re-delegate for concrete "
+                    "measurements."))
         return out
 
     def _numbers_match(self, numbers: dict, deliverable: str) -> bool:
@@ -224,7 +237,7 @@ class ScienceMonitor:
         """Hook after a successful ledger update. Returns error-severity
         messages for inline return to the agent."""
         live = self.evaluate()
-        self._bookkeep(live)
+        self._bookkeep(live, count_streaks=False)
         return [
             f"[SCIENCE MONITOR — {v.rule}] {v.message}"
             for v in live
@@ -233,13 +246,13 @@ class ScienceMonitor:
 
     def on_delegation_complete(self, delegation_id: str) -> None:
         """Hook after a delegation finishes; updates bookkeeping."""
-        self._bookkeep(self.evaluate())
+        self._bookkeep(self.evaluate(), count_streaks=False)
 
     def drain(self) -> str:
         """Re-validate, dedupe, cap, digest. Returns injection text
         (possibly empty). Call from the node's _drain_notifications."""
         live = self.evaluate()
-        self._bookkeep(live)
+        self._bookkeep(live, count_streaks=True)
         if not live:
             return ""
         seen: dict[tuple, Violation] = {}
@@ -258,7 +271,18 @@ class ScienceMonitor:
                 f"[SCIENCE MONITOR] +{len(rest)} more: {digest}")
         return "\n".join(lines) + "\n"
 
-    def _bookkeep(self, live: list[Violation]) -> None:
+    def _bookkeep(
+        self,
+        live: list[Violation],
+        count_streaks: bool = False,
+    ) -> None:
+        """Update diagnostics log, h_rule_seen, and (optionally) streaks.
+
+        Streak counting is intentionally restricted to drain() calls so
+        that a persistent error is not double-counted within a single
+        agent turn (on_hypothesis_update + drain would both increment).
+        Semantics: "persisting across N drain calls".
+        """
         with self._lock:
             live_keys = {v.key for v in live}
             for v in live:
@@ -273,7 +297,7 @@ class ScienceMonitor:
                 if v.h_id is not None:
                     self._h_rule_seen.setdefault(
                         v.h_id, set()).add(v.rule)
-                if v.severity == "error":
+                if count_streaks and v.severity == "error":
                     self._error_streak[v.key] = \
                         self._error_streak.get(v.key, 0) + 1
             # resolved keys may re-fire later → re-log + reset streaks

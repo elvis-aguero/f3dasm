@@ -155,7 +155,8 @@ def test_stale_open(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Test 6: UNANCHORED_DELEGATION — delegation with no ### Numbers section
+# Test 6: UNANCHORED_DELEGATION — delegation with no ### Numbers section;
+#         self-healing when a newer anchored delegation lands for same H.
 # ---------------------------------------------------------------------------
 
 def test_unanchored_delegation(tmp_path):
@@ -173,6 +174,39 @@ def test_unanchored_delegation(tmp_path):
         f"Expected UNANCHORED_DELEGATION, got: {rules}")
     v = next(v for v in violations if v.rule == "UNANCHORED_DELEGATION")
     assert v.severity == "warn"
+    assert v.h_id == h_id
+    # Violation names the most-recent linked delegation (D001)
+    assert "D001" in v.message
+
+
+def test_unanchored_delegation_self_heals(tmp_path):
+    """Once an anchored delegation D002 lands for H1, the bare D001
+    stops nagging — UNANCHORED_DELEGATION for H1 disappears."""
+    ledger, dlog, mon, _ = make_world(tmp_path)
+    h_id = propose(ledger)
+    bare_report = (
+        "## Report\n\n### Actions taken\n- ran sweep\n\n"
+        "### Conclusions\nNothing interesting found.\n"
+    )
+    # D001 is bare — violation fires for H1
+    record_done(dlog, "D001", [h_id], bare_report)
+    violations = mon.evaluate()
+    assert any(
+        v.rule == "UNANCHORED_DELEGATION" and v.h_id == h_id
+        for v in violations
+    ), "UNANCHORED_DELEGATION should fire for H1 after bare D001"
+
+    # D002 is anchored (has ### Numbers) and also linked to H1
+    record_done(dlog, "D002", [h_id], REPORT)
+    violations2 = mon.evaluate()
+    unanchored = [
+        v for v in violations2
+        if v.rule == "UNANCHORED_DELEGATION" and v.h_id == h_id
+    ]
+    assert len(unanchored) == 0, (
+        "UNANCHORED_DELEGATION for H1 should self-heal once anchored "
+        f"D002 lands; violations: {violations2}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -416,6 +450,36 @@ def test_escalation_capped(tmp_path):
 # Test 14: error streak escalates after 2 evaluations without fix
 # ---------------------------------------------------------------------------
 
+def test_error_streak_no_double_count_within_turn(tmp_path):
+    """on_hypothesis_update + one drain must not count the streak twice.
+
+    If _bookkeep incremented the streak in BOTH on_hypothesis_update and
+    drain(), a single turn would jump to streak=2 and trigger escalation
+    prematurely.  Only drain() should increment; so after one turn the
+    streak is 1 and escalation_due() returns None.
+    """
+    ledger, dlog, mon, _ = make_world(tmp_path)
+    h_id = propose(ledger)
+    # Cite non-existent delegation D999 → EVIDENCE_DELEGATION_EXISTS fires
+    ledger.update(
+        h_id, "SUPPORTED", "fake evidence",
+        evidence={"delegation": "D999", "numbers": {}},
+        posterior=0.8, triggered_by=None)
+
+    # Simulate one agent turn: update hook then drain
+    mon.on_hypothesis_update(h_id)
+    mon.drain()
+
+    # Streak should be 1 (only drain counted), not 2
+    key = ("EVIDENCE_DELEGATION_EXISTS", h_id)
+    assert mon._error_streak.get(key, 0) == 1, (
+        f"Streak should be 1 after one turn, got "
+        f"{mon._error_streak.get(key, 0)}")
+    assert mon.escalation_due() is None, (
+        "No escalation expected after only 1 drain (streak==1)"
+    )
+
+
 def test_error_streak_escalates(tmp_path):
     ledger, dlog, mon, _ = make_world(tmp_path)
     h_id = propose(ledger)
@@ -437,3 +501,42 @@ def test_error_streak_escalates(tmp_path):
         "escalation_due() should fire after 2 consecutive error violations")
     assert h_id in esc, (
         f"Expected {h_id} in escalation list, got: {esc}")
+
+
+# ---------------------------------------------------------------------------
+# Test 17: POSTERIOR_INERTIA boundary — delta 0.049 fires, delta 0.06 does not
+# ---------------------------------------------------------------------------
+
+def test_posterior_inertia_boundary(tmp_path):
+    """Epsilon boundary: |delta| < 0.05 fires; |delta| >= 0.05 does not.
+
+    World A: prior=0.5, close at 0.54 → delta=0.04 < 0.05 → fires.
+    World B: prior=0.5, close at 0.56 → delta=0.06 >= 0.05 → silent.
+    """
+    # World A: delta = 0.04 — should fire POSTERIOR_INERTIA
+    ledger_a, dlog_a, mon_a, _ = make_world(tmp_path / "a")
+    h_a = propose(ledger_a)   # prior=0.5
+    record_done(dlog_a, "D001", [h_a], REPORT)
+    ledger_a.update(
+        h_a, "SUPPORTED", "barely moved",
+        evidence={"delegation": "D001", "numbers": {"best_y": 1.47}},
+        posterior=0.54, triggered_by=None)
+    violations_a = mon_a.evaluate()
+    rules_a = {v.rule for v in violations_a}
+    assert "POSTERIOR_INERTIA" in rules_a, (
+        f"Expected POSTERIOR_INERTIA for delta=0.04 (0.5→0.54), "
+        f"got: {rules_a}")
+
+    # World B: delta = 0.06 — should NOT fire POSTERIOR_INERTIA
+    ledger_b, dlog_b, mon_b, _ = make_world(tmp_path / "b")
+    h_b = propose(ledger_b)   # prior=0.5
+    record_done(dlog_b, "D001", [h_b], REPORT)
+    ledger_b.update(
+        h_b, "SUPPORTED", "meaningful jump",
+        evidence={"delegation": "D001", "numbers": {"best_y": 1.47}},
+        posterior=0.56, triggered_by=None)
+    violations_b = mon_b.evaluate()
+    rules_b = {v.rule for v in violations_b}
+    assert "POSTERIOR_INERTIA" not in rules_b, (
+        f"No POSTERIOR_INERTIA expected for delta=0.06 (0.5→0.56), "
+        f"got: {rules_b}")
