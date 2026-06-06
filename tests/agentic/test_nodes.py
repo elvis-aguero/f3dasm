@@ -2709,3 +2709,176 @@ def test_escalation_invokes_critic_and_injects_findings(tmp_path):
     assert escalated_calls, (
         "note_escalated() was never called — escalation not acknowledged"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 4.3: Done() critic gate embeds ledger + falsification flags
+# ---------------------------------------------------------------------------
+
+
+def _spec_with_critic_and_deliverable():
+    """Three-node graph where strategizer has WriteDeliverable + Done."""
+
+    class S(Agent):
+        role = "strategizer"
+        tools = frozenset(
+            {"Done", "FollowUp", "WriteNote", "ReadNote", "WriteDeliverable"}
+        )
+        description = "Test strategizer."
+
+    class W(Agent):
+        description = "Test implementer."
+
+    class C(Agent):
+        role = "critic"
+        description = "Test adversarial critic."
+
+    return Graph(
+        nodes={"strategizer": S(), "implementer": W(), "critic": C()},
+        edges=(
+            Edge("strategizer", "implementer"),
+            Edge("strategizer", "critic"),
+        ),
+        entry="strategizer",
+    )
+
+
+def test_done_critic_gate_embeds_ledger_and_falsification_flags(tmp_path):
+    """Done() critic gate message embeds hypothesis ledger and delegation flags.
+
+    Flow:
+    1. Strategizer proposes H1 with statement "Claim below 1.0".
+    2. Delegates with wait=True and is_falsification_attempt=True.
+       Worker returns a report with best_y: 1.47.
+    3. Updates H1 to SUPPORTED with evidence citing that delegation,
+       posterior=0.9.
+    4. Writes replicate.py via WriteDeliverable (required deliverable).
+    5. Calls Done() twice (two-shot).
+
+    The critic StubAdapter captures the task_msg it receives.
+    Assert captured message contains:
+    (a) the literal statement "Claim below 1.0"
+    (b) the substring "is_falsification_attempt"
+    (c) the substring "falsification_criterion"
+    """
+    from f3dasm._src.agentic.delegation_log import DelegationLog
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    captured_critic_messages: list[str] = []
+
+    class CapturingCriticAdapter(StubAdapter):
+        """Captures the task message and returns a PASS verdict."""
+
+        def invoke(self, messages: list) -> str:
+            for msg in messages:
+                if isinstance(msg, dict):
+                    captured_critic_messages.append(msg.get("content", ""))
+                else:
+                    captured_critic_messages.append(str(msg))
+            return "### Verdict\nPASS"
+
+        def copy(self):
+            fresh = CapturingCriticAdapter()
+            fresh.closure_tools = dict(self.closure_tools)
+            return fresh
+
+    _WORKER_REPORT = (
+        "## Report\n"
+        "### Actions taken\n- ran falsification sweep\n"
+        "### Files touched\n- results.csv\n"
+        "### Conclusions\nbest_y was 1.47, above 1.0 threshold\n"
+        "### Numbers\nbest_y: 1.47"
+    )
+
+    class FalsificationWorkerAdapter(StubAdapter):
+        def invoke(self, messages):
+            return _WORKER_REPORT
+
+        def copy(self):
+            fresh = FalsificationWorkerAdapter()
+            fresh.closure_tools = dict(self.closure_tools)
+            return fresh
+
+    study_dir = tmp_path / "study"
+    study_dir.mkdir()
+    notes_dir = tmp_path / "debug" / "strategizer_notes"
+    notes_dir.mkdir(parents=True)
+
+    jsonl_path = tmp_path / "delegation_log.jsonl"
+    delegation_log = DelegationLog(jsonl_path)
+
+    class FullFlowAdapter(StubAdapter):
+        def invoke(self, messages):
+            # 1. Propose H1
+            self.closure_tools["HypothesisPropose"](
+                statement="Claim below 1.0",
+                falsification_criterion=(
+                    "any run with best_y >= 1.0 falsifies this"
+                ),
+                prediction="best_y will stay below 1.0",
+                prior=0.5,
+            )
+            # 2. Delegate with is_falsification_attempt=True, wait=True
+            self.closure_tools["Delegate"](
+                target="implementer",
+                intent="Run falsification sweep on Ackley 8D.",
+                expected_report="Report best_y.",
+                hypothesis_ids=["H1"],
+                is_falsification_attempt=True,
+                wait=True,
+            )
+            # 3. Update H1 to SUPPORTED
+            self.closure_tools["HypothesisUpdate"](
+                hypothesis_id="H1",
+                status="SUPPORTED",
+                comment="best_y=1.47 consistent with claim",
+                posterior=0.9,
+                evidence={
+                    "delegation": "D001",
+                    "numbers": {"best_y": 1.47},
+                },
+            )
+            # 4. Write required deliverable
+            self.closure_tools["WriteDeliverable"](
+                "replicate.py", "# replicate\nprint('done')"
+            )
+            # 5. Two-shot Done()
+            self.closure_tools["Done"](summary="H1 is supported; below 1.0.")
+            self.closure_tools["Done"](summary="H1 is supported; below 1.0.")
+            return "Done."
+
+    adapter = FullFlowAdapter()
+    spec = _spec_with_critic_and_deliverable()
+    node = StrategizerNode(
+        adapter,
+        name="strategizer",
+        outgoing=["implementer", "critic"],
+        spec=spec,
+        worker_adapters={
+            "implementer": FalsificationWorkerAdapter(),
+            "critic": CapturingCriticAdapter(),
+        },
+        notes_dir=notes_dir,
+        study_dir=str(study_dir),
+        delegation_log=delegation_log,
+    )
+    node._current_notes_dir = notes_dir
+    node(make_state(study_dir=str(study_dir)))
+
+    assert captured_critic_messages, (
+        "Critic adapter was never invoked — Done() gate did not reach critic"
+    )
+    full_msg = "\n".join(captured_critic_messages)
+
+    # (a) Ledger dump embeds the hypothesis statement
+    assert "Claim below 1.0" in full_msg, (
+        f"Expected hypothesis statement in critic message; got:\n{full_msg}"
+    )
+    # (b) Delegation flags embed is_falsification_attempt
+    assert "is_falsification_attempt" in full_msg, (
+        f"Expected 'is_falsification_attempt' in critic message; got:\n{full_msg}"
+    )
+    # (c) Adequacy instruction references falsification_criterion
+    assert "falsification_criterion" in full_msg, (
+        f"Expected 'falsification_criterion' in critic message; got:\n{full_msg}"
+    )

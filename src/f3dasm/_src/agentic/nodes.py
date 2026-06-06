@@ -274,15 +274,22 @@ class StrategizerNode(AgentNode):
                 text += drift
         if self._science_monitor is not None:
             offenders = self._science_monitor.escalation_due()
-            if offenders and self._find_critic_name() is not None:
+            _critic_name = self._find_critic_name()
+            if offenders and _critic_name is not None:
                 task_msg = self._build_feedback_task_msg(offenders)
                 findings = self._invoke_critic(task_msg)
                 self._science_monitor.note_escalated()
                 if self._delegation_log is not None:
+                    _fb_id = (
+                        "FB"
+                        + datetime.now(
+                            tz=timezone.utc
+                        ).strftime("%H%M%S")
+                    )
                     self._delegation_log.record(
-                        id=f"FB{datetime.now(tz=timezone.utc).strftime('%H%M%S')}",
+                        id=_fb_id,
                         from_node=self._name,
-                        to_node=self._find_critic_name() or "",
+                        to_node=_critic_name,
                         task="ScienceMonitor escalation audit",
                         deliverable=findings,
                         hypothesis_ids=offenders,
@@ -870,7 +877,8 @@ class StrategizerNode(AgentNode):
                     f"debug_dir             = {_debug_dir}\n"
                     "delegation_log        = "
                     f"{_debug_dir}/delegation_log.jsonl\n"
-                    f"diagnostics           = {_debug_dir}/diagnostics.jsonl\n"
+                    f"diagnostics           = "
+                    f"{_debug_dir}/diagnostics.jsonl\n"
                     f"strategizer_notes     = {notes_path}\n"
                     "delegations_workspace = "
                     f"{_debug_dir}/delegations/\n"
@@ -878,6 +886,37 @@ class StrategizerNode(AgentNode):
                     f"{_study_dir}/solution.md\n"
                     "</paths>\n\n"
                     f"Proposed conclusion: {summary[:500]}"
+                )
+                import json as _json
+                ledger_dump = "(no hypotheses)"
+                if node._ledger is not None:
+                    ledger_dump = _json.dumps(
+                        {
+                            h["id"]: node._ledger.get(h["id"])
+                            for h in node._ledger.list_all()
+                        },
+                        indent=2,
+                    )
+                attempts: list[str] = []
+                if node._delegation_log is not None:
+                    attempts = [
+                        f"{r['id']}: "
+                        f"hypotheses={r.get('hypothesis_ids')} "
+                        f"is_falsification_attempt="
+                        f"{r.get('is_falsification_attempt', False)}"
+                        for r in node._delegation_log.query_all()
+                    ]
+                task_msg += (
+                    "\n\n<hypothesis_ledger>\n" + ledger_dump
+                    + "\n</hypothesis_ledger>\n\n"
+                    "<delegation_flags>\n"
+                    + "\n".join(attempts)
+                    + "\n</delegation_flags>\n\n"
+                    "For each hypothesis, judge whether its stated "
+                    "falsification_criterion was actually tested by "
+                    "a delegation flagged is_falsification_attempt "
+                    "— adequacy of the test, not mere presence of "
+                    "the flag."
                 )
                 critique_text = node._invoke_critic(task_msg)
 
