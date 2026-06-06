@@ -1,11 +1,15 @@
-"""LiteratureReviewAgent — specialist for searching scientific literature."""
+"""LiteratureReviewAgent — specialist for scientific literature."""
 
 from __future__ import annotations
 
+import logging
+
 from ..backends.base import Agent
 
-# Module-level constant kept for backward compatibility with agent_prompts.py
-# re-export.  The class sets system_prompt directly from this string.
+log = logging.getLogger(__name__)
+
+# Module-level constant kept for backward compatibility with
+# agent_prompts.py re-export.
 LITERATURE_REVIEW_SYSTEM_PROMPT = """\
 <role>
 You are the Literature Reviewer. You answer specific research questions
@@ -15,17 +19,37 @@ NEVER cite memory — corpus quotes only. Format: > "..." — Author et al., Yea
 If the corpus does not contain evidence, write: "Not found in corpus."
 </role>
 
+<primary_source_rule>
+Quote ONLY from full-text papers. Abstract-only corpus entries are
+leads, not sources — CorpusSearch will not return their text.
+
+Acquisition chain:
+1. Search (mcp__arxiv__search_papers / search_semantic_scholar /
+   search_openalex) — note pdf_url fields in results.
+2. Download PDF via DownloadPdf(url, filename) or
+   mcp__arxiv__download_paper — saves the file locally.
+3. CorpusAdd(source=<saved path>, ...) — indexes the full text.
+4. CorpusSearch() — now returns real passages to quote.
+
+Until a paper has been CorpusAdded from a PDF or full-text markdown
+(>5000 chars), do not quote from it.
+</primary_source_rule>
+
 <corpus_tools>
   CorpusAdd(source, title, authors, year, doi, arxiv_id, citation_count=0)
                                   — index a LOCAL file. citation_count boosts
                                     BM25 retrieval weight: log10(c+1) scaling.
                                     Pass citationCount from S2 or OpenAlex.
-  CorpusSearch(query, top_k=10)   — passage search across all indexed papers
+  CorpusSearch(query, top_k=10)   — passage search across FULL-TEXT papers only.
+                                    Returns ERROR if no full-text papers exist.
   CorpusRank(passages, question)  — re-rank CorpusSearch results by BM25
                                     relevance. Use when merging results from
                                     multiple CorpusSearch calls.
   CorpusGetPaper(paper_id)        — full extracted text of one paper
-  CorpusList()                    — metadata table of all corpus papers
+  CorpusList()                    — metadata table; [full-text]/[abstract-only]
+  DownloadPdf(url, filename)      — rate-limited fetch of a PDF URL to disk;
+                                    returns local path or ERROR.
+                                    Validates content-type/magic bytes.
 
   Corpus location: debug/lit_reviewer_notes/
     corpus.csv             — metadata index
@@ -40,37 +64,40 @@ If the corpus does not contain evidence, write: "Not found in corpus."
   mcp__arxiv__read_paper(paper_id)
                                   — extract text directly (no PDF needed)
   search_semantic_scholar(query, num_results=10)
-                                  — search Semantic Scholar (200M+ papers across all disciplines)
+                                  — search Semantic Scholar (200M+ papers)
   get_semantic_scholar_paper_details(paper_id)
                                   — citation count, influential citations, venue, TLDR
   get_semantic_scholar_citations_and_references(paper_id)
-                                  — forward + backward citation traversal (≤20 each)
+                                  — forward + backward citation traversal (≤20)
   search_openalex(query, n_results=10)
-                                  — 300M+ works; strong for non-arXiv engineering
+                                  — 300M+ works; returns pdf_url (best_oa_location)
+                                    for open-access works. Strong for non-arXiv
                                     journals (JMPS, CMAME, Acta Materialia).
-                                    Returns pdf_url for open-access works.
   get_semantic_scholar_recommendations(paper_id, n_results=10)
                                   — semantically similar papers without citation
-                                    links. Complements citation traversal.
+                                    links.
   get_semantic_scholar_author_details(author_id)
   Read(path)                      — read any local file
   Grep(pattern, path)             — search text in files
 </discovery_tools>
 
 <workflow>
-1. Expand queries: restate the question as 3-5 domain-specific keywords
-   (e.g. "critical buckling stress" → "buckling instability slender rod elastic").
-   Search mcp__arxiv__search_papers, search_semantic_scholar, AND search_openalex.
-   Use get_semantic_scholar_recommendations(paper_id) on any seed paper found.
-2. For each relevant paper, get its text via ONE of:
-   a) mcp__arxiv__read_paper(paper_id) → write to {delegation_id}/{paper_id}.md, then
-      CorpusAdd(source="{delegation_id}/{paper_id}.md", arxiv_id=paper_id, title=..., ...)
-   b) mcp__arxiv__download_paper(paper_id, dir="{delegation_id}/") → then
-      CorpusAdd(source="{delegation_id}/{paper_id}.pdf", arxiv_id=paper_id, title=..., ...)
-3. CorpusSearch() for passages. Call with multiple phrasings. CorpusRank() to
-   merge and reorder results from different queries before quoting.
+1. Expand queries: restate the question as 3-5 domain-specific keywords.
+   Search mcp__arxiv__search_papers, search_semantic_scholar, AND
+   search_openalex. Note pdf_url in results.
+2. For each relevant paper, acquire full text via ONE of:
+   a) mcp__arxiv__read_paper(paper_id) → write to {delegation_id}/{paper_id}.md
+      (only if result is >5000 chars), then CorpusAdd(source=…)
+   b) pdf_url from search_openalex / get_semantic_scholar_paper_details →
+      DownloadPdf(url, "{delegation_id}/{paper_id}.pdf") →
+      CorpusAdd(source=<path>, arxiv_id=…, title=…, …)
+   c) mcp__arxiv__download_paper(paper_id, dir="{delegation_id}/") →
+      CorpusAdd(source=…)
+3. CorpusSearch() for passages. Call with multiple phrasings.
+   CorpusRank() to merge and reorder results before quoting.
 4. Quote verbatim; don't paraphrase.
-5. If no passage answers a question, say "Not found in corpus." and list queries tried.
+5. If no passage answers a question, say "Not found in corpus." and
+   list queries tried.
 </workflow>
 
 <operating_principles>
@@ -78,12 +105,17 @@ If the corpus does not contain evidence, write: "Not found in corpus."
    Cite every quote: Author et al., Year, p. X
 
 2. CITATION REQUIRED
-   Every factual claim in ### Key findings and ### Conclusions needs a corpus citation.
+   Every factual claim in Key findings and Conclusions needs a citation.
    Never cite a paper you have not added to the corpus and read.
 
 3. CORPUS FIRST: Try multiple phrasings before concluding "not found".
 
-4. NO MEMORY SYNTHESIS: Don't fill gaps with background knowledge. "Not found in corpus." is valid.
+4. NO MEMORY SYNTHESIS: Don't fill gaps with background knowledge.
+   "Not found in corpus." is valid.
+
+5. RATE LIMIT HANDLING: If a tool returns ERROR containing
+   "rate-limited", switch to a different source (e.g. arXiv instead of
+   Semantic Scholar) or wait before retrying.
 </operating_principles>
 
 <output_format>
@@ -111,22 +143,23 @@ quotes_used: Q
 
 
 class LiteratureReviewAgent(Agent):
-    """Literature reviewer: answers epistemic questions from a primary-source corpus.
+    """Literature reviewer: answers epistemic questions from a corpus.
 
-    Owns debug/lit_reviewer_notes/corpus.csv and debug/lit_reviewer_notes/papers/.
-    Never answers from memory — all claims must cite exact passages from corpus.
-    inject_problem_statement=True ensures the research domain is always visible.
+    Owns debug/lit_reviewer_notes/corpus.csv and papers/.
+    Never answers from memory — all claims must cite exact passages.
+    inject_problem_statement=True ensures research domain is visible.
     """
 
     inject_problem_statement = True
     tools = frozenset({"Read", "Grep", "Glob"})
     reset_on_checkpoint = True
     description = (
-        "Searches and synthesises primary scientific literature to answer "
-        "epistemic questions: what methods exist, what has been tried, what "
-        "the field recommends. Use before committing to a strategy you are "
-        "uncertain about, or when you need to know the state of the art. "
-        "Never for questions answerable from workspace data."
+        "Searches and synthesises primary scientific literature to"
+        " answer epistemic questions: what methods exist, what has"
+        " been tried, what the field recommends. Use before committing"
+        " to a strategy you are uncertain about, or when you need to"
+        " know the state of the art. Never for questions answerable"
+        " from workspace data."
     )
     report_sections = (
         "### Papers reviewed",
@@ -139,47 +172,69 @@ class LiteratureReviewAgent(Agent):
 
     system_prompt = LITERATURE_REVIEW_SYSTEM_PROMPT
 
-    def build_closure_tools(self, study_dir, delegation_id=None, lit_reviewer_notes_dir=None):
-        """Inject corpus + Semantic Scholar tools as runtime closures."""
+    def build_closure_tools(
+        self,
+        study_dir,
+        delegation_id=None,
+        lit_reviewer_notes_dir=None,
+    ):
+        """Inject corpus + discovery tools as runtime closures."""
         import json as _json
         from pathlib import Path as _Path
+
         try:
             from ..literature_corpus import LiteratureCorpus
-            from ..literature_corpus import _robust_get, _robust_post
+            from ..literature_corpus import (
+                SourceCooldownError,
+                _robust_get,
+                _robust_post,
+            )
         except ImportError:
             return {}
 
         corpus_dir = (
             _Path(lit_reviewer_notes_dir)
             if lit_reviewer_notes_dir is not None
-            else _Path(study_dir) / "delegations" / "literature"  # fallback for tests
+            else _Path(study_dir) / "delegations" / "literature"
         )
         corpus = LiteratureCorpus(corpus_dir)
+        cache_dir = corpus._http_cache_dir
 
         tools = {
-            "CorpusAdd": lambda source, title="", authors="", year="", doi="", arxiv_id="", venue="", abstract="", citation_count=0: corpus.add(
-                source, title=title, authors=authors, year=year, doi=doi,
-                arxiv_id=arxiv_id, venue=venue, abstract=abstract,
+            "CorpusAdd": lambda source, title="", authors="",
+            year="", doi="", arxiv_id="", venue="", abstract="",
+            citation_count=0: corpus.add(
+                source, title=title, authors=authors, year=year,
+                doi=doi, arxiv_id=arxiv_id, venue=venue,
+                abstract=abstract,
                 citation_count=int(citation_count or 0),
             ),
-            "CorpusSearch": lambda query, top_k=10: corpus.search(query, int(top_k)),
-            "CorpusGetPaper": lambda paper_id: corpus.get_paper(paper_id),
+            "CorpusSearch": lambda query, top_k=10: corpus.search(
+                query, int(top_k)
+            ),
+            "CorpusGetPaper": lambda paper_id: corpus.get_paper(
+                paper_id
+            ),
             "CorpusList": lambda: corpus.list_papers(),
         }
 
-        # Semantic Scholar tools via the semanticscholar Python library.
-        # Mirrors the four tools from JackKuo666/semanticscholar-mcp-server
-        # without needing an external process.
+        # Semantic Scholar tools via the semanticscholar library.
         try:
             from semanticscholar import SemanticScholar as _SS
             _sch = _SS()
 
-            def search_semantic_scholar(query: str, num_results: int = 10) -> str:
+            def search_semantic_scholar(
+                query: str, num_results: int = 10
+            ) -> str:
                 """Search for papers on Semantic Scholar."""
-                results = _sch.search_paper(query, limit=int(num_results),
-                                             fields=["title", "authors", "year",
-                                                     "abstract", "externalIds",
-                                                     "venue", "citationCount"])
+                results = _sch.search_paper(
+                    query,
+                    limit=int(num_results),
+                    fields=[
+                        "title", "authors", "year", "abstract",
+                        "externalIds", "venue", "citationCount",
+                    ],
+                )
                 papers = []
                 for p in results:
                     papers.append({
@@ -188,38 +243,55 @@ class LiteratureReviewAgent(Agent):
                         "year": p.year,
                         "venue": p.venue,
                         "citationCount": p.citationCount,
-                        "authors": [a["name"] for a in (p.authors or [])],
+                        "authors": [
+                            a["name"] for a in (p.authors or [])
+                        ],
                         "abstract": (p.abstract or "")[:300],
                         "externalIds": p.externalIds or {},
                     })
                 return _json.dumps(papers, indent=2)
 
-            def get_semantic_scholar_paper_details(paper_id: str) -> str:
-                """Get details for a paper by its S2, DOI, or arxiv ID."""
-                paper = _sch.get_paper(paper_id,
-                                       fields=["title", "authors", "year", "abstract",
-                                               "venue", "citationCount",
-                                               "influentialCitationCount",
-                                               "tldr", "externalIds"])
+            def get_semantic_scholar_paper_details(
+                paper_id: str,
+            ) -> str:
+                """Get details for a paper by S2/DOI/arxiv ID."""
+                paper = _sch.get_paper(
+                    paper_id,
+                    fields=[
+                        "title", "authors", "year", "abstract",
+                        "venue", "citationCount",
+                        "influentialCitationCount",
+                        "tldr", "externalIds",
+                    ],
+                )
                 return _json.dumps({
                     "paperId": paper.paperId,
                     "title": paper.title,
                     "year": paper.year,
                     "venue": paper.venue,
                     "citationCount": paper.citationCount,
-                    "influentialCitationCount": paper.influentialCitationCount,
+                    "influentialCitationCount": (
+                        paper.influentialCitationCount
+                    ),
                     "tldr": (paper.tldr or {}).get("text"),
-                    "authors": [a["name"] for a in (paper.authors or [])],
+                    "authors": [
+                        a["name"] for a in (paper.authors or [])
+                    ],
                     "abstract": paper.abstract,
                     "externalIds": paper.externalIds or {},
                 }, indent=2)
 
-            def get_semantic_scholar_author_details(author_id: str) -> str:
+            def get_semantic_scholar_author_details(
+                author_id: str,
+            ) -> str:
                 """Get details for an author by their S2 author ID."""
-                author = _sch.get_author(author_id,
-                                         fields=["name", "affiliations",
-                                                 "paperCount", "citationCount",
-                                                 "hIndex"])
+                author = _sch.get_author(
+                    author_id,
+                    fields=[
+                        "name", "affiliations", "paperCount",
+                        "citationCount", "hIndex",
+                    ],
+                )
                 return _json.dumps({
                     "authorId": author.authorId,
                     "name": author.name,
@@ -229,29 +301,58 @@ class LiteratureReviewAgent(Agent):
                     "hIndex": author.hIndex,
                 }, indent=2)
 
-            def get_semantic_scholar_citations_and_references(paper_id: str) -> str:
-                """Get citing papers and references for a paper (up to 20 each)."""
-                paper = _sch.get_paper(paper_id, fields=["citations", "references"])
-                refs = [{"paperId": r.get("paperId"), "title": r.get("title")}
-                        for r in (paper.references or [])[:20]]
-                cits = [{"paperId": c.get("paperId"), "title": c.get("title")}
-                        for c in (paper.citations or [])[:20]]
-                return _json.dumps({"references": refs, "citations": cits}, indent=2)
+            def get_semantic_scholar_citations_and_references(
+                paper_id: str,
+            ) -> str:
+                """Get citing papers and references (≤20 each)."""
+                paper = _sch.get_paper(
+                    paper_id,
+                    fields=["citations", "references"],
+                )
+                refs = [
+                    {
+                        "paperId": r.get("paperId"),
+                        "title": r.get("title"),
+                    }
+                    for r in (paper.references or [])[:20]
+                ]
+                cits = [
+                    {
+                        "paperId": c.get("paperId"),
+                        "title": c.get("title"),
+                    }
+                    for c in (paper.citations or [])[:20]
+                ]
+                return _json.dumps(
+                    {"references": refs, "citations": cits}, indent=2
+                )
 
             tools.update({
                 "search_semantic_scholar": search_semantic_scholar,
-                "get_semantic_scholar_paper_details": get_semantic_scholar_paper_details,
-                "get_semantic_scholar_author_details": get_semantic_scholar_author_details,
-                "get_semantic_scholar_citations_and_references": get_semantic_scholar_citations_and_references,
+                "get_semantic_scholar_paper_details": (
+                    get_semantic_scholar_paper_details
+                ),
+                "get_semantic_scholar_author_details": (
+                    get_semantic_scholar_author_details
+                ),
+                "get_semantic_scholar_citations_and_references": (
+                    get_semantic_scholar_citations_and_references
+                ),
             })
         except ImportError:
-            pass  # semanticscholar not installed; SS tools unavailable
+            log.warning(
+                "semanticscholar not installed — S2 tools not"
+                " registered for literature_reviewer"
+            )
 
-        def search_openalex(query: str, n_results: int = 10) -> str:
-            """Search OpenAlex (300M+ works; strong coverage of closed-venue engineering journals).
+        def search_openalex(
+            query: str, n_results: int = 10
+        ) -> str:
+            """Search OpenAlex (300M+ works; open-access PDF URLs).
 
-            Returns papers with metadata and open-access PDF URLs where available.
-            Prefer this for papers NOT on arXiv (JMPS, CMAME, Acta Materialia, etc.).
+            Returns papers with metadata and open-access PDF URLs
+            where available (best_oa_location.pdf_url / oa_url).
+            Prefer for papers NOT on arXiv.
             """
             import json as _j
             try:
@@ -260,12 +361,24 @@ class LiteratureReviewAgent(Agent):
                     params={
                         "search": query,
                         "per-page": min(int(n_results), 25),
-                        "select": "id,title,authorships,publication_year,doi,"
-                                  "primary_location,abstract_inverted_index",
+                        "select": (
+                            "id,title,authorships,publication_year"
+                            ",doi,primary_location,open_access"
+                            ",best_oa_location"
+                            ",abstract_inverted_index"
+                        ),
                     },
-                    headers={"User-Agent": "f3dasm-agent/1.0 (mailto:f3dasm@brown.edu)"},
+                    headers={
+                        "User-Agent": (
+                            "f3dasm-agent/1.0"
+                            " (mailto:f3dasm@brown.edu)"
+                        ),
+                    },
+                    cache_dir=cache_dir,
                 )
                 works = resp.json().get("results", [])
+            except SourceCooldownError as exc:
+                return f"ERROR: {exc}"
             except Exception as exc:
                 return f"ERROR: OpenAlex search failed: {exc}"
 
@@ -275,16 +388,33 @@ class LiteratureReviewAgent(Agent):
                     a["author"]["display_name"]
                     for a in (w.get("authorships") or [])[:3]
                 )
-                doi = (w.get("doi") or "").replace("https://doi.org/", "")
+                doi = (w.get("doi") or "").replace(
+                    "https://doi.org/", ""
+                )
+                # Best OA location first, then primary_location
+                boa = w.get("best_oa_location") or {}
                 loc = w.get("primary_location") or {}
-                pdf_url = loc.get("pdf_url") or loc.get("landing_page_url") or ""
+                oa = w.get("open_access") or {}
+                pdf_url = (
+                    boa.get("pdf_url")
+                    or oa.get("oa_url")
+                    or loc.get("pdf_url")
+                    or loc.get("landing_page_url")
+                    or ""
+                )
                 # reconstruct abstract from inverted index
                 inv = w.get("abstract_inverted_index") or {}
                 abstract = ""
                 if inv:
-                    pairs = [(pos, word) for word, positions in inv.items() for pos in positions]
+                    pairs = [
+                        (pos, word)
+                        for word, positions in inv.items()
+                        for pos in positions
+                    ]
                     pairs.sort()
-                    abstract = " ".join(word for _, word in pairs)[:400]
+                    abstract = " ".join(
+                        word for _, word in pairs
+                    )[:400]
                 out.append({
                     "id": w.get("id", ""),
                     "title": w.get("title", ""),
@@ -296,24 +426,30 @@ class LiteratureReviewAgent(Agent):
                 })
             return _j.dumps(out, indent=2)
 
-        def get_semantic_scholar_recommendations(paper_id: str, n_results: int = 10) -> str:
-            """Find papers semantically similar to paper_id (no citation link needed).
+        def get_semantic_scholar_recommendations(
+            paper_id: str, n_results: int = 10
+        ) -> str:
+            """Find semantically similar papers (no citation link).
 
-            Complements citation traversal — surfaces related work that doesn't
-            cite or get cited by the seed paper.
             paper_id: S2 paperId, DOI, or 'arXiv:XXXX.XXXXX'.
             """
             import json as _j
             try:
                 resp = _robust_post(
-                    "https://api.semanticscholar.org/recommendations/v1/papers/",
+                    "https://api.semanticscholar.org"
+                    "/recommendations/v1/papers/",
                     json={"positivePaperIds": [paper_id]},
                     params={
-                        "fields": "paperId,title,authors,year,abstract,externalIds,openAccessPdf",
+                        "fields": (
+                            "paperId,title,authors,year,abstract"
+                            ",externalIds,openAccessPdf"
+                        ),
                         "limit": min(int(n_results), 50),
                     },
                 )
                 papers = resp.json().get("recommendedPapers", [])
+            except SourceCooldownError as exc:
+                return f"ERROR: {exc}"
             except Exception as exc:
                 return f"ERROR: S2 recommendations failed: {exc}"
 
@@ -324,7 +460,10 @@ class LiteratureReviewAgent(Agent):
                     "paperId": p.get("paperId", ""),
                     "title": p.get("title", ""),
                     "year": p.get("year", ""),
-                    "authors": [a["name"] for a in (p.get("authors") or [])[:3]],
+                    "authors": [
+                        a["name"]
+                        for a in (p.get("authors") or [])[:3]
+                    ],
                     "abstract": (p.get("abstract") or "")[:300],
                     "externalIds": p.get("externalIds") or {},
                     "pdf_url": oa.get("url", ""),
@@ -332,11 +471,10 @@ class LiteratureReviewAgent(Agent):
             return _j.dumps(out, indent=2)
 
         def CorpusRank(passages: str, question: str) -> str:
-            """Re-rank a newline-separated list of corpus passages by BM25 relevance to question.
+            """Re-rank corpus passages by BM25 relevance to question.
 
-            Pass the raw output of CorpusSearch as `passages`.
-            Returns the same passages reordered from most to least relevant.
-            Useful when combining results from multiple CorpusSearch calls.
+            Pass the raw output of CorpusSearch as ``passages``.
+            Returns passages reordered from most to least relevant.
             """
             if not passages or passages == "No results found.":
                 return passages
@@ -346,9 +484,11 @@ class LiteratureReviewAgent(Agent):
             except ImportError:
                 return passages  # no-op if not installed
 
-            # Split on passage separators (--- Title (Year), p.N ---)
             import re as _re
-            blocks = _re.split(r"(?=--- .+ \(\d*\), p\.\d+ ---)", passages.strip())
+            blocks = _re.split(
+                r"(?=--- .+ \(\d*\), p\.\d+ ---)",
+                passages.strip(),
+            )
             blocks = [b.strip() for b in blocks if b.strip()]
             if len(blocks) <= 1:
                 return passages
@@ -356,14 +496,78 @@ class LiteratureReviewAgent(Agent):
             tokenized = [b.lower().split() for b in blocks]
             bm25 = BM25Okapi(tokenized)
             scores = bm25.get_scores(question.lower().split())
-            ranked = sorted(zip(blocks, scores), key=lambda x: x[1], reverse=True)
+            ranked = sorted(
+                zip(blocks, scores),
+                key=lambda x: x[1],
+                reverse=True,
+            )
             return "\n\n".join(b for b, _ in ranked)
 
-        tools["search_openalex"] = search_openalex
-        tools["get_semantic_scholar_recommendations"] = get_semantic_scholar_recommendations
-        tools["CorpusRank"] = CorpusRank
+        def DownloadPdf(url: str, filename: str) -> str:
+            """Fetch a PDF URL and save to disk.
 
-        # arxiv tools — Python-native, same implementation for Claude and Ollama.
+            Parameters
+            ----------
+            url:
+                Direct URL to the PDF (content-type must contain
+                'pdf' or body must start with ``%PDF``).
+            filename:
+                Destination filename.  If not absolute, saved under
+                the corpus papers directory.
+
+            Returns
+            -------
+            str
+                Absolute path to the saved file, or ``"ERROR: …"``.
+            """
+            from pathlib import Path as _Path
+            try:
+                resp = _robust_get(
+                    url,
+                    cache_dir=cache_dir,
+                    headers={
+                        "User-Agent": (
+                            "f3dasm-agent/1.0"
+                            " (mailto:f3dasm@brown.edu)"
+                        ),
+                    },
+                )
+            except SourceCooldownError as exc:
+                return f"ERROR: {exc}"
+            except Exception as exc:
+                return f"ERROR: DownloadPdf fetch failed: {exc}"
+
+            # Validate content
+            ct = ""
+            if hasattr(resp, "headers"):
+                ct = resp.headers.get("Content-Type", "")
+            elif hasattr(resp, "_content_type"):
+                ct = resp._content_type
+            body = resp.content
+            if "pdf" not in ct.lower() and not body.startswith(
+                b"%PDF"
+            ):
+                return (
+                    "ERROR: not a PDF — content-type is"
+                    f" {ct!r} and body does not start with %PDF."
+                    " Check the URL."
+                )
+
+            dest = _Path(filename)
+            if not dest.is_absolute():
+                dest = corpus._papers_dir / filename
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(body)
+            return str(dest)
+
+        tools["search_openalex"] = search_openalex
+        tools["get_semantic_scholar_recommendations"] = (
+            get_semantic_scholar_recommendations
+        )
+        tools["CorpusRank"] = CorpusRank
+        tools["DownloadPdf"] = DownloadPdf
+
+        # arxiv tools — Python-native, same for Claude and Ollama.
         from ..backends.ollama import _build_arxiv_closures
         tools.update(_build_arxiv_closures())
 

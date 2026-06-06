@@ -74,6 +74,10 @@ docs = [
 figures = [
   "matplotlib>=3.7.5"
 ]
+lit = [
+  "fastembed>=0.3.0",
+  "semanticscholar>=0.8.0"
+]
 scipy = [
   "scipy>=1.10.1"
 ]
