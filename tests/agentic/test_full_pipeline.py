@@ -37,7 +37,7 @@ def _make_study(tmp_path: Path) -> Path:
 class _StrategistSpec(Agent):
     role = "strategizer"
     description = "Test strategizer."
-    tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote"})
+    tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote", "WriteDeliverable"})
 
 
 class _WorkerSpec(Agent):

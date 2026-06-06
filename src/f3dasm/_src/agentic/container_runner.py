@@ -85,12 +85,21 @@ class ContainerRunner:
             if sys.platform.startswith("linux"):
                 cmd += ["--add-host", "host.docker.internal:host-gateway"]
 
-        cmd.append(self.image)
-        cmd.append(_CONTAINER_STUDY_DIR)
-        if self.model:
-            cmd += ["--model", self.model]
-        if self.budget is not None:
-            cmd += ["--budget", str(self.budget)]
+        # If the study ships its own run.py, execute it directly — it defines
+        # the graph topology.  Otherwise fall back to the default entrypoint.
+        run_py = self.study_dir / "run.py"
+        if run_py.exists():
+            cmd += ["-e", "PYTHONUNBUFFERED=1",
+                    "--entrypoint", "python",
+                    self.image,
+                    f"{_CONTAINER_STUDY_DIR}/run.py"]
+        else:
+            cmd.append(self.image)
+            cmd.append(_CONTAINER_STUDY_DIR)
+            if self.model:
+                cmd += ["--model", self.model]
+            if self.budget is not None:
+                cmd += ["--budget", str(self.budget)]
 
         return self._popen_and_stream(cmd)
 

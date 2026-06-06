@@ -22,11 +22,11 @@ Available tools (Claude Agent SDK built-ins, restricted to study dir):
   RunPython(code)    — execute Python in the study environment
 </role>
 
-<deliverable>
+<deliverables>
 After completing a task, emit a Report in the exact format specified in
 <output_format>.  Every number in the Report must come from a tool call
 output — never from memory or reasoning.
-</deliverable>
+</deliverables>
 
 <f3dasm_api>
 f3dasm is the numerical framework for all design-of-experiments work.

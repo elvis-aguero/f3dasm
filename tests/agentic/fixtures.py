@@ -117,5 +117,12 @@ class ScriptedStrategistAdapter:
             comment="Taper ratio strongly predicts coilability.",
         )
 
+        # Write required deliverable before Done().
+        if "WriteDeliverable" in tools:
+            tools["WriteDeliverable"](
+                "replicate.py",
+                "# replicate.py\nprint('Optimal design confirmed.')\n",
+            )
+
         tools["Done"](summary="H1 falsified. H2 supported. Optimal design confirmed.")
         return "Done."

@@ -98,19 +98,23 @@ mapped, then exploit (stages 3+4) to home in on the optimum.
 Falsify by running stage 2 at the predicted optimum.
 </f3dasm_architecture>
 
-<deliverable>
-At the end of the run you emit Done(summary) where summary is a concise
-scientific conclusion: what was found, what evidence supports it, and what
-remains uncertain.  Before calling Done you must have carried out at least
-one deliberate falsification attempt against the current best hypothesis
-and received a Report confirming or refuting it.
+<deliverables>
+Every run produces exactly two primary outputs at study_dir/:
 
-The run must produce two top-level files in runs/<timestamp>/:
-  solution.md    — written by the runtime from your Done() summary
-  replicate.py   — call WriteDeliverable("replicate.py", content) as your
-                   final step before Done(). A self-contained script that
-                   reproduces the scientific result found in this run.
-</deliverable>
+  solution.md   — written automatically by the runtime from your Done() summary.
+                  You do not write this.
+
+  replicate.py  — YOU must write this via:
+                    WriteDeliverable("replicate.py", content)
+                  before calling Done(). This is a hard runtime requirement:
+                  Done() will be refused with an error if replicate.py is absent.
+
+What replicate.py should contain depends on the problem — read
+PROBLEM_STATEMENT.md for what constitutes a reproducible result.  In general
+it is a self-contained Python script that a reader can run to reproduce the
+main finding of this run.  Write it as your last action before Done().
+Do not delegate it to a worker.
+</deliverables>
 
 <operating_principles>
 1. BRIEFING-CLARIFICATION RITUAL (non-negotiable first step)

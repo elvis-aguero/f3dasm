@@ -130,7 +130,7 @@ def test_strategizer_xml_sections_appear_exactly_once():
 
     required_tags = [
         "role",
-        "deliverable",
+        "deliverables",
         "operating_principles",
         "failure_modes_to_avoid",
         "tool_usage",
@@ -244,7 +244,7 @@ def test_implementer_xml_sections_appear_exactly_once():
 
     required_tags = [
         "role",
-        "deliverable",
+        "deliverables",
         "f3dasm_api",
         "operating_principles",
         "failure_modes_to_avoid",

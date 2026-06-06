@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import threading
+import time
+from pathlib import Path
+
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import END
@@ -42,9 +45,28 @@ def _minimal_spec(name: str = "strategizer", target: str = "implementer") -> Gra
     )
 
 
+_DEFAULT_STUDY_DIR: Path | None = None
+
+
+def _default_study_dir() -> Path:
+    """Return a shared temp study dir with replicate.py pre-written.
+
+    Created once per test session; all make_state() calls that don't supply
+    an explicit study_dir share this directory so Done() always has the
+    required deliverable in place.
+    """
+    global _DEFAULT_STUDY_DIR
+    if _DEFAULT_STUDY_DIR is None:
+        import tempfile
+        d = Path(tempfile.mkdtemp(prefix="f3dasm_test_"))
+        (d / "replicate.py").write_text("# test replicate\n")
+        _DEFAULT_STUDY_DIR = d
+    return _DEFAULT_STUDY_DIR
+
+
 def make_state(
     messages=None,
-    study_dir="/tmp",
+    study_dir=None,
     done=False,
     last_report=None,
     total_delegations=0,
@@ -55,7 +77,7 @@ def make_state(
 
     return AgenticState(
         messages=messages or [HumanMessage(content="Test problem")],
-        study_dir=study_dir,
+        study_dir=str(study_dir or _default_study_dir()),
         done=done,
         last_report=last_report,
         total_delegations=total_delegations,
@@ -1840,19 +1862,19 @@ def test_write_deliverable_absent_when_not_in_tools():
 
 
 def test_write_deliverable_writes_py_file(tmp_path):
-    """WriteDeliverable writes a .py file to the run directory."""
+    """WriteDeliverable writes a .py file directly to study_dir/."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
-    # Simulate the run dir layout: run_dir/debug/strategizer_notes/
-    run_dir = tmp_path / "run_dir"
-    notes_dir = run_dir / "debug" / "strategizer_notes"
+    study_dir = tmp_path / "study"
+    study_dir.mkdir()
+    notes_dir = tmp_path / "run" / "debug" / "strategizer_notes"
     notes_dir.mkdir(parents=True)
 
     adapter = StubAdapter()
     spec = _spec_with_write_deliverable()
     node = StrategizerNode(
         adapter, name="strategizer", outgoing=["implementer"], spec=spec,
-        notes_dir=notes_dir,
+        study_dir=study_dir, notes_dir=notes_dir,
     )
     node._current_notes_dir = notes_dir
 
@@ -1860,24 +1882,25 @@ def test_write_deliverable_writes_py_file(tmp_path):
         "replicate.py", "import f3dasm\nprint('hello')"
     )
     assert result.startswith("Written:"), f"Unexpected result: {result!r}"
-    written = run_dir / "replicate.py"
+    written = study_dir / "replicate.py"
     assert written.exists(), f"File not found at {written}"
     assert "import f3dasm" in written.read_text()
 
 
 def test_write_deliverable_writes_md_file(tmp_path):
-    """WriteDeliverable writes a .md file to the run directory."""
+    """WriteDeliverable writes a .md file directly to study_dir/."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
-    run_dir = tmp_path / "run_dir"
-    notes_dir = run_dir / "debug" / "strategizer_notes"
+    study_dir = tmp_path / "study"
+    study_dir.mkdir()
+    notes_dir = tmp_path / "run" / "debug" / "strategizer_notes"
     notes_dir.mkdir(parents=True)
 
     adapter = StubAdapter()
     spec = _spec_with_write_deliverable()
     node = StrategizerNode(
         adapter, name="strategizer", outgoing=["implementer"], spec=spec,
-        notes_dir=notes_dir,
+        study_dir=study_dir, notes_dir=notes_dir,
     )
     node._current_notes_dir = notes_dir
 
@@ -1885,22 +1908,23 @@ def test_write_deliverable_writes_md_file(tmp_path):
         "summary.md", "# Summary\nAll done."
     )
     assert result.startswith("Written:")
-    assert (run_dir / "summary.md").exists()
+    assert (study_dir / "summary.md").exists()
 
 
 def test_write_deliverable_rejects_unsupported_extension(tmp_path):
     """WriteDeliverable returns ERROR for extensions other than .py and .md."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
-    run_dir = tmp_path / "run_dir"
-    notes_dir = run_dir / "debug" / "strategizer_notes"
+    study_dir = tmp_path / "study"
+    study_dir.mkdir()
+    notes_dir = tmp_path / "run" / "debug" / "strategizer_notes"
     notes_dir.mkdir(parents=True)
 
     adapter = StubAdapter()
     spec = _spec_with_write_deliverable()
     node = StrategizerNode(
         adapter, name="strategizer", outgoing=["implementer"], spec=spec,
-        notes_dir=notes_dir,
+        study_dir=study_dir, notes_dir=notes_dir,
     )
     node._current_notes_dir = notes_dir
 

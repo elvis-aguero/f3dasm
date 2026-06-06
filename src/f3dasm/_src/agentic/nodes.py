@@ -857,11 +857,8 @@ class StrategizerNode(AgentNode):
             filename must end in .py or .md. Content is written verbatim.
             """
             prefix = node._drain_notifications()
-            notes = node._current_notes_dir
-            if notes is None:
-                return "ERROR: run_dir not available yet."
-            # notes is debug/strategizer_notes/ — run_dir is two levels up
-            resolved_run_dir = notes.parent.parent  # strategizer_notes/ → debug/ → run_dir/
+            if node._study_dir is None:
+                return "ERROR: study_dir not available."
 
             allowed_exts = {".py", ".md"}
             from pathlib import Path as _Path
@@ -873,7 +870,8 @@ class StrategizerNode(AgentNode):
             if "/" in filename or "\\" in filename:
                 return "ERROR: filename must be a bare name (no path separators)."
 
-            target = resolved_run_dir / p.name
+            # Write directly to study_dir/ — the user-visible output location.
+            target = _Path(node._study_dir) / p.name
             target.write_text(content, encoding="utf-8")
             return prefix + f"Written: {target}"
 
@@ -1135,9 +1133,14 @@ class StrategizerNode(AgentNode):
         }
 
     def _missing_deliverables(self, state: AgenticState) -> list[str]:
-        """Return required deliverable paths not present yet."""
-        required = state.get("required_deliverables") or []
+        """Return required deliverable paths not present at study_dir yet.
+
+        replicate.py is always required — it must be written via
+        WriteDeliverable() before Done() is accepted.  Additional paths
+        can be declared in state['required_deliverables'].
+        """
         study_dir = Path(state.get("study_dir", "."))
+        required = ["replicate.py"] + list(state.get("required_deliverables") or [])
         return [p for p in required if not (study_dir / p).exists()]
 
     def __call__(self, state: AgenticState) -> Any:

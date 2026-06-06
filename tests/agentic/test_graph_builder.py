@@ -27,10 +27,24 @@ class StubAdapter:
         return resp
 
 
+_GRAPH_TEST_STUDY_DIR = None
+
+
+def _graph_study_dir():
+    global _GRAPH_TEST_STUDY_DIR
+    if _GRAPH_TEST_STUDY_DIR is None:
+        import tempfile
+        from pathlib import Path
+        d = Path(tempfile.mkdtemp(prefix="f3dasm_graph_test_"))
+        (d / "replicate.py").write_text("# test replicate\n")
+        _GRAPH_TEST_STUDY_DIR = d
+    return _GRAPH_TEST_STUDY_DIR
+
+
 def make_initial_state(problem="Test problem") -> AgenticState:
     return AgenticState(
         messages=[HumanMessage(content=problem)],
-        study_dir="/tmp",
+        study_dir=str(_graph_study_dir()),
         done=False,
         last_report=None,
         total_delegations=0,
