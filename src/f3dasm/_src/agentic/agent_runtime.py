@@ -320,8 +320,11 @@ class AgenticRun:
             system_prompt = preamble + agent.system_prompt
             cwd = self.study_dir
         else:
-            workspace_dir = Path(self._run_dir) / "debug" / "delegations"
-            workspace_dir.mkdir(parents=True, exist_ok=True)
+            if run_dir is not None:
+                workspace_dir = Path(run_dir) / "debug" / "delegations"
+                workspace_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                workspace_dir = self.study_dir
             preamble = WORKSPACE_PREAMBLE_TEMPLATE.format(
                 workspace_dir=workspace_dir,
                 study_dir=self.study_dir,
@@ -335,7 +338,11 @@ class AgenticRun:
         _persistent = not agent.reset_on_checkpoint
         _max_history_pairs = getattr(agent, "max_history_pairs", 5)
 
-        lit_reviewer_notes_dir = Path(self._run_dir) / "debug" / "lit_reviewer_notes"
+        lit_reviewer_notes_dir = (
+            Path(self._run_dir) / "debug" / "lit_reviewer_notes"
+            if self._run_dir is not None
+            else self.study_dir / "lit_reviewer_notes"
+        )
 
         if backend == "ollama":
             import os

@@ -4,9 +4,12 @@ import argparse
 import sys
 from pathlib import Path
 
+from .agent_runtime import AgenticRun, AgenticRunError
+
+__all__ = ["AgenticRun", "AgenticRunError", "main"]
+
 
 def main() -> None:
-    from .agent_runtime import AgenticRun, AgenticRunError
 
     p = argparse.ArgumentParser(description="Run an f3dasm agentic study.")
     p.add_argument("study_dir", nargs="?", default="/study",
