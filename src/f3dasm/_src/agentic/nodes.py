@@ -715,11 +715,22 @@ class StrategizerNode(AgentNode):
             if _critic_adapter is not None:
                 # Synchronous critic gate
                 notes_path = str(node._current_notes_dir or "")
+                _notes_dir = node._current_notes_dir
+                _study_dir = node._study_dir
+                _debug_dir = _notes_dir.parent if _notes_dir is not None else None
                 task_msg = (
                     "<mode>FEEDBACK</mode>\n\n"
-                    "Final gate check before run closes.  "
-                    "Read strategizer notes and workspace outputs under: "
-                    f"{notes_path}\n\n"
+                    "Final gate check before run closes.\n\n"
+                    "<paths>\n"
+                    f"study_dir             = {_study_dir}\n"
+                    f"debug_dir             = {_debug_dir}\n"
+                    f"delegation_log        = {_debug_dir}/delegation_log.jsonl\n"
+                    f"diagnostics           = {_debug_dir}/diagnostics.jsonl\n"
+                    f"strategizer_notes     = {notes_path}\n"
+                    f"delegations_workspace = {_debug_dir}/delegations/\n"
+                    f"deliverables          = {_study_dir}/replicate.py, "
+                    f"{_study_dir}/solution.md\n"
+                    "</paths>\n\n"
                     f"Proposed conclusion: {summary[:500]}"
                 )
                 _worker = (
@@ -921,12 +932,24 @@ class StrategizerNode(AgentNode):
                     timespec="seconds"
                 )
                 notes_path = str(_node._current_notes_dir or "")
+                _notes_dir = _node._current_notes_dir
+                _study_dir = _node._study_dir
+                _debug_dir = _notes_dir.parent if _notes_dir is not None else None
                 task_msg = (
                     "<mode>FEEDBACK</mode>\n\n"
                     "Perform a synchronous find-only adversarial audit.  "
                     "PASS is not an available verdict — return REVISE or REJECT "
-                    "with your findings.  Read strategizer notes and workspace "
-                    f"outputs under: {notes_path}\n\n"
+                    "with your findings.\n\n"
+                    "<paths>\n"
+                    f"study_dir             = {_study_dir}\n"
+                    f"debug_dir             = {_debug_dir}\n"
+                    f"delegation_log        = {_debug_dir}/delegation_log.jsonl\n"
+                    f"diagnostics           = {_debug_dir}/diagnostics.jsonl\n"
+                    f"strategizer_notes     = {notes_path}\n"
+                    f"delegations_workspace = {_debug_dir}/delegations/\n"
+                    f"deliverables          = {_study_dir}/replicate.py, "
+                    f"{_study_dir}/solution.md\n"
+                    "</paths>\n\n"
                     f"Focus hypotheses: {h_ids if h_ids else 'all'}"
                 )
 

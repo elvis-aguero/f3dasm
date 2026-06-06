@@ -99,7 +99,7 @@ class AgenticRun:
         model: str | None = None,
         budget: float | None = None,
         eval_budget: int | None = None,
-        interactive: bool = False,
+        interactive: bool = True,
         max_ask: int = 1,
         container: bool = False,
         container_image: str = "f3dasm-agentic:latest",
@@ -330,7 +330,11 @@ class AgenticRun:
                 study_dir=self.study_dir,
             )
             system_prompt = preamble + agent.system_prompt
-            cwd = workspace_dir
+            # Critics read from the study tree, not from a delegation subfolder.
+            if getattr(agent, "role", None) == "critic":
+                cwd = self.study_dir
+            else:
+                cwd = workspace_dir
 
         model = agent.model or self._model
         backend = agent.backend or self._backend
