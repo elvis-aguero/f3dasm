@@ -243,19 +243,22 @@ def test_literature_review_wet(tmp_path):
         f"matched only {matched} from {literature_signals}\n\nReport:\n{report[:500]}"
     )
 
-    # 5. solution.md token table written
-    solution_md = run_dir / "solution.md"
+    # 5. solution.md token table written (at study root since 7cab624)
+    solution_md = study / "solution.md"
     assert solution_md.exists()
     sol_text = solution_md.read_text()
     assert "## Token usage" in sol_text
 
-    # 6. delegations.jsonl has the literature review delegation
-    notes_dir = run_dir / "strategizer_notes"
-    jsonl = notes_dir / "delegations.jsonl"
-    if jsonl.exists():
-        records = [json.loads(l) for l in jsonl.read_text().strip().splitlines()]
-        lit_records = [r for r in records if r.get("to_node") == "literature_reviewer"]
-        assert lit_records, "No delegation to literature_reviewer in JSONL"
+    # 6. delegation log has the literature review delegation
+    jsonl = run_dir / "debug" / "delegation_log.jsonl"
+    assert jsonl.exists(), "debug/delegation_log.jsonl missing"
+    records = [
+        json.loads(l) for l in jsonl.read_text().strip().splitlines()
+    ]
+    lit_records = [
+        r for r in records if r.get("to_node") == "literature_reviewer"
+    ]
+    assert lit_records, "No delegation to literature_reviewer in JSONL"
 
     print(f"\n✓ Wet test passed in {elapsed:.0f}s")
     print(f"  Report length: {len(report)} chars")
