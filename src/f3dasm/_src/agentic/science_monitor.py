@@ -24,7 +24,10 @@ ESCALATE_AFTER_ERROR_REPEATS = 2
 
 _NUMBERS_SECTION_RE = re.compile(
     r"###\s*Numbers\s*\n(.*?)(?=\n###|\n##|\Z)", re.DOTALL)
-_NUM_LINE_RE = re.compile(r"^\s*-?\s*([\w.\-/ ]+?)\s*:\s*(.+?)\s*$")
+# Key charclass tolerates markdown emphasis/code (**key**, `key`) —
+# workers often format report keys in bold (observed in wet runs).
+_NUM_LINE_RE = re.compile(
+    r"^\s*-?\s*[*`_]*([\w.\-/ ]+?)[*`_]*\s*:\s*(.+?)\s*$")
 _FLOAT_RE = re.compile(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?")
 
 

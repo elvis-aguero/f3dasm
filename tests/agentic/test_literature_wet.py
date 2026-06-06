@@ -209,8 +209,9 @@ def test_literature_review_wet(tmp_path):
 
     # --- Assertions --------------------------------------------------------
     run_dir = next((study / "runs").iterdir())
-    workspace = study / "workspace"
-    corpus_dir = workspace / "literature"
+    # build_closure_tools(study) without lit_reviewer_notes_dir uses
+    # the study/delegations/literature fallback.
+    corpus_dir = study / "delegations" / "literature"
 
     # 1. Report was produced and is non-trivial
     assert report and len(report) > 100, (
@@ -218,7 +219,9 @@ def test_literature_review_wet(tmp_path):
     )
 
     # 2. Corpus infrastructure was initialised (dir created by build_closure_tools)
-    assert corpus_dir.exists(), "workspace/literature/ not created by build_closure_tools"
+    assert corpus_dir.exists(), (
+        "delegations/literature/ not created by build_closure_tools"
+    )
 
     # 3. corpus.csv check — may or may not exist depending on whether agent
     # used CorpusAdd vs. arxiv read_paper directly; both are acceptable.

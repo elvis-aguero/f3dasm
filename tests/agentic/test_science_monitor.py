@@ -540,3 +540,20 @@ def test_posterior_inertia_boundary(tmp_path):
     assert "POSTERIOR_INERTIA" not in rules_b, (
         f"No POSTERIOR_INERTIA expected for delta=0.06 (0.5→0.56), "
         f"got: {rules_b}")
+
+
+def test_numbers_section_with_markdown_bold_keys(tmp_path):
+    """Workers format Numbers keys in bold — must still anchor.
+
+    Observed live: '- **questions_addressed**: 3' was not matched by
+    the key regex, firing a false UNANCHORED_DELEGATION.
+    """
+    ledger, dlog, mon, _ = make_world(tmp_path)
+    h = propose(ledger)
+    bold_report = (
+        "## Report\n\n### Conclusions\nok\n\n### Numbers\n"
+        "- **questions_addressed**: 3\n- `papers_consulted`: 9\n"
+    )
+    record_done(dlog, "D001", [h], bold_report)
+    rules = {v.rule for v in mon.evaluate()}
+    assert "UNANCHORED_DELEGATION" not in rules

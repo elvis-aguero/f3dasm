@@ -744,10 +744,15 @@ class StrategizerNode(AgentNode):
                     entry["last_getstatus_time"] = now_mono
                     elapsed = int(now_mono - entry["start_time"])
 
+            # Status token FIRST (contract: callers dispatch on the
+            # leading word); queued notifications follow the report.
+            _tail = (
+                ("\n\n" + prefix.rstrip()) if prefix.strip() else ""
+            )
             if status == "Done":
-                return prefix + f"Done\n\n{entry['result']}"
+                return f"Done\n\n{entry['result']}" + _tail
             if status not in ("Working", "FollowUp"):
-                return prefix + f"Errored:\n{entry['result']}"
+                return f"Errored:\n{entry['result']}" + _tail
 
             # --- Still working: build informative response ---
             hints: list[str] = []
