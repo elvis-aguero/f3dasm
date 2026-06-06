@@ -2329,3 +2329,59 @@ def test_recall_history_gated_on_delegation_log_presence():
     adapter2 = StubAdapter()
     node2 = WorkerNode(adapter2, delegation_log=None, name="implementer")
     assert "RecallHistory" not in node2.adapter.closure_tools
+
+
+# ---------------------------------------------------------------------------
+# _wrap_closure type-coercion shim tests
+# ---------------------------------------------------------------------------
+
+
+def test_wrap_closure_coerces_string_typed_args():
+    """_wrap_closure coerces str→int/float/bool when annotations say so."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    node = StrategizerNode(
+        StubAdapter(), name="strategizer", outgoing=[],
+        spec=_minimal_spec(),
+    )
+
+    def f(n: int = 5, x: float = 1.0, flag: bool = False) -> str:
+        assert isinstance(n, int) and isinstance(x, float)
+        assert isinstance(flag, bool)
+        return f"{n}|{x}|{flag}"
+
+    wrapped = node._wrap_closure(f, "strategizer")
+    assert wrapped(n="3", x="0.5", flag="true") == "3|0.5|True"
+
+
+def test_wrap_closure_leaves_uncoercible_strings():
+    """Uncoercible string values pass through unchanged."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    node = StrategizerNode(
+        StubAdapter(), name="strategizer", outgoing=[],
+        spec=_minimal_spec(),
+    )
+
+    def f(n: int = 5) -> str:
+        return repr(n)
+
+    wrapped = node._wrap_closure(f, "strategizer")
+    # "five" can't be parsed as int → passes through; closure returns repr
+    assert wrapped(n="five") == "'five'"
+
+
+def test_wrap_closure_recall_history_regression():
+    """RecallHistory-style: n='5' (str) must not TypeError on unary -."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    node = StrategizerNode(
+        StubAdapter(), name="strategizer", outgoing=[],
+        spec=_minimal_spec(),
+    )
+
+    def g(n: int = 5) -> str:
+        return str(-n)
+
+    wrapped = node._wrap_closure(g, "strategizer")
+    assert wrapped(n="5") == "-5"

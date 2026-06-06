@@ -1096,18 +1096,68 @@ class StrategizerNode(AgentNode):
         Uses functools.wraps so inspect.signature() follows __wrapped__ to the
         original function — _infer_schema_from_callable must see the real
         parameter names, not (*args, **kwargs).
+
+        Also coerces string-typed arguments to int/float/bool when the
+        function annotation requests it (handles Ollama passing "5" for
+        an int parameter).
         """
         import functools as _functools
+        import inspect as _inspect
+        import typing as _typing
+
         node = self
         tool_name = getattr(fn, "__name__", repr(fn))
 
+        # Resolve type hints once; fall back to {} if any forward ref
+        # cannot be resolved (e.g. "DelegationLog | None").
+        try:
+            _hints = _typing.get_type_hints(fn)
+        except Exception:  # noqa: BLE001
+            _hints = {}
+        _COERCIBLE = {int, float, bool}
+
+        def _coerce(name: str, value: Any) -> Any:
+            target = _hints.get(name)
+            if target not in _COERCIBLE or not isinstance(value, str):
+                return value
+            if target is bool:
+                low = value.strip().lower()
+                if low in ("true", "1", "yes"):
+                    return True
+                if low in ("false", "0", "no"):
+                    return False
+                return value
+            try:
+                return target(value)
+            except ValueError:
+                return value
+
         @_functools.wraps(fn)
         def _wrapped(*args, **kwargs):
+            # Coerce string args before calling the real function.
+            try:
+                bound = _inspect.signature(fn).bind_partial(
+                    *args, **kwargs
+                )
+                for pname in list(bound.arguments):
+                    bound.arguments[pname] = _coerce(
+                        pname, bound.arguments[pname]
+                    )
+                args, kwargs = bound.args, bound.kwargs
+            except TypeError:
+                pass  # signature mismatch: let fn raise its own error
+
             try:
                 result = fn(*args, **kwargs)
-                if isinstance(result, str) and result.lstrip().startswith("ERROR:"):
+                if (
+                    isinstance(result, str)
+                    and result.lstrip().startswith("ERROR:")
+                ):
                     node._record_tool_error(
-                        node_name, tool_name, "ERROR_RETURN", result[:300]
+                        node_name,
+                        tool_name,
+                        "ERROR_RETURN",
+                        result[:300],
                     )
                 return result
             except Exception as exc:
