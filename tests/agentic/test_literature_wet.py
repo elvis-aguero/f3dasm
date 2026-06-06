@@ -84,8 +84,13 @@ def test_literature_review_wet(tmp_path):
             # Propose a hypothesis to satisfy the ledger (if active)
             if "HypothesisPropose" in self.closure_tools:
                 h_id = self.closure_tools["HypothesisPropose"](
-                    statement="GP surrogates with acquisition functions are the "
-                              "dominant approach for expensive DOE problems."
+                    statement="GP surrogates with acquisition functions are"
+                              " the dominant approach for expensive DOE.",
+                    falsification_criterion=(
+                        "a non-GP method outperforms GP on benchmark"
+                    ),
+                    prediction="GP wins on majority of DOE benchmarks",
+                    prior=0.7,
                 )
             else:
                 h_id = None

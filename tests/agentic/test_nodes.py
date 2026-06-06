@@ -859,7 +859,10 @@ def test_hypothesis_propose_via_strategizer_closure(tmp_path):
     class ProposeAdapter(StubAdapter):
         def invoke(self, messages):
             h_id = self.closure_tools["HypothesisPropose"](
-                statement="Thin longerons buckle first"
+                statement="Thin longerons buckle first",
+                falsification_criterion="any test showing they do not",
+                prediction="sigma_crit drops below threshold",
+                prior=0.6,
             )
             proposed_ids.append(h_id)
             self.closure_tools["Done"](summary="done")
@@ -887,14 +890,25 @@ def test_hypothesis_update_injects_triggered_by(tmp_path):
 
     class UpdateAdapter(StubAdapter):
         def invoke(self, messages):
-            h_id = self.closure_tools["HypothesisPropose"](statement="Test hyp")
-            self.closure_tools["Delegate"](
+            h_id = self.closure_tools["HypothesisPropose"](
+                statement="Test hyp claim",
+                falsification_criterion="any counter-example",
+                prediction="none found in sweep",
+                prior=0.6,
+            )
+            result = self.closure_tools["Delegate"](
                 target="implementer", intent="test", expected_report="",
                 hypothesis_ids=[h_id],
             )
+            import re as _re
+            d_id = _re.search(r"D\d{3}", result).group()
             _time.sleep(0.3)
             self.closure_tools["HypothesisUpdate"](
-                hypothesis_id=h_id, status="FALSIFIED", comment="disproved"
+                hypothesis_id=h_id,
+                status="FALSIFIED",
+                comment="disproved",
+                evidence={"delegation": d_id},
+                posterior=0.1,
             )
             self.closure_tools["Done"](summary="done")
             return "Done."
@@ -923,10 +937,15 @@ def test_max_three_open_hypothesis_guard(tmp_path):
 
     class MaxAdapter(StubAdapter):
         def invoke(self, messages):
-            self.closure_tools["HypothesisPropose"](statement="A")
-            self.closure_tools["HypothesisPropose"](statement="B")
-            self.closure_tools["HypothesisPropose"](statement="C")
-            r = self.closure_tools["HypothesisPropose"](statement="D")
+            _kw = dict(
+                falsification_criterion="fc",
+                prediction="pred",
+                prior=0.5,
+            )
+            self.closure_tools["HypothesisPropose"](statement="A", **_kw)
+            self.closure_tools["HypothesisPropose"](statement="B", **_kw)
+            self.closure_tools["HypothesisPropose"](statement="C", **_kw)
+            r = self.closure_tools["HypothesisPropose"](statement="D", **_kw)
             error_seen.append(r)
             self.closure_tools["Done"](summary="done")
             return "Done."
@@ -1679,9 +1698,20 @@ def test_ask_for_feedback_auto_injects_all_hypothesis_ids(tmp_path):
 
     # Pre-populate the ledger with H1 (OPEN) and H2 (FALSIFIED)
     ledger = HypothesisLedger(tmp_path)
-    ledger.propose("Hypothesis one", proposed_by="test")
-    ledger.propose("Hypothesis two", proposed_by="test")
-    ledger.update("H2", "FALSIFIED", "disproved", triggered_by=None)
+    _kw = dict(
+        falsification_criterion="fc",
+        prediction="pred",
+        prior=0.5,
+        proposed_by="test",
+    )
+    ledger.propose(statement="Hypothesis one", **_kw)
+    ledger.propose(statement="Hypothesis two", **_kw)
+    ledger.update(
+        "H2", "FALSIFIED", "disproved",
+        evidence={"delegation": "D001"},
+        posterior=0.1,
+        triggered_by=None,
+    )
 
     jsonl_path = tmp_path / "delegation_log.jsonl"
     delegation_log = DelegationLog(jsonl_path)
@@ -1711,8 +1741,14 @@ def test_ask_for_feedback_respects_explicit_ids(tmp_path):
     from f3dasm._src.agentic.hypothesis_ledger import HypothesisLedger
 
     ledger = HypothesisLedger(tmp_path)
-    ledger.propose("Hypothesis one", proposed_by="test")
-    ledger.propose("Hypothesis two", proposed_by="test")
+    _kw = dict(
+        falsification_criterion="fc",
+        prediction="pred",
+        prior=0.5,
+        proposed_by="test",
+    )
+    ledger.propose(statement="Hypothesis one", **_kw)
+    ledger.propose(statement="Hypothesis two", **_kw)
 
     jsonl_path = tmp_path / "delegation_log.jsonl"
     delegation_log = DelegationLog(jsonl_path)

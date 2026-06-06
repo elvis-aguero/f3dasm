@@ -441,7 +441,12 @@ def test_hypothesis_propose_without_ledger():
 
     class HypAdapter(StubAdapter):
         def invoke(self, messages):
-            result = self.closure_tools["HypothesisPropose"]("Test hypothesis")
+            result = self.closure_tools["HypothesisPropose"](
+                statement="Test hypothesis",
+                falsification_criterion="any counter-example",
+                prediction="none found",
+                prior=0.5,
+            )
             results.append(result)
             self.closure_tools["Done"](summary="done")
             self.closure_tools["Done"](summary="done")
@@ -491,7 +496,12 @@ def test_hypothesis_propose_with_ledger(tmp_path):
 
     class HypAdapter(StubAdapter):
         def invoke(self, messages):
-            result = self.closure_tools["HypothesisPropose"]("The sky is blue.")
+            result = self.closure_tools["HypothesisPropose"](
+                statement="The sky is blue.",
+                falsification_criterion="any night-time observation",
+                prediction="daytime sky appears blue",
+                prior=0.9,
+            )
             results.append(result)
             self.closure_tools["Done"](summary="done")
             self.closure_tools["Done"](summary="done")
@@ -527,7 +537,12 @@ def test_hypothesis_list_with_entries(tmp_path):
             phase = call_phase[0]
             call_phase[0] += 1
             if phase == 0:
-                self.closure_tools["HypothesisPropose"]("Hypothesis A")
+                self.closure_tools["HypothesisPropose"](
+                    statement="Hypothesis A is correct.",
+                    falsification_criterion="counter-example exists",
+                    prediction="no counter-example found",
+                    prior=0.55,
+                )
                 result = self.closure_tools["HypothesisList"]()
                 list_results.append(result)
             self.closure_tools["Done"](summary="done")
@@ -544,9 +559,57 @@ def test_hypothesis_list_with_entries(tmp_path):
     node(state)
 
     assert list_results
-    # Should contain "Hypothesis A" or an H-id
+    # Should contain hypothesis A statement or an H-id
     combined = list_results[0]
-    assert "Hypothesis A" in combined or "H1" in combined or "ERROR" not in combined
+    assert (
+        "Hypothesis A" in combined
+        or "H1" in combined
+        or "ERROR" not in combined
+    )
+    # New format must show belief
+    assert "(belief 0.55)" in combined
+
+
+def test_hypothesis_update_coerces_json_string_evidence(tmp_path):
+    """Backends may pass evidence as a JSON string; closure coerces."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    (tmp_path / "replicate.py").write_text("# r\n")
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+
+    results = []
+
+    class Adapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["HypothesisPropose"](
+                statement="Claim below 1.0",
+                falsification_criterion="any point below 0.5",
+                prediction="sweep finds nothing below 0.5",
+                prior=0.5,
+            )
+            results.append(self.closure_tools["HypothesisUpdate"](
+                hypothesis_id="H1",
+                status="SUPPORTED",
+                comment="c",
+                evidence='{"delegation": "D001"}',
+                posterior=0.8,
+            ))
+            self.closure_tools["Done"](summary="done")
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    adapter = Adapter()
+    spec = _minimal_spec()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        notes_dir=notes_dir,
+    )
+    state = _make_state(study_dir=tmp_path)
+    node(state)
+
+    assert results
+    assert not results[0].startswith("ERROR:")
 
 
 def test_hypothesis_get_not_found(tmp_path):

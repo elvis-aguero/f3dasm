@@ -70,8 +70,18 @@ class ScriptedStrategistAdapter:
         tools = self.closure_tools
 
         # Step 1: propose two competing hypotheses
-        h1 = tools["HypothesisPropose"](statement="Thin longerons buckle at lower stress")
-        h2 = tools["HypothesisPropose"](statement="Taper ratio drives coilability")
+        h1 = tools["HypothesisPropose"](
+            statement="Thin longerons buckle at lower stress",
+            falsification_criterion="sigma_crit above threshold",
+            prediction="sigma_crit drops below threshold in sweep",
+            prior=0.6,
+        )
+        h2 = tools["HypothesisPropose"](
+            statement="Taper ratio drives coilability",
+            falsification_criterion="coilability independent of taper",
+            prediction="taper ratio correlates with coilability",
+            prior=0.6,
+        )
 
         # Step 2: delegate to implementer to test H1
         result = tools["Delegate"](
@@ -94,6 +104,8 @@ class ScriptedStrategistAdapter:
             hypothesis_id=h1,
             status="FALSIFIED",
             comment="Data shows thin longerons coil; H1 contradicted.",
+            evidence={"delegation": d1_id},
+            posterior=0.05,
         )
 
         # Step 5: delegate to confirm H2
@@ -115,6 +127,8 @@ class ScriptedStrategistAdapter:
             hypothesis_id=h2,
             status="SUPPORTED",
             comment="Taper ratio strongly predicts coilability.",
+            evidence={"delegation": d2_id},
+            posterior=0.9,
         )
 
         # Write required deliverable before Done().

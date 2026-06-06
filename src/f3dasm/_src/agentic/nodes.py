@@ -1095,28 +1095,66 @@ class StrategizerNode(AgentNode):
                 self._token_totals["total_cost_usd"] += cost
 
     def _build_hypothesis_closures(self) -> dict:
-        """Build HypothesisPropose/Update/List/Get closures (no-ops when no ledger)."""
+        """Build HypothesisPropose/Update/List/Get closures."""
         node = self
 
-        def HypothesisPropose(statement: str) -> str:
-            """Propose a new hypothesis. Returns the assigned ID (H1, H2, …).
-            Max 3 OPEN hypotheses at any time. Returns ERROR if limit reached."""
-            if node._ledger is None:
-                return "ERROR: hypothesis ledger not available in this run."
-            return node._ledger.propose(statement, proposed_by=node._name)
+        def HypothesisPropose(
+            statement: str,
+            falsification_criterion: str,
+            prediction: str,
+            prior: float,
+        ) -> str:
+            """Propose a hypothesis. Returns its ID (H1, H2, …) or ERROR.
 
-        def HypothesisUpdate(hypothesis_id: str, status: str, comment: str) -> str:
-            """Update hypothesis status. Call ONLY when status changes.
-            status must be one of: OPEN, SUPPORTED, FALSIFIED, INCONCLUSIVE.
-            triggered_by is auto-injected from the last completed delegation."""
+            statement: ONE falsifiable claim (no compound claims).
+            falsification_criterion: what observation would kill it.
+            prediction: the measurable outcome you expect.
+            prior: plausibility in (0, 1). Max 3 OPEN at any time."""
             if node._ledger is None:
-                return "ERROR: hypothesis ledger not available in this run."
-            # Inject triggered_by from delegation log (persistent across calls)
-            triggered_by: str | None = (
+                return (
+                    "ERROR: hypothesis ledger not available in this run."
+                )
+            return node._ledger.propose(
+                statement=statement,
+                falsification_criterion=falsification_criterion,
+                prediction=prediction,
+                prior=prior,
+                proposed_by=node._name,
+            )
+
+        def HypothesisUpdate(
+            hypothesis_id: str,
+            status: str,
+            comment: str,
+            evidence: "dict | None" = None,
+            posterior: "float | None" = None,
+        ) -> str:
+            """Update hypothesis status with evidence and updated belief.
+
+            status: OPEN | SUPPORTED | FALSIFIED | INCONCLUSIVE.
+            evidence: {"delegation": "D###", "numbers": {key: value}}
+              required for closing statuses; numbers must come from
+              that delegation's report.
+            posterior: your updated belief in [0, 1] — always required.
+            triggered_by is auto-injected from last completed
+            delegation."""
+            if node._ledger is None:
+                return (
+                    "ERROR: hypothesis ledger not available in this run."
+                )
+            if isinstance(evidence, str):
+                import json as _json
+                try:
+                    evidence = _json.loads(evidence)
+                except _json.JSONDecodeError:
+                    return (
+                        "ERROR: evidence must be a JSON object like "
+                        '{"delegation": "D004", "numbers": {...}}.'
+                    )
+            triggered_by: "str | None" = (
                 node._delegation_log.last_completed_id(node._name)
                 if node._delegation_log is not None else None
             )
-            # Fall back to in-memory registry if no delegation log
             if triggered_by is None:
                 with node._registry_lock:
                     done_entries = [
@@ -1126,22 +1164,37 @@ class StrategizerNode(AgentNode):
                     ]
                 if done_entries:
                     triggered_by = done_entries[-1][0]
-            return node._ledger.update(hypothesis_id, status, comment, triggered_by)
+            return node._ledger.update(
+                hypothesis_id,
+                status,
+                comment,
+                evidence,
+                posterior,
+                triggered_by,
+            )
 
         def HypothesisList() -> str:
-            """List all hypotheses: id, statement, current status. No logs returned."""
+            """List all hypotheses with id, status, belief, statement."""
             if node._ledger is None:
-                return "ERROR: hypothesis ledger not available in this run."
+                return (
+                    "ERROR: hypothesis ledger not available in this run."
+                )
             items = node._ledger.list_all()
             if not items:
                 return "No hypotheses proposed yet."
-            lines = [f"- {h['id']} [{h['current_status']}]: {h['statement']}" for h in items]
+            lines = [
+                f"- {h['id']} [{h['current_status']}]"
+                f" (belief {h['belief']}): {h['statement']}"
+                for h in items
+            ]
             return "\n".join(lines)
 
         def HypothesisGet(hypothesis_id: str) -> str:
             """Get full hypothesis entry including status_log."""
             if node._ledger is None:
-                return "ERROR: hypothesis ledger not available in this run."
+                return (
+                    "ERROR: hypothesis ledger not available in this run."
+                )
             import json as _json
             entry = node._ledger.get(hypothesis_id)
             if entry is None:
