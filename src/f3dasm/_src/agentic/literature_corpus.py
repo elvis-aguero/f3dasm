@@ -8,78 +8,408 @@ Manages a directory with::
             <paper_id>/
                 paper.pdf   — source file (optional copy)
                 paper.md    — extracted text, page-annotated
+        .http_cache/        — on-disk GET response cache (TTL 24h)
 
-**Design principle:** this module does NO network I/O.  Discovery and
-download are the agent's responsibility via MCP tools.  ``CorpusAdd``
-only accepts paths to files already on disk.
+**Design principle:** this module does NO network I/O in the corpus
+methods.  Discovery and download are the agent's responsibility via
+MCP tools or ``DownloadPdf``.  ``CorpusAdd`` only accepts paths to
+files already on disk.
 """
 
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
+import logging
+import random
 import re
 import shutil
 import threading
+import time as _time_module
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 try:
     import fitz  # type: ignore[import]
 except ImportError:
     fitz = None  # type: ignore[assignment]
 
-__all__ = ["LiteratureCorpus", "_robust_get", "_robust_post"]
+__all__ = [
+    "LiteratureCorpus",
+    "SourceCooldownError",
+    "_robust_get",
+    "_robust_post",
+]
+
+log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Injectable sleep — monkeypatch in tests to avoid real delays
+# ---------------------------------------------------------------------------
+_sleep = _time_module.sleep
 
 
 # ---------------------------------------------------------------------------
-# Robust HTTP helpers (retry + timeout) used by closure tools in literature.py
+# Per-domain rate limiting (min-interval + circuit breaker)
 # ---------------------------------------------------------------------------
 
-def _robust_get(url: str, *, params=None, headers=None, retries: int = 3,
-                timeout: float = 15.0):
-    """GET *url* with exponential back-off retry and connection timeout.
+_DOMAIN_MIN_INTERVAL: dict[str, float] = {
+    "api.semanticscholar.org": 1.0,
+    "api.openalex.org": 0.2,
+}
+_ARXIV_MIN_INTERVAL = 3.0
+_DEFAULT_MIN_INTERVAL = 0.5
 
-    Returns a :class:`requests.Response` on success; raises on final failure.
+_COOLDOWN_SECONDS = 60
+_CIRCUIT_BREAKER_THRESHOLD = 3  # consecutive 429s before cooldown
+
+# Protected by _rate_lock
+_domain_last_request: dict[str, float] = {}
+_domain_consecutive_429: dict[str, int] = {}
+_domain_cooldown_until: dict[str, float] = {}
+_rate_lock = threading.Lock()
+
+
+class SourceCooldownError(Exception):
+    """Raised when a domain is in circuit-breaker cooldown."""
+
+
+def _domain_key(url: str) -> str:
+    """Extract domain from URL for rate-limiting purposes."""
+    # Simple extraction without urllib to keep it lightweight
+    # e.g. "https://api.openalex.org/works" → "api.openalex.org"
+    try:
+        no_scheme = url.split("://", 1)[1]
+        domain = no_scheme.split("/")[0].split("?")[0]
+        return domain
+    except (IndexError, AttributeError):
+        return url
+
+
+def _min_interval_for(domain: str) -> float:
+    if "arxiv.org" in domain:
+        return _ARXIV_MIN_INTERVAL
+    return _DOMAIN_MIN_INTERVAL.get(domain, _DEFAULT_MIN_INTERVAL)
+
+
+def _rate_limit_wait(domain: str) -> None:
+    """Sleep if needed to honour min-interval for *domain*.
+
+    Must be called OUTSIDE the rate lock to avoid holding the lock
+    during sleep.  We use a two-step approach: read under lock,
+    sleep outside, then record under lock.
     """
-    import time
+    with _rate_lock:
+        now = _time_module.monotonic()
+        # Circuit breaker check
+        until = _domain_cooldown_until.get(domain, 0.0)
+        if until > now:
+            remaining = int(until - now)
+            raise SourceCooldownError(
+                f"{domain} is rate-limited (cooldown {_COOLDOWN_SECONDS}s"
+                f" remaining: {remaining}s). Use a different literature"
+                " source or retry later."
+            )
+        # Rate-limit wait calculation
+        last = _domain_last_request.get(domain, 0.0)
+        min_interval = _min_interval_for(domain)
+        jitter = random.uniform(0, 1.0) if "arxiv.org" in domain else 0.0
+        required = min_interval + jitter
+        wait = required - (now - last)
+
+    if wait > 0:
+        _sleep(wait)
+
+    with _rate_lock:
+        _domain_last_request[domain] = _time_module.monotonic()
+
+
+def _record_429(domain: str) -> bool:
+    """Record a 429 for domain; return True if circuit breaker fires."""
+    with _rate_lock:
+        count = _domain_consecutive_429.get(domain, 0) + 1
+        _domain_consecutive_429[domain] = count
+        if count >= _CIRCUIT_BREAKER_THRESHOLD:
+            _domain_cooldown_until[domain] = (
+                _time_module.monotonic() + _COOLDOWN_SECONDS
+            )
+            return True
+        return False
+
+
+def _reset_429(domain: str) -> None:
+    """Reset consecutive 429 counter on a successful request."""
+    with _rate_lock:
+        _domain_consecutive_429.pop(domain, None)
+
+
+# ---------------------------------------------------------------------------
+# On-disk HTTP GET cache
+# ---------------------------------------------------------------------------
+
+class _CachedResponse:
+    """Lightweight response-like object from cache."""
+
+    def __init__(self, status_code: int, text: str,
+                 content_type: str) -> None:
+        self.status_code = status_code
+        self._text = text
+        self._content_type = content_type
+
+    @property
+    def text(self) -> str:
+        return self._text
+
+    @property
+    def content(self) -> bytes:
+        return self._text.encode("utf-8", errors="replace")
+
+    def json(self):
+        return json.loads(self._text)
+
+
+def _cache_key(url: str, params) -> str:
+    parts = url
+    if params:
+        if isinstance(params, dict):
+            parts += json.dumps(
+                sorted(params.items()), separators=(",", ":")
+            )
+        else:
+            parts += str(params)
+    return hashlib.sha256(parts.encode()).hexdigest()
+
+
+def _cache_get(
+    cache_dir: Optional[Path], url: str, params, ttl: float
+) -> Optional[_CachedResponse]:
+    if cache_dir is None:
+        return None
+    key = _cache_key(url, params)
+    cache_file = cache_dir / (key + ".json")
+    if not cache_file.exists():
+        return None
+    try:
+        data = json.loads(cache_file.read_text(encoding="utf-8"))
+        age = _time_module.time() - data.get("ts", 0)
+        if age > ttl:
+            return None  # expired
+        return _CachedResponse(
+            data["status"],
+            data["body"],
+            data.get("content_type", ""),
+        )
+    except Exception:
+        return None
+
+
+def _cache_put(
+    cache_dir: Optional[Path],
+    url: str,
+    params,
+    status: int,
+    body: str,
+    content_type: str,
+) -> None:
+    if cache_dir is None or status != 200:
+        return
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        key = _cache_key(url, params)
+        cache_file = cache_dir / (key + ".json")
+        cache_file.write_text(
+            json.dumps({
+                "status": status,
+                "body": body,
+                "content_type": content_type,
+                "ts": _time_module.time(),
+            }),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass  # cache write failure is non-fatal
+
+
+# ---------------------------------------------------------------------------
+# Robust HTTP helpers (retry + rate limiting + 429 discipline + cache)
+# ---------------------------------------------------------------------------
+
+def _robust_get(
+    url: str,
+    *,
+    params=None,
+    headers=None,
+    retries: int = 3,
+    timeout: float = 15.0,
+    cache_dir: Optional[Path] = None,
+    ttl: float = 86400,
+):
+    """GET *url* with per-domain rate limiting, 429 discipline, and cache.
+
+    Cache check happens BEFORE rate limiting — a hit never sleeps.
+    Returns a :class:`requests.Response` (or cached equivalent) on
+    success; raises :class:`SourceCooldownError` if circuit breaker is
+    active; raises on final failure.
+    """
     import requests  # type: ignore[import]
 
+    # Cache check first (no rate-limit sleep on hit)
+    cached = _cache_get(cache_dir, url, params, ttl)
+    if cached is not None:
+        return cached
+
+    domain = _domain_key(url)
     last_exc: Exception | None = None
     for attempt in range(retries):
+        # May raise SourceCooldownError — let it propagate immediately
+        _rate_limit_wait(domain)
         try:
-            resp = requests.get(url, params=params, headers=headers,
-                                timeout=timeout)
-            resp.raise_for_status()
-            return resp
-        except Exception as exc:  # noqa: BLE001
+            resp = requests.get(
+                url, params=params, headers=headers, timeout=timeout
+            )
+        except Exception as exc:
             last_exc = exc
             if attempt < retries - 1:
-                time.sleep(2 ** attempt)
+                _sleep(2 ** attempt)
+            continue
+
+        if resp.status_code in (429, 503):
+            fired = _record_429(domain)
+            retry_after_str = resp.headers.get("Retry-After")
+            if retry_after_str is not None:
+                try:
+                    wait = min(float(retry_after_str), 60.0)
+                except ValueError:
+                    wait = 2 ** attempt
+            else:
+                wait = 2 ** attempt
+            if fired:
+                # Circuit breaker just fired
+                with _rate_lock:
+                    remaining = int(
+                        _domain_cooldown_until.get(domain, 0)
+                        - _time_module.monotonic()
+                    )
+                raise SourceCooldownError(
+                    f"{domain} is rate-limited (cooldown"
+                    f" {_COOLDOWN_SECONDS}s remaining:"
+                    f" {remaining}s). Use a different literature"
+                    " source or retry later."
+                )
+            last_exc = Exception(
+                f"HTTP {resp.status_code} from {domain}"
+            )
+            if attempt < retries - 1:
+                _sleep(wait)
+            continue
+
+        if 400 <= resp.status_code < 500:
+            # 4xx (non-429): raise immediately, no retry
+            resp.raise_for_status()
+
+        # 5xx or success
+        try:
+            resp.raise_for_status()
+        except Exception as exc:
+            last_exc = exc
+            if attempt < retries - 1:
+                _sleep(2 ** attempt)
+            continue
+
+        # Success
+        _reset_429(domain)
+        _cache_put(
+            cache_dir,
+            url,
+            params,
+            resp.status_code,
+            resp.text,
+            resp.headers.get("Content-Type", ""),
+        )
+        return resp
+
     raise last_exc  # type: ignore[misc]
 
 
-def _robust_post(url: str, *, json=None, params=None, headers=None,
-                 retries: int = 3, timeout: float = 15.0):
-    """POST *url* with exponential back-off retry and connection timeout.
+def _robust_post(
+    url: str,
+    *,
+    json=None,
+    params=None,
+    headers=None,
+    retries: int = 3,
+    timeout: float = 15.0,
+):
+    """POST *url* with per-domain rate limiting and 429 discipline.
 
-    Returns a :class:`requests.Response` on success; raises on final failure.
+    Returns a :class:`requests.Response` on success; raises
+    :class:`SourceCooldownError` if circuit breaker is active; raises
+    on final failure.
     """
-    import time
-    import requests  # type: ignore[import]
+    import requests as _requests  # type: ignore[import]
 
+    domain = _domain_key(url)
     last_exc: Exception | None = None
     for attempt in range(retries):
+        _rate_limit_wait(domain)
         try:
-            resp = requests.post(url, json=json, params=params, headers=headers,
-                                 timeout=timeout)
-            resp.raise_for_status()
-            return resp
-        except Exception as exc:  # noqa: BLE001
+            resp = _requests.post(
+                url, json=json, params=params,
+                headers=headers, timeout=timeout,
+            )
+        except Exception as exc:
             last_exc = exc
             if attempt < retries - 1:
-                time.sleep(2 ** attempt)
+                _sleep(2 ** attempt)
+            continue
+
+        if resp.status_code in (429, 503):
+            fired = _record_429(domain)
+            retry_after_str = resp.headers.get("Retry-After")
+            if retry_after_str is not None:
+                try:
+                    wait = min(float(retry_after_str), 60.0)
+                except ValueError:
+                    wait = 2 ** attempt
+            else:
+                wait = 2 ** attempt
+            if fired:
+                with _rate_lock:
+                    remaining = int(
+                        _domain_cooldown_until.get(domain, 0)
+                        - _time_module.monotonic()
+                    )
+                raise SourceCooldownError(
+                    f"{domain} is rate-limited (cooldown"
+                    f" {_COOLDOWN_SECONDS}s remaining:"
+                    f" {remaining}s). Use a different literature"
+                    " source or retry later."
+                )
+            last_exc = Exception(
+                f"HTTP {resp.status_code} from {domain}"
+            )
+            if attempt < retries - 1:
+                _sleep(wait)
+            continue
+
+        if 400 <= resp.status_code < 500:
+            resp.raise_for_status()
+
+        try:
+            resp.raise_for_status()
+        except Exception as exc:
+            last_exc = exc
+            if attempt < retries - 1:
+                _sleep(2 ** attempt)
+            continue
+
+        _reset_429(domain)
+        return resp
+
     raise last_exc  # type: ignore[misc]
+
 
 _CSV_FIELDS = [
     "paper_id",
@@ -95,10 +425,13 @@ _CSV_FIELDS = [
     "added_at",
     "source",
     "citation_count",
+    "full_text",
 ]
 
 _ARXIV_BARE_RE = re.compile(r"^\d{4}\.\d{4,5}(v\d+)?$")
 _DOI_BARE_RE = re.compile(r"^10\.\d{4,}/\S+$")
+
+_FULL_TEXT_MD_THRESHOLD = 5000  # chars; beyond this → real body, not abstract
 
 
 def _slugify(s: str) -> str:
@@ -141,10 +474,12 @@ class LiteratureCorpus:
         self._papers_dir = self._corpus_dir / "papers"
         self._csv_path = self._corpus_dir / "corpus.csv"
         self._chunks_path = self._corpus_dir / "chunks.jsonl"
+        self._http_cache_dir = self._corpus_dir / ".http_cache"
         self._lock = threading.Lock()
         self._corpus_dir.mkdir(parents=True, exist_ok=True)
         self._papers_dir.mkdir(parents=True, exist_ok=True)
         self._embedding_model = None  # lazy-loaded on first CorpusAdd
+        self._fastembed_warned = False
 
     # ------------------------------------------------------------------
     # Public API
@@ -173,8 +508,8 @@ class LiteratureCorpus:
             the text returned by ``mcp__arxiv__read_paper`` via the
             Write tool.
         title, authors, year, doi, arxiv_id, venue, abstract:
-            Optional metadata.  Pass values obtained from the MCP search
-            result that identified this paper.
+            Optional metadata.  Pass values obtained from the MCP
+            search result that identified this paper.
 
         Returns
         -------
@@ -202,6 +537,7 @@ class LiteratureCorpus:
         local_pdf_path = ""
         local_md_path = ""
         md_content = ""
+        full_text = False
 
         if suffix == ".pdf":
             dest_pdf = paper_dir / "paper.pdf"
@@ -213,12 +549,16 @@ class LiteratureCorpus:
             dest_md = paper_dir / "paper.md"
             dest_md.write_text(md_content, encoding="utf-8")
             local_md_path = str(dest_md)
+            # PDF ingestion always counts as full-text
+            full_text = True
         elif suffix in {".md", ".txt"}:
             dest_md = paper_dir / "paper.md"
             if src.resolve() != dest_md.resolve():
                 shutil.copy2(src, dest_md)
             md_content = dest_md.read_text(encoding="utf-8")
             local_md_path = str(dest_md)
+            # Full-text if markdown body exceeds threshold
+            full_text = len(md_content) > _FULL_TEXT_MD_THRESHOLD
         else:
             return (
                 f"ERROR: unsupported file type {suffix!r}. "
@@ -234,11 +574,15 @@ class LiteratureCorpus:
         if model is not None and chunks:
             import numpy as _np
             texts = [c["text"] for c in chunks]
-            embs = _np.array(list(model.embed(texts)), dtype=_np.float32)
+            embs = _np.array(
+                list(model.embed(texts)), dtype=_np.float32
+            )
             _np.save(str(paper_dir / "chunks.npy"), embs)
 
         # Infer source label
-        source_label = "arxiv" if arxiv_id else ("doi" if doi else "local")
+        source_label = (
+            "arxiv" if arxiv_id else ("doi" if doi else "local")
+        )
 
         row = {
             "paper_id": paper_id,
@@ -254,6 +598,7 @@ class LiteratureCorpus:
             "added_at": _now_iso(),
             "source": source_label,
             "citation_count": str(int(citation_count)),
+            "full_text": "true" if full_text else "false",
         }
 
         with self._lock:
@@ -266,18 +611,34 @@ class LiteratureCorpus:
         return paper_id
 
     def _get_embedding_model(self):
-        """Lazy-load bge-small-en-v1.5 via fastembed. Returns None if unavailable."""
+        """Lazy-load bge-small-en-v1.5 via fastembed.
+
+        Returns None if unavailable; emits a warning once.
+        """
         if self._embedding_model is not None:
             return self._embedding_model
         try:
             from fastembed import TextEmbedding
-            self._embedding_model = TextEmbedding("BAAI/bge-small-en-v1.5")
+            self._embedding_model = TextEmbedding(
+                "BAAI/bge-small-en-v1.5"
+            )
+        except ImportError:
+            if not self._fastembed_warned:
+                log.warning(
+                    "fastembed not installed — CorpusSearch falls"
+                    " back to BM25-only (no bge-small dense retrieval)"
+                )
+                self._fastembed_warned = True
+            self._embedding_model = None
         except Exception:
             self._embedding_model = None
         return self._embedding_model
 
     def _load_all_embeddings(self) -> "tuple[list[dict], object]":
-        """Load all chunks and their embeddings. Returns (chunks, embeddings_matrix) or (chunks, None)."""
+        """Load all chunks and embeddings.
+
+        Returns (chunks, embeddings_matrix) or (chunks, None).
+        """
         import numpy as _np
         chunks = self._load_chunks()
         if not chunks:
@@ -299,7 +660,8 @@ class LiteratureCorpus:
         for chunk in chunks:
             pid = chunk["paper_id"]
             if pid not in paper_embs:
-                return chunks, None  # missing embeddings for at least one paper → fallback
+                # missing embeddings for at least one paper → fallback
+                return chunks, None
             idx = paper_chunk_idx.get(pid, 0)
             if idx >= len(paper_embs[pid]):
                 return chunks, None
@@ -309,12 +671,15 @@ class LiteratureCorpus:
         return chunks, _np.array(rows, dtype=_np.float32)
 
     def search(self, query: str, top_k: int = 10) -> str:
-        """Search all paper.md files for passages relevant to *query*.
+        """Search FULL-TEXT papers for passages relevant to *query*.
 
-        Uses Reciprocal Rank Fusion (BM25 + dense embeddings) when both
-        ``rank_bm25`` and ``fastembed`` are installed.  Falls back to
-        BM25-only when dense embeddings are unavailable, or to substring
-        search when rank_bm25 is also absent.
+        Only chunks belonging to papers with ``full_text=true`` are
+        searched.  If the corpus contains no full-text papers, returns
+        an actionable error guiding the agent to acquire full text.
+
+        Uses Reciprocal Rank Fusion (BM25 + dense embeddings) when
+        both ``rank_bm25`` and ``fastembed`` are installed.  Falls back
+        to BM25-only, then substring search.
 
         Returns up to *top_k* formatted passages with page citations,
         or ``"No results found."``.
@@ -322,13 +687,49 @@ class LiteratureCorpus:
         import math as _math
         import numpy as _np
 
-        chunks, emb_matrix = self._load_all_embeddings()
-        if not chunks:
+        csv_rows = self._load_csv()
+        full_text_ids = {
+            r["paper_id"]
+            for r in csv_rows
+            if r.get("full_text", "false").lower() == "true"
+        }
+
+        if not full_text_ids:
+            n = len(csv_rows)
+            return (
+                f"ERROR: corpus contains no full-text papers"
+                f" ({n} abstract-only entr{'y' if n == 1 else 'ies'})."
+                " Quotes require full text — download the PDF or full"
+                " text first (DownloadPdf / mcp__arxiv__download_paper),"
+                " then CorpusAdd it."
+            )
+
+        all_chunks, emb_matrix_all = self._load_all_embeddings()
+        if not all_chunks:
             return "No results found."
 
-        rows = self._load_csv()
-        citation_counts = {r["paper_id"]: int(r.get("citation_count") or 0) for r in rows}
-        meta = {r["paper_id"]: r for r in rows}
+        # Filter to full-text chunks only
+        full_idx = [
+            i for i, c in enumerate(all_chunks)
+            if c["paper_id"] in full_text_ids
+        ]
+        if not full_idx:
+            return "No results found."
+
+        chunks = [all_chunks[i] for i in full_idx]
+        if emb_matrix_all is not None:
+            emb_matrix = _np.array(
+                [emb_matrix_all[i] for i in full_idx],
+                dtype=_np.float32,
+            )
+        else:
+            emb_matrix = None
+
+        citation_counts = {
+            r["paper_id"]: int(r.get("citation_count") or 0)
+            for r in csv_rows
+        }
+        meta = {r["paper_id"]: r for r in csv_rows}
 
         K_RRF = 60  # standard RRF constant
 
@@ -341,23 +742,36 @@ class LiteratureCorpus:
             bm25_scores = bm25.get_scores(_tokenize(query))
             # Apply citation weight
             weighted = [
-                bm25_scores[i] * (1 + _math.log10(citation_counts.get(chunks[i]["paper_id"], 0) + 1))
+                bm25_scores[i]
+                * (1 + _math.log10(
+                    citation_counts.get(chunks[i]["paper_id"], 0) + 1
+                ))
                 for i in range(len(chunks))
             ]
-            bm25_order = sorted(range(len(chunks)), key=lambda i: weighted[i], reverse=True)
+            bm25_order = sorted(
+                range(len(chunks)),
+                key=lambda i: weighted[i],
+                reverse=True,
+            )
             for rank, idx in enumerate(bm25_order):
                 bm25_ranks[idx] = rank
         except ImportError:
-            return self._search_substring(query, top_k)
+            return self._search_substring(
+                query, top_k, full_text_ids=full_text_ids
+            )
 
         # --- Dense ranking (if embeddings available) ---
         dense_ranks: dict = {}
         if emb_matrix is not None:
             model = self._get_embedding_model()
             if model is not None:
-                q_emb = _np.array(next(model.embed([query])), dtype=_np.float32)
+                q_emb = _np.array(
+                    next(model.embed([query])), dtype=_np.float32
+                )
                 q_norm = q_emb / (_np.linalg.norm(q_emb) + 1e-9)
-                norms = _np.linalg.norm(emb_matrix, axis=1, keepdims=True)
+                norms = _np.linalg.norm(
+                    emb_matrix, axis=1, keepdims=True
+                )
                 emb_n = emb_matrix / (norms + 1e-9)
                 cos_scores = emb_n @ q_norm
                 dense_order = _np.argsort(cos_scores)[::-1].tolist()
@@ -367,8 +781,12 @@ class LiteratureCorpus:
         # --- RRF fusion ---
         if dense_ranks:
             rrf_scores = {
-                i: (2.0 / 3.0) / (K_RRF + dense_ranks.get(i, len(chunks)))
-                  + (1.0 / 3.0) / (K_RRF + bm25_ranks.get(i, len(chunks)))
+                i: (2.0 / 3.0) / (
+                    K_RRF + dense_ranks.get(i, len(chunks))
+                )
+                + (1.0 / 3.0) / (
+                    K_RRF + bm25_ranks.get(i, len(chunks))
+                )
                 for i in range(len(chunks))
             }
         else:
@@ -377,7 +795,9 @@ class LiteratureCorpus:
                 for i in range(len(chunks))
             }
 
-        top_idx = sorted(rrf_scores, key=lambda i: rrf_scores[i], reverse=True)[:top_k]
+        top_idx = sorted(
+            rrf_scores, key=lambda i: rrf_scores[i], reverse=True
+        )[:top_k]
 
         passages = []
         for idx in top_idx:
@@ -388,12 +808,20 @@ class LiteratureCorpus:
             m = meta.get(pid, {})
             title = m.get("title", pid)
             year = m.get("year", "")
-            passages.append(f"--- {title} ({year}), p.{chunk['page']} ---\n{chunk['text']}\n")
+            passages.append(
+                f"--- {title} ({year}), p.{chunk['page']} ---\n"
+                f"{chunk['text']}\n"
+            )
 
         return "\n".join(passages) if passages else "No results found."
 
-    def _search_substring(self, query: str, top_k: int) -> str:
-        """Fallback substring search (used when rank_bm25 is not installed)."""
+    def _search_substring(
+        self,
+        query: str,
+        top_k: int,
+        full_text_ids: Optional[set] = None,
+    ) -> str:
+        """Fallback substring search (rank_bm25 not installed)."""
         query_lower = query.lower()
         rows = self._load_csv()
         passages: list[str] = []
@@ -401,6 +829,9 @@ class LiteratureCorpus:
         for row in rows:
             if len(passages) >= top_k:
                 break
+            pid = row.get("paper_id", "")
+            if full_text_ids is not None and pid not in full_text_ids:
+                continue
             md_path_str = row.get("local_md_path", "")
             if not md_path_str:
                 continue
@@ -415,7 +846,9 @@ class LiteratureCorpus:
             for i, line in enumerate(lines):
                 if len(passages) >= top_k:
                     break
-                page_match = re.match(r"<!--\s*page\s*(\d+)\s*-->", line)
+                page_match = re.match(
+                    r"<!--\s*page\s*(\d+)\s*-->", line
+                )
                 if page_match:
                     current_page = int(page_match.group(1))
                     continue
@@ -426,39 +859,54 @@ class LiteratureCorpus:
                     title = row.get("title", row["paper_id"])
                     year = row.get("year", "")
                     passages.append(
-                        f"--- {title} ({year}), p.{current_page} ---\n{context}\n"
+                        f"--- {title} ({year}), p.{current_page}"
+                        f" ---\n{context}\n"
                     )
 
         return "\n".join(passages) if passages else "No results found."
 
     def get_paper(self, paper_id: str) -> str:
-        """Return full extracted Markdown of *paper_id*, or ``"ERROR: …"``."""
+        """Return full extracted Markdown of *paper_id*, or ERROR."""
         for row in self._load_csv():
             if row["paper_id"] == paper_id:
                 md_path_str = row.get("local_md_path", "")
                 if not md_path_str:
                     return (
-                        f"ERROR: paper '{paper_id}' has no extracted text. "
-                        "Add it with CorpusAdd using a local PDF or .md file."
+                        f"ERROR: paper '{paper_id}' has no extracted"
+                        " text. Add it with CorpusAdd using a local"
+                        " PDF or .md file."
                     )
                 md_path = Path(md_path_str)
                 if not md_path.exists():
-                    return f"ERROR: text file not found at {md_path_str!r}."
+                    return (
+                        f"ERROR: text file not found at"
+                        f" {md_path_str!r}."
+                    )
                 return md_path.read_text(encoding="utf-8")
         return f"ERROR: paper '{paper_id}' not found in corpus."
 
     def list_papers(self) -> str:
-        """Return a Markdown table of all papers, or ``"Corpus is empty."``."""
+        """Return a Markdown table of all papers, or 'Corpus is empty.'
+
+        Each row is annotated with ``[full-text]`` or
+        ``[abstract-only]`` to show primary-source status.
+        """
         rows = self._load_csv()
         if not rows:
             return "Corpus is empty."
-        header = "| paper_id | title | authors | year | source |"
-        sep = "| --- | --- | --- | --- | --- |"
+        header = (
+            "| paper_id | title | authors | year"
+            " | source | full_text |"
+        )
+        sep = "| --- | --- | --- | --- | --- | --- |"
         lines = [header, sep]
         for r in rows:
+            ft = r.get("full_text", "false").lower() == "true"
+            ft_label = "[full-text]" if ft else "[abstract-only]"
             lines.append(
                 f"| {r.get('paper_id','')} | {r.get('title','')} | "
-                f"{r.get('authors','')} | {r.get('year','')} | {r.get('source','')} |"
+                f"{r.get('authors','')} | {r.get('year','')} | "
+                f"{r.get('source','')} | {ft_label} |"
             )
         return "\n".join(lines)
 
@@ -469,13 +917,14 @@ class LiteratureCorpus:
     def _extract_pdf_to_md(self, pdf_path: Path) -> str:
         """Extract page-annotated Markdown from *pdf_path*.
 
-        Tries Docling first (layout-aware, table recognition, structured
-        output), then falls back to pymupdf, then returns a placeholder.
+        Tries Docling first (layout-aware), then pymupdf, then a
+        placeholder.
         """
-        # Try Docling first (layout-aware, table recognition, structured output)
+        # Try Docling first
         try:
-            from docling.document_converter import DocumentConverter  # type: ignore[import]
-
+            from docling.document_converter import (  # type: ignore
+                DocumentConverter,
+            )
             converter = DocumentConverter()
             result = converter.convert(str(pdf_path))
             md = result.document.export_to_markdown()
@@ -497,7 +946,9 @@ class LiteratureCorpus:
             except Exception:
                 pass
 
-        return "(PDF extraction unavailable — install docling or pymupdf)"
+        return (
+            "(PDF extraction unavailable — install docling or pymupdf)"
+        )
 
     # ------------------------------------------------------------------
     # Chunking infrastructure
@@ -530,7 +981,7 @@ class LiteratureCorpus:
         chunks: list[dict] = []
         i = 0
         while i < len(all_words):
-            window = all_words[i : i + chunk_size]
+            window = all_words[i: i + chunk_size]
             if not window:
                 break
             page = window[0][1]
@@ -539,7 +990,9 @@ class LiteratureCorpus:
             i += max(1, chunk_size - overlap)
         return chunks
 
-    def _append_chunks(self, paper_id: str, chunks: list[dict]) -> None:
+    def _append_chunks(
+        self, paper_id: str, chunks: list[dict]
+    ) -> None:
         """Append *chunks* for *paper_id* to chunks.jsonl."""
         with self._lock:
             with self._chunks_path.open("a", encoding="utf-8") as f:
@@ -562,13 +1015,19 @@ class LiteratureCorpus:
             return []
         with self._lock:
             with self._chunks_path.open(encoding="utf-8") as f:
-                return [json.loads(line) for line in f if line.strip()]
+                return [
+                    json.loads(line)
+                    for line in f
+                    if line.strip()
+                ]
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _derive_paper_id(self, arxiv_id: str, doi: str, src: Path) -> str:
+    def _derive_paper_id(
+        self, arxiv_id: str, doi: str, src: Path
+    ) -> str:
         """Derive a stable paper_id from available metadata."""
         if arxiv_id:
             return "arxiv_" + _slugify(arxiv_id.strip())
@@ -587,8 +1046,12 @@ class LiteratureCorpus:
             return list(csv.DictReader(f))
 
     def _save_csv(self, rows: list[dict]) -> None:
-        with self._csv_path.open("w", newline="", encoding="utf-8") as f:
+        with self._csv_path.open(
+            "w", newline="", encoding="utf-8"
+        ) as f:
             writer = csv.DictWriter(f, fieldnames=_CSV_FIELDS)
             writer.writeheader()
             for row in rows:
-                writer.writerow({k: row.get(k, "") for k in _CSV_FIELDS})
+                writer.writerow(
+                    {k: row.get(k, "") for k in _CSV_FIELDS}
+                )
