@@ -170,8 +170,22 @@ class HypothesisLedger:
                 "(multiple quantified sub-claims). Split it into "
                 "separate hypotheses, one falsifiable claim each."
             )
+
+        def _normalize(s: str) -> str:
+            return " ".join(s.casefold().split())
+
+        norm_new = _normalize(statement)
+
         with self._lock:
             data = self._load()
+            # Duplicate-statement guard: reject semantically identical claims.
+            for existing_id, existing in data.items():
+                if _normalize(existing["statement"]) == norm_new:
+                    return (
+                        f"ERROR: duplicate of {existing_id}. Identical"
+                        " hypothesis already exists — test it or revise"
+                        " the claim."
+                    )
             open_count = sum(
                 1 for h in data.values()
                 if h["status_log"]

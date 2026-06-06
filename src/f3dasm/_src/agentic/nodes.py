@@ -183,6 +183,11 @@ class StrategizerNode(AgentNode):
         # Two-shot Done() gate: first call warns, second call closes.
         # Resets to False whenever a new Delegate() fires.
         self._done_warned: bool = False
+        # Bounded re-prompt counter: incremented each time the node loops back
+        # due to an unaccepted termination (no Done or refused Done).  NOT reset
+        # in the A1/A2 per-turn block — it persists across loopbacks within one
+        # run.  After 3 loopbacks the run terminates UNGATED.
+        self._finish_attempts: int = 0
         # Accumulated token usage across strategizer + all workers this run.
         self._token_totals: dict = {
             "input_tokens": 0,
@@ -1029,6 +1034,11 @@ class StrategizerNode(AgentNode):
             target = Path(study_dir) / path
             if not target.exists():
                 return prefix + f"NOT FOUND: {target}"
+            if target.is_dir():
+                return prefix + (
+                    f"ERROR: {target} is a directory."
+                    " Pass a file path."
+                )
             return prefix + target.read_text(encoding="utf-8")
 
         # RecallHistory: demand-driven episodic memory via delegation log.
@@ -1530,13 +1540,74 @@ class StrategizerNode(AgentNode):
                 ),
             })
 
-        # A1/A2: reset per-turn state so a reused node starts clean each call
+        # ── Hard budget stop ──────────────────────────────────────────────────
+        # If the 5 % cleanup window has already been exhausted, do NOT invoke
+        # the adapter — return immediately with a BUDGET EXCEEDED banner.
+        if budget is not None and start is not None:
+            _elapsed_now = time.time() - start
+            if _elapsed_now > budget * 1.05:
+                # Collect any abandoned delegations for reporting
+                with self._registry_lock:
+                    _abandoned = [
+                        d for d, e in self._registry.items()
+                        if e["status"] in ("Working", "FollowUp")
+                    ]
+                    _total_new_budget = len(self._registry)
+                    _evals_new_budget = sum(
+                        e["evals"] for e in self._registry.values()
+                    )
+                # Best-effort: grab last AI text from state messages
+                _prior_text = ""
+                for _m in reversed(state["messages"]):
+                    if isinstance(_m, AIMessage):
+                        _prior_text = str(_m.content)
+                        break
+                _budget_report = (
+                    "## ⚠ BUDGET EXCEEDED\n\n"
+                    "Run terminated by the runtime after the 5% cleanup "
+                    f"window ({_elapsed_now:.0f}s elapsed / "
+                    f"{budget:.0f}s budget)."
+                )
+                if _abandoned:
+                    _budget_report += (
+                        f"\nAbandoned delegations: {_abandoned}."
+                    )
+                _budget_report += (
+                    "\nTreat all conclusions below as unaudited.\n\n"
+                    "---\n\n" + (_prior_text or "(no prior report)")
+                )
+                return Command(
+                    goto=END,
+                    update={
+                        "messages": [],
+                        "done": True,
+                        "last_report": _budget_report,
+                        "total_delegations": (
+                            state["total_delegations"] + _total_new_budget
+                        ),
+                        "evals_used": (
+                            state.get("evals_used", 0) + _evals_new_budget
+                        ),
+                        "token_totals": dict(self._token_totals),
+                        "error_counts": dict(self._error_counts),
+                    },
+                )
+
+        # A1/A2: reset per-turn state so a reused node starts clean each call.
+        # Working/FollowUp entries are preserved so loopbacks don't orphan live
+        # delegations whose background threads are still running.
         self._route.clear()
         self._ask_count = 0
         self._done_warned = False
         with self._registry_lock:
-            self._registry.clear()
-            self._threads.clear()
+            self._registry = {
+                d: e for d, e in self._registry.items()
+                if e["status"] in ("Working", "FollowUp")
+            }
+            self._threads = {
+                d: t for d, t in self._threads.items()
+                if d in self._registry
+            }
         with self._notifications_lock:
             self._notifications.clear()
 
@@ -1547,32 +1618,84 @@ class StrategizerNode(AgentNode):
         ai_msg = AIMessage(content=text)
 
         route = self._route
-        # "done" or no routing tool — enforce deliverables before accepting
+        accepted = route.get("kind") == "done"
         missing = self._missing_deliverables(state)
-        if missing:
-            missing_list = "\n".join(f"- {p}" for p in missing)
+
+        # ── Bounded re-prompt on unaccepted termination ───────────────────────
+        if (not accepted or missing) and self._finish_attempts < 3:
+            self._finish_attempts += 1
+            problems: list[str] = []
+            if missing:
+                missing_list = "\n".join(f"- {p}" for p in missing)
+                problems.append(
+                    "Required deliverables are missing from the"
+                    f" study directory:\n{missing_list}\n"
+                    "Write them via WriteDeliverable() before"
+                    " calling Done()."
+                )
+            if not accepted:
+                with self._registry_lock:
+                    working = [
+                        d for d, e in self._registry.items()
+                        if e["status"] in ("Working", "FollowUp")
+                    ]
+                if working:
+                    problems.append(
+                        f"Delegations still running: {working}."
+                        " Poll them with GetStatus() and call Done()"
+                        " once they finish."
+                    )
+                else:
+                    problems.append(
+                        "You ended your turn without an accepted"
+                        " Done(). If Done() was refused (critic"
+                        " verdict, two-shot confirmation, or another"
+                        " gate), address the refusal and call Done()"
+                        " again. A run only closes through an"
+                        " accepted Done()."
+                    )
             return Command(
                 goto=self._name,
                 update={
                     "messages": [
                         ai_msg,
                         HumanMessage(content=(
-                            "Run cannot complete: the following required"
-                            " deliverables are missing from the"
-                            f" workspace:\n{missing_list}\n"
-                            "Please delegate their creation before"
-                            " calling Done."
+                            "Run cannot complete"
+                            f" (attempt {self._finish_attempts}/3):\n"
+                            + "\n\n".join(problems)
                         )),
                     ],
                 },
             )
 
+        # ── Terminal branch ───────────────────────────────────────────────────
         # Accumulate delegation counts and evals from registry
         with self._registry_lock:
             total_new = len(self._registry)
             evals_new = sum(e["evals"] for e in self._registry.values())
 
         summary = route.get("summary") or text
+
+        # Prepend UNGATED banner if the run ends without an accepted Done().
+        if not accepted or missing:
+            flags = []
+            if not accepted:
+                flags.append(
+                    "the run terminated WITHOUT an accepted Done() —"
+                    " the final conclusions did NOT pass the"
+                    " adversarial critic gate"
+                )
+            if missing:
+                flags.append(
+                    f"required deliverables missing: {missing}"
+                )
+            summary = (
+                "## ⚠ UNGATED RUN\n\n"
+                "This run is NOT validated: " + "; ".join(flags) +
+                ".\nTreat all conclusions below as unaudited.\n\n---\n\n"
+                + summary
+            )
+
         return Command(
             goto=END,
             update={

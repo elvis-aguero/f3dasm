@@ -135,6 +135,10 @@ PROBLEM_STATEMENT.md for what constitutes a reproducible result.  In general
 it is a self-contained Python script that a reader can run to reproduce the
 main finding of this run.  Write it as your last action before Done().
 Do not delegate it to a worker.
+
+A run closes ONLY through an accepted Done(). Ending your turn after a
+refused Done() does not end the run — the runtime re-prompts you, and after
+repeated refusals the run is stamped UNGATED.
 </deliverables>
 
 <operating_principles>

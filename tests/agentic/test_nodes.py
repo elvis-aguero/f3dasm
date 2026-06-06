@@ -127,7 +127,11 @@ def test_strategizer_delegate_returns_task_id():
         def invoke(self, messages):
             worker_started.set()
             time.sleep(0.05)
-            return "## Report\n### Actions taken\nDone.\n### Files touched\n(none)\n### Conclusions\nOK\n### Numbers\nn: 0"
+            return (
+                "## Report\n### Actions taken\nDone.\n### Files touched\n(none)\n"
+                "### Conclusions\nExperiment A completed successfully.\n"
+                "### Numbers\nn: 1, mean: 0.42, std: 0.01"
+            )
 
     class DelegateCallingAdapter(StubAdapter):
         def invoke(self, messages):
@@ -140,7 +144,8 @@ def test_strategizer_delegate_returns_task_id():
             # Wait briefly then call Done after delegation finishes
             worker_started.wait(timeout=2)
             time.sleep(0.1)  # let worker finish
-            self.closure_tools["Done"](summary="All done.")
+            self.closure_tools["Done"](summary="All done.")  # first: warning
+            self.closure_tools["Done"](summary="All done.")  # second: accepted
             return "Done."
 
     adapter = DelegateCallingAdapter()
@@ -207,7 +212,8 @@ def test_strategizer_increments_delegation_count():
         def invoke(self, messages):
             self.closure_tools["Delegate"](target="implementer", intent="task", expected_report="report")
             time.sleep(0.1)  # let worker finish
-            self.closure_tools["Done"](summary="done")
+            self.closure_tools["Done"](summary="done")  # first: warning
+            self.closure_tools["Done"](summary="done")  # second: accepted
             return "Done."
 
     adapter = DelegateCallingAdapter()
@@ -225,7 +231,13 @@ def test_strategizer_increments_delegation_count():
 
 
 def test_strategizer_no_routing_tool_defaults_to_done():
-    """StrategizerNode ends run if no routing tool is called."""
+    """StrategizerNode loops back with a re-prompt when no routing tool is called.
+
+    Adapted: the old behaviour unconditionally ended the run when no Done() was
+    called.  The new route-aware behaviour re-prompts the LLM (up to 3 times)
+    so that an LLM that self-acquits in prose is caught before it writes
+    solution.md.  The test now asserts the loopback on the first attempt.
+    """
     from f3dasm._src.agentic.nodes import StrategizerNode
 
     adapter = StubAdapter(response="Final analysis complete.")
@@ -233,8 +245,12 @@ def test_strategizer_no_routing_tool_defaults_to_done():
     node = StrategizerNode(adapter, name="strategizer", outgoing=["implementer"], spec=spec)
     cmd = node(make_state())
 
-    assert cmd.goto == END
-    assert cmd.update["done"] is True
+    # First attempt — loops back with a diagnostic message
+    assert cmd.goto == "strategizer"
+    assert node._finish_attempts == 1
+    messages = cmd.update.get("messages", [])
+    human_msgs = [m for m in messages if isinstance(m, HumanMessage)]
+    assert any("without an accepted Done" in m.content for m in human_msgs)
 
 
 def test_strategizer_delegate_invalid_target_returns_error():
@@ -431,7 +447,7 @@ def test_parallel_two_delegations_both_complete():
             time.sleep(0.05)
             return (
                 f"## Report\n### Actions taken\nDone {self._name}.\n"
-                f"### Files touched\n(none)\n### Conclusions\nOK\n### Numbers\nn: 0"
+                f"### Files touched\n(none)\n### Conclusions\n{self._name} completed successfully.\n### Numbers\nn: 1"
             )
 
     class TwoDelegateAdapter(StubAdapter):
@@ -439,8 +455,9 @@ def test_parallel_two_delegations_both_complete():
             self.closure_tools["Delegate"](target="worker_a", intent="Task A", expected_report="")
             self.closure_tools["Delegate"](target="worker_b", intent="Task B", expected_report="")
             time.sleep(0.15)  # let both workers finish
-            result = self.closure_tools["Done"](summary="Both done.")
+            result = self.closure_tools["Done"](summary="Both done.")  # first: warning
             assert "ERROR" not in result, f"Done() failed: {result}"
+            self.closure_tools["Done"](summary="Both done.")  # second: accepted
             return "Done."
 
     class A(Agent):
@@ -530,13 +547,17 @@ def test_registry_cleared_between_runs():
 
     class FastWorkerAdapter(StubAdapter):
         def invoke(self, messages):
-            return "## Report\n### Actions taken\nDone.\n### Files touched\n(none)\n### Conclusions\nOK\n### Numbers\nn: 0"
+            return (
+                "## Report\n### Actions taken\nTask completed.\n### Files touched\n(none)\n"
+                "### Conclusions\nAll experiments ran successfully.\n### Numbers\nn: 1, result: 0.42"
+            )
 
     class OneDelegateAdapter(StubAdapter):
         def invoke(self, messages):
             self.closure_tools["Delegate"](target="implementer", intent="task", expected_report="")
             time.sleep(0.1)
-            self.closure_tools["Done"](summary="done")
+            self.closure_tools["Done"](summary="done")  # first: warning
+            self.closure_tools["Done"](summary="done")  # second: accepted
             call_count[0] += 1
             return "Done."
 
@@ -641,7 +662,7 @@ def test_delegation_still_working_returns_working_status():
             allow_finish.wait(timeout=5)
             return (
                 "## Report\n### Actions taken\nDone.\n"
-                "### Files touched\n(none)\n### Conclusions\nOK\n### Numbers\nn: 0"
+                "### Files touched\n(none)\n### Conclusions\nTask completed successfully.\n### Numbers\nn: 1"
             )
 
     class PollThenReleaseAdapter(StubAdapter):
@@ -660,7 +681,8 @@ def test_delegation_still_working_returns_working_status():
             # Release the worker and wait for it to finish
             allow_finish.set()
             time.sleep(0.15)
-            self.closure_tools["Done"](summary="done")
+            self.closure_tools["Done"](summary="done")  # first: warning
+            self.closure_tools["Done"](summary="done")  # second: accepted
             return "Done."
 
     adapter = PollThenReleaseAdapter()

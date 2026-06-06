@@ -138,5 +138,6 @@ class ScriptedStrategistAdapter:
                 "# replicate.py\nprint('Optimal design confirmed.')\n",
             )
 
-        tools["Done"](summary="H1 falsified. H2 supported. Optimal design confirmed.")
+        tools["Done"](summary="H1 falsified. H2 supported. Optimal design confirmed.")  # first: warning
+        tools["Done"](summary="H1 falsified. H2 supported. Optimal design confirmed.")  # second: accepted
         return "Done."
