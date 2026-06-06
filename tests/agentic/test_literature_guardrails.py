@@ -937,3 +937,278 @@ class TestOpenAlexPdfUrl:
         data = json.loads(result)
         assert len(data) >= 1
         assert data[0]["pdf_url"] == oa_pdf
+
+
+# ---------------------------------------------------------------------------
+# Tests: get_openalex_citations and get_openalex_references
+# ---------------------------------------------------------------------------
+
+def _make_tools(tmp_path):
+    """Helper: build closure tools for an agent, returning the tools dict."""
+    from f3dasm._src.agentic.agents.literature import LiteratureReviewAgent
+    agent = LiteratureReviewAgent()
+    return agent.build_closure_tools(
+        study_dir=tmp_path,
+        lit_reviewer_notes_dir=tmp_path / "lit",
+    )
+
+
+def _work_payload(**overrides):
+    """Minimal OpenAlex work object for use in mock responses."""
+    base = {
+        "id": "https://openalex.org/W999",
+        "title": "Citing Paper",
+        "publication_year": 2024,
+        "cited_by_count": 42,
+        "doi": "https://doi.org/10.1234/citing",
+        "best_oa_location": {"pdf_url": "https://oa.example.com/paper.pdf"},
+        "primary_location": {},
+        "open_access": {},
+    }
+    base.update(overrides)
+    return base
+
+
+class TestGetOpenAlexCitations:
+    """Tests for get_openalex_citations closure."""
+
+    def test_issues_correct_filter_and_returns_titles(
+        self, tmp_path, monkeypatch
+    ):
+        """One GET with filter=cites:W123; parsed titles returned."""
+        monkeypatch.setattr(lc_mod, "_sleep", lambda s: None)
+        _reset_rate_state("api.openalex.org")
+
+        tools = _make_tools(tmp_path)
+        if "get_openalex_citations" not in tools:
+            pytest.skip("get_openalex_citations not in tools")
+
+        resp_body = json.dumps({"results": [_work_payload()]})
+        mock_resp = _mock_resp(200, resp_body)
+        mock_resp.headers = {"Content-Type": "application/json"}
+
+        captured_params = {}
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            captured_params.update(params or {})
+            return mock_resp
+
+        with patch("requests.get", side_effect=fake_get):
+            result = tools["get_openalex_citations"]("W123", n_results=5)
+
+        assert "cites:W123" == captured_params.get("filter"), (
+            f"Expected filter=cites:W123, got {captured_params}"
+        )
+        data = json.loads(result)
+        assert isinstance(data, list)
+        assert len(data) == 1
+        assert data[0]["title"] == "Citing Paper"
+        assert data[0]["pdf_url"] == "https://oa.example.com/paper.pdf"
+
+    def test_accepts_full_url_work_id(self, tmp_path, monkeypatch):
+        """Full URL work_id produces the same filter as a bare W-id."""
+        monkeypatch.setattr(lc_mod, "_sleep", lambda s: None)
+        _reset_rate_state("api.openalex.org")
+
+        tools = _make_tools(tmp_path)
+        if "get_openalex_citations" not in tools:
+            pytest.skip("get_openalex_citations not in tools")
+
+        resp_body = json.dumps({"results": [_work_payload()]})
+        mock_resp = _mock_resp(200, resp_body)
+        mock_resp.headers = {"Content-Type": "application/json"}
+
+        captured_params = {}
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            captured_params.update(params or {})
+            return mock_resp
+
+        with patch("requests.get", side_effect=fake_get):
+            result = tools["get_openalex_citations"](
+                "https://openalex.org/W123", n_results=5
+            )
+
+        assert "cites:W123" == captured_params.get("filter"), (
+            f"Expected cites:W123 (bare id), got {captured_params}"
+        )
+        data = json.loads(result)
+        assert isinstance(data, list)
+
+    def test_cooldown_error_returns_error_string(
+        self, tmp_path, monkeypatch
+    ):
+        """SourceCooldownError from _robust_get → 'ERROR: ...' string."""
+        monkeypatch.setattr(lc_mod, "_sleep", lambda s: None)
+
+        tools = _make_tools(tmp_path)
+        if "get_openalex_citations" not in tools:
+            pytest.skip("get_openalex_citations not in tools")
+
+        # Force the circuit breaker into cooldown for openalex
+        _reset_rate_state("api.openalex.org")
+        with lc_mod._rate_lock:
+            lc_mod._domain_cooldown_until["api.openalex.org"] = (
+                time.monotonic() + 9999
+            )
+
+        call_count = [0]
+
+        def counting_get(*a, **kw):
+            call_count[0] += 1
+            return _mock_resp(200, '{"results": []}')
+
+        with patch("requests.get", side_effect=counting_get):
+            result = tools["get_openalex_citations"]("W123")
+
+        assert result.startswith("ERROR:"), result
+        assert "rate-limited" in result.lower() or "cooldown" in result.lower()
+        assert call_count[0] == 0, "No request should be issued during cooldown"
+
+
+class TestGetOpenAlexReferences:
+    """Tests for get_openalex_references closure."""
+
+    def test_two_gets_work_then_hydrate(self, tmp_path, monkeypatch):
+        """Makes two GETs: single-work fetch then batched hydration."""
+        monkeypatch.setattr(lc_mod, "_sleep", lambda s: None)
+        _reset_rate_state("api.openalex.org")
+
+        tools = _make_tools(tmp_path)
+        if "get_openalex_references" not in tools:
+            pytest.skip("get_openalex_references not in tools")
+
+        work_body = json.dumps({
+            "id": "https://openalex.org/W42",
+            "referenced_works": [
+                "https://openalex.org/W10",
+                "https://openalex.org/W20",
+            ],
+        })
+        hydrate_body = json.dumps({
+            "results": [
+                _work_payload(
+                    id="https://openalex.org/W10",
+                    title="Reference One",
+                    cited_by_count=5,
+                ),
+                _work_payload(
+                    id="https://openalex.org/W20",
+                    title="Reference Two",
+                    cited_by_count=3,
+                ),
+            ]
+        })
+
+        call_urls = []
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            call_urls.append(url)
+            if "W42" in url and not params.get("filter"):
+                return _mock_resp(200, work_body)
+            return _mock_resp(200, hydrate_body)
+
+        with patch("requests.get", side_effect=fake_get):
+            result = tools["get_openalex_references"]("W42")
+
+        assert len(call_urls) == 2, (
+            f"Expected 2 GETs, got {len(call_urls)}: {call_urls}"
+        )
+        data = json.loads(result)
+        assert isinstance(data, list)
+        titles = {d["title"] for d in data}
+        assert "Reference One" in titles
+        assert "Reference Two" in titles
+
+    def test_hydrate_uses_pipe_joined_filter(self, tmp_path, monkeypatch):
+        """Batched hydration uses openalex_id:W10|W20 filter."""
+        monkeypatch.setattr(lc_mod, "_sleep", lambda s: None)
+        _reset_rate_state("api.openalex.org")
+
+        tools = _make_tools(tmp_path)
+        if "get_openalex_references" not in tools:
+            pytest.skip("get_openalex_references not in tools")
+
+        work_body = json.dumps({
+            "id": "https://openalex.org/W42",
+            "referenced_works": [
+                "https://openalex.org/W10",
+                "https://openalex.org/W20",
+            ],
+        })
+        hydrate_body = json.dumps({"results": []})
+
+        captured_hydrate_params = {}
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            params = params or {}
+            if params.get("filter", "").startswith("openalex_id:"):
+                captured_hydrate_params.update(params)
+            if "W42" in url and not params.get("filter"):
+                return _mock_resp(200, work_body)
+            return _mock_resp(200, hydrate_body)
+
+        with patch("requests.get", side_effect=fake_get):
+            tools["get_openalex_references"]("W42")
+
+        filt = captured_hydrate_params.get("filter", "")
+        assert filt.startswith("openalex_id:"), (
+            f"Expected openalex_id: filter, got {filt!r}"
+        )
+        assert "W10" in filt and "W20" in filt
+
+    def test_empty_referenced_works_returns_message(
+        self, tmp_path, monkeypatch
+    ):
+        """Work with no referenced_works → plain 'No references listed' message."""
+        monkeypatch.setattr(lc_mod, "_sleep", lambda s: None)
+        _reset_rate_state("api.openalex.org")
+
+        tools = _make_tools(tmp_path)
+        if "get_openalex_references" not in tools:
+            pytest.skip("get_openalex_references not in tools")
+
+        work_body = json.dumps({
+            "id": "https://openalex.org/W99",
+            "referenced_works": [],
+        })
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            return _mock_resp(200, work_body)
+
+        with patch("requests.get", side_effect=fake_get):
+            result = tools["get_openalex_references"]("W99")
+
+        assert "No references listed" in result, (
+            f"Expected no-references message, got: {result!r}"
+        )
+
+    def test_references_cooldown_error_returns_error_string(
+        self, tmp_path, monkeypatch
+    ):
+        """SourceCooldownError on first GET → 'ERROR: ...' string."""
+        monkeypatch.setattr(lc_mod, "_sleep", lambda s: None)
+
+        tools = _make_tools(tmp_path)
+        if "get_openalex_references" not in tools:
+            pytest.skip("get_openalex_references not in tools")
+
+        # Force the circuit breaker into cooldown for openalex
+        _reset_rate_state("api.openalex.org")
+        with lc_mod._rate_lock:
+            lc_mod._domain_cooldown_until["api.openalex.org"] = (
+                time.monotonic() + 9999
+            )
+
+        call_count = [0]
+
+        def counting_get(*a, **kw):
+            call_count[0] += 1
+            return _mock_resp(200, '{"results": []}')
+
+        with patch("requests.get", side_effect=counting_get):
+            result = tools["get_openalex_references"]("W42")
+
+        assert result.startswith("ERROR:"), result
+        assert "rate-limited" in result.lower() or "cooldown" in result.lower()
+        assert call_count[0] == 0, "No request should be issued during cooldown"

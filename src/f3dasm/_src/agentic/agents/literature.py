@@ -73,6 +73,14 @@ Until a paper has been CorpusAdded from a PDF or full-text markdown
                                   — 300M+ works; returns pdf_url (best_oa_location)
                                     for open-access works. Strong for non-arXiv
                                     journals (JMPS, CMAME, Acta Materialia).
+  get_openalex_citations(work_id, n_results=20)
+                                  — papers that cite work_id, sorted by citation
+                                    count; citation-graph traversal fallback when
+                                    Semantic Scholar is rate-limited.
+  get_openalex_references(work_id)
+                                  — reference list of work_id (first 40), hydrated
+                                    in one batched call; citation-graph traversal
+                                    fallback when Semantic Scholar is rate-limited.
   get_semantic_scholar_recommendations(paper_id, n_results=10)
                                   — semantically similar papers without citation
                                     links.
@@ -560,7 +568,169 @@ class LiteratureReviewAgent(Agent):
             dest.write_bytes(body)
             return str(dest)
 
+        def get_openalex_citations(
+            work_id: str, n_results: int = 20
+        ) -> str:
+            """Fetch papers that cite *work_id* via OpenAlex citation-graph traversal; works during Semantic Scholar cooldowns.
+
+            work_id may be a bare OpenAlex ID (``W123…``) or a full URL
+            (``https://openalex.org/W123…``).  Returns a JSON list of
+            ``{id, title, year, cited_by_count, doi, pdf_url}`` sorted
+            by citation count descending.
+            """
+            import json as _j
+            # Normalise: strip full URL prefix if present
+            _wid = work_id.strip()
+            if _wid.startswith("https://openalex.org/"):
+                _wid = _wid[len("https://openalex.org/"):]
+            try:
+                resp = _robust_get(
+                    "https://api.openalex.org/works",
+                    params={
+                        "filter": f"cites:{_wid}",
+                        "per-page": min(int(n_results), 50),
+                        "sort": "cited_by_count:desc",
+                        "select": (
+                            "id,title,publication_year,doi"
+                            ",cited_by_count,best_oa_location"
+                            ",open_access,primary_location"
+                        ),
+                    },
+                    headers={
+                        "User-Agent": (
+                            "f3dasm-agent/1.0"
+                            " (mailto:f3dasm@brown.edu)"
+                        ),
+                    },
+                    cache_dir=cache_dir,
+                )
+                works = resp.json().get("results", [])
+            except SourceCooldownError as exc:
+                return f"ERROR: {exc}"
+            except Exception as exc:
+                return f"ERROR: OpenAlex citations failed: {exc}"
+
+            out = []
+            for w in works:
+                doi = (w.get("doi") or "").replace(
+                    "https://doi.org/", ""
+                )
+                boa = w.get("best_oa_location") or {}
+                loc = w.get("primary_location") or {}
+                oa = w.get("open_access") or {}
+                pdf_url = (
+                    boa.get("pdf_url")
+                    or oa.get("oa_url")
+                    or loc.get("pdf_url")
+                    or loc.get("landing_page_url")
+                    or ""
+                )
+                out.append({
+                    "id": w.get("id", ""),
+                    "title": w.get("title", ""),
+                    "year": w.get("publication_year", ""),
+                    "cited_by_count": w.get("cited_by_count", 0),
+                    "doi": doi,
+                    "pdf_url": pdf_url,
+                })
+            return _j.dumps(out, indent=2)
+
+        def get_openalex_references(work_id: str) -> str:
+            """Fetch the reference list of *work_id* hydrated from OpenAlex; citation-graph traversal fallback when S2 is rate-limited.
+
+            Returns a JSON list of ``{id, title, year, cited_by_count,
+            doi, pdf_url}`` for the first 40 referenced works, or a
+            plain message when no references are listed.
+            """
+            import json as _j
+            _wid = work_id.strip()
+            if _wid.startswith("https://openalex.org/"):
+                _wid = _wid[len("https://openalex.org/"):]
+            try:
+                work_resp = _robust_get(
+                    f"https://api.openalex.org/works/{_wid}",
+                    params={
+                        "select": "id,referenced_works",
+                    },
+                    headers={
+                        "User-Agent": (
+                            "f3dasm-agent/1.0"
+                            " (mailto:f3dasm@brown.edu)"
+                        ),
+                    },
+                    cache_dir=cache_dir,
+                )
+                ref_ids = work_resp.json().get(
+                    "referenced_works", []
+                )[:40]
+            except SourceCooldownError as exc:
+                return f"ERROR: {exc}"
+            except Exception as exc:
+                return f"ERROR: OpenAlex references failed: {exc}"
+
+            if not ref_ids:
+                return f"No references listed for {_wid}."
+
+            # Strip URL prefixes to get bare W-ids for the filter
+            bare_ids = [
+                r.replace("https://openalex.org/", "")
+                for r in ref_ids
+            ]
+            filter_str = "openalex_id:" + "|".join(bare_ids)
+            try:
+                hydrate_resp = _robust_get(
+                    "https://api.openalex.org/works",
+                    params={
+                        "filter": filter_str,
+                        "per-page": 50,
+                        "select": (
+                            "id,title,publication_year,doi"
+                            ",cited_by_count,best_oa_location"
+                            ",open_access,primary_location"
+                        ),
+                    },
+                    headers={
+                        "User-Agent": (
+                            "f3dasm-agent/1.0"
+                            " (mailto:f3dasm@brown.edu)"
+                        ),
+                    },
+                    cache_dir=cache_dir,
+                )
+                works = hydrate_resp.json().get("results", [])
+            except SourceCooldownError as exc:
+                return f"ERROR: {exc}"
+            except Exception as exc:
+                return f"ERROR: OpenAlex reference hydration failed: {exc}"
+
+            out = []
+            for w in works:
+                doi = (w.get("doi") or "").replace(
+                    "https://doi.org/", ""
+                )
+                boa = w.get("best_oa_location") or {}
+                loc = w.get("primary_location") or {}
+                oa = w.get("open_access") or {}
+                pdf_url = (
+                    boa.get("pdf_url")
+                    or oa.get("oa_url")
+                    or loc.get("pdf_url")
+                    or loc.get("landing_page_url")
+                    or ""
+                )
+                out.append({
+                    "id": w.get("id", ""),
+                    "title": w.get("title", ""),
+                    "year": w.get("publication_year", ""),
+                    "cited_by_count": w.get("cited_by_count", 0),
+                    "doi": doi,
+                    "pdf_url": pdf_url,
+                })
+            return _j.dumps(out, indent=2)
+
         tools["search_openalex"] = search_openalex
+        tools["get_openalex_citations"] = get_openalex_citations
+        tools["get_openalex_references"] = get_openalex_references
         tools["get_semantic_scholar_recommendations"] = (
             get_semantic_scholar_recommendations
         )
