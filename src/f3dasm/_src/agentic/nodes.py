@@ -225,6 +225,8 @@ class StrategizerNode(AgentNode):
             "hypothesis_ids must be non-empty when the ledger is active.\n"
             "The worker writes exclusively to {id}/ (relative to their workspace\n"
             "in debug/delegations/).\n\n"
+            "Set is_falsification_attempt=True when this delegation attacks"
+            " a hypothesis's stated falsification criterion.\n\n"
             f"Available targets:\n  {_target_hints}"
         )
 
@@ -234,6 +236,7 @@ class StrategizerNode(AgentNode):
             expected_report: str,
             hypothesis_ids: list | None = None,
             wait: bool = False,
+            is_falsification_attempt: bool = False,
         ) -> str:
             if target not in outgoing:
                 return (
@@ -248,13 +251,28 @@ class StrategizerNode(AgentNode):
                 )
 
             # Enforce hypothesis linkage when ledger is active
-            h_ids: list[str] = list(hypothesis_ids or [])
-            if node._ledger is not None and not h_ids:
-                return (
-                    "ERROR: hypothesis_ids must not be empty. "
-                    "Every delegation must be linked to at least one hypothesis. "
-                    "Call HypothesisList() to see open hypotheses."
-                )
+            if isinstance(hypothesis_ids, str):
+                h_ids: list[str] = [hypothesis_ids]
+            else:
+                h_ids = [str(h) for h in (hypothesis_ids or [])]
+            if node._ledger is not None:
+                if not h_ids:
+                    return (
+                        "ERROR: hypothesis_ids must not be empty. "
+                        "Every delegation must be linked to at "
+                        "least one hypothesis. Call "
+                        "HypothesisList() to see open hypotheses."
+                    )
+                known = {
+                    h["id"] for h in node._ledger.list_all()
+                }
+                unknown = [h for h in h_ids if h not in known]
+                if unknown:
+                    return (
+                        f"ERROR: unknown hypothesis IDs {unknown}."
+                        f" Valid IDs: "
+                        f"{sorted(known) or '(none proposed yet)'}."
+                    )
 
             # Sequential delegation ID: D001, D002, …
             with node._registry_lock:
@@ -273,6 +291,9 @@ class StrategizerNode(AgentNode):
                     "evals": 0,
                     "start_time": start_time_mono,
                     "hypothesis_ids": h_ids,
+                    "is_falsification_attempt": bool(
+                        is_falsification_attempt
+                    ),
                     "started_at": started_at,
                     "target": target,
                     "followup_question": None,
@@ -454,11 +475,20 @@ class StrategizerNode(AgentNode):
                             deliverable=text,
                             hypothesis_ids=h_ids,
                             started_at=started_at,
-                            completed_at=datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
+                            completed_at=datetime.now(
+                                tz=timezone.utc
+                            ).isoformat(timespec="seconds"),
                             status="DONE",
-                            tokens_in=_usage.get("input_tokens", 0) or 0,
-                            tokens_out=_usage.get("output_tokens", 0) or 0,
+                            tokens_in=(
+                                _usage.get("input_tokens", 0) or 0
+                            ),
+                            tokens_out=(
+                                _usage.get("output_tokens", 0) or 0
+                            ),
                             cost_usd=_usage.get("total_cost_usd"),
+                            is_falsification_attempt=bool(
+                                is_falsification_attempt
+                            ),
                         )
                 except Exception:  # noqa: BLE001
                     tb = traceback.format_exc()
@@ -484,11 +514,20 @@ class StrategizerNode(AgentNode):
                             deliverable="ERROR: " + tb[:2000],
                             hypothesis_ids=h_ids,
                             started_at=started_at,
-                            completed_at=datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
+                            completed_at=datetime.now(
+                                tz=timezone.utc
+                            ).isoformat(timespec="seconds"),
                             status="FAILED",
-                            tokens_in=_usage.get("input_tokens", 0) or 0,
-                            tokens_out=_usage.get("output_tokens", 0) or 0,
+                            tokens_in=(
+                                _usage.get("input_tokens", 0) or 0
+                            ),
+                            tokens_out=(
+                                _usage.get("output_tokens", 0) or 0
+                            ),
                             cost_usd=_usage.get("total_cost_usd"),
+                            is_falsification_attempt=bool(
+                                is_falsification_attempt
+                            ),
                         )
 
             t = threading.Thread(target=_run, daemon=True, name=delegation_id)

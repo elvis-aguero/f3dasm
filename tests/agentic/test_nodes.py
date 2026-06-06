@@ -725,6 +725,12 @@ def test_delegate_id_is_sequential(tmp_path):
 
     class CaptureAdapter(StubAdapter):
         def invoke(self, messages):
+            self.closure_tools["HypothesisPropose"](
+                statement="Hypothesis for sequential ID test",
+                falsification_criterion="any counter",
+                prediction="none found",
+                prior=0.5,
+            )
             r1 = self.closure_tools["Delegate"](
                 target="implementer", intent="task A", expected_report="",
                 hypothesis_ids=["H1"],
@@ -780,6 +786,150 @@ def test_delegate_requires_hypothesis_ids_when_ledger_present(tmp_path):
     assert error_result and error_result[0].startswith("ERROR:")
 
 
+def test_delegate_wraps_bare_string_hypothesis_id(tmp_path):
+    """hypothesis_ids='H1' must become ['H1'], never ['H','1']."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    captured = []
+
+    class ProposeAndDelegate(StubAdapter):
+        def invoke(self, messages):
+            # Propose H1 first so the ledger knows about it
+            self.closure_tools["HypothesisPropose"](
+                statement="Black-box is unimodal",
+                falsification_criterion="Any y<-1",
+                prediction="y>=-1 everywhere",
+                prior=0.5,
+            )
+            # Pass hypothesis_ids as a bare string (not a list)
+            r = self.closure_tools["Delegate"](
+                target="implementer",
+                intent="test string wrapping",
+                expected_report="",
+                hypothesis_ids="H1",
+            )
+            captured.append(r)
+            _time.sleep(0.3)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    adapter = ProposeAndDelegate()
+    spec = _ledger_spec()
+    worker = StubAdapter()
+    node = StrategizerNode(
+        adapter,
+        name="strategizer",
+        outgoing=["implementer"],
+        spec=spec,
+        worker_adapters={"implementer": worker},
+        notes_dir=tmp_path,
+    )
+    node(make_state())
+    assert captured, "No result captured from Delegate"
+    assert not captured[0].startswith("ERROR:"), (
+        f"Unexpected ERROR: {captured[0]!r}"
+    )
+    # The registry entry must have hypothesis_ids == ["H1"]
+    reg_entry = list(node._registry.values())[0]
+    assert reg_entry["hypothesis_ids"] == ["H1"], (
+        f"hypothesis_ids shredded: {reg_entry['hypothesis_ids']!r}"
+    )
+
+
+def test_delegate_rejects_unknown_hypothesis_id(tmp_path):
+    """Delegate with an unknown ID returns ERROR naming valid IDs."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    captured = []
+
+    class ProposeAndBadDelegate(StubAdapter):
+        def invoke(self, messages):
+            # Propose only H1
+            self.closure_tools["HypothesisPropose"](
+                statement="Black-box is unimodal",
+                falsification_criterion="Any y<-1",
+                prediction="y>=-1 everywhere",
+                prior=0.5,
+            )
+            # Delegate with an unknown ID H7
+            r = self.closure_tools["Delegate"](
+                target="implementer",
+                intent="task",
+                expected_report="",
+                hypothesis_ids=["H7"],
+            )
+            captured.append(r)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    adapter = ProposeAndBadDelegate()
+    spec = _ledger_spec()
+    worker = StubAdapter()
+    node = StrategizerNode(
+        adapter,
+        name="strategizer",
+        outgoing=["implementer"],
+        spec=spec,
+        worker_adapters={"implementer": worker},
+        notes_dir=tmp_path,
+    )
+    node(make_state())
+    assert captured, "No result captured"
+    assert captured[0].startswith("ERROR:"), (
+        f"Expected ERROR, got: {captured[0]!r}"
+    )
+    # Error message must mention valid IDs (H1)
+    assert "H1" in captured[0], (
+        f"Valid IDs not in error message: {captured[0]!r}"
+    )
+
+
+def test_delegate_records_falsification_flag(tmp_path):
+    """Delegate with is_falsification_attempt=True records it in DelegationLog."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    from f3dasm._src.agentic.delegation_log import DelegationLog
+
+    class ProposeAndFalsifyDelegate(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["HypothesisPropose"](
+                statement="Black-box is unimodal",
+                falsification_criterion="Any y<-1",
+                prediction="y>=-1 everywhere",
+                prior=0.5,
+            )
+            self.closure_tools["Delegate"](
+                target="implementer",
+                intent="falsification task",
+                expected_report="",
+                hypothesis_ids=["H1"],
+                is_falsification_attempt=True,
+                wait=True,
+            )
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    jsonl_path = tmp_path / "delegation_log.jsonl"
+    delegation_log = DelegationLog(jsonl_path)
+    adapter = ProposeAndFalsifyDelegate()
+    spec = _ledger_spec()
+    worker = StubAdapter()
+    node = StrategizerNode(
+        adapter,
+        name="strategizer",
+        outgoing=["implementer"],
+        spec=spec,
+        worker_adapters={"implementer": worker},
+        notes_dir=tmp_path,
+        delegation_log=delegation_log,
+    )
+    node(make_state())
+    records = delegation_log.query_all()
+    assert records, "No records in delegation log"
+    assert records[-1]["is_falsification_attempt"] is True, (
+        f"Expected is_falsification_attempt=True, got: {records[-1]!r}"
+    )
+
+
 def test_delegate_injects_workspace_subfolder_in_task(tmp_path):
     """Task message contains <workspace_subfolder>D001/</workspace_subfolder>."""
     task_messages = []
@@ -791,6 +941,12 @@ def test_delegate_injects_workspace_subfolder_in_task(tmp_path):
 
     class DelegateAdapter(StubAdapter):
         def invoke(self, messages):
+            self.closure_tools["HypothesisPropose"](
+                statement="Workspace subfolder test hypothesis",
+                falsification_criterion="any counter",
+                prediction="none found",
+                prior=0.5,
+            )
             self.closure_tools["Delegate"](
                 target="implementer", intent="test", expected_report="",
                 hypothesis_ids=["H1"],
@@ -821,6 +977,18 @@ def test_delegate_writes_delegation_jsonl_on_done(tmp_path):
 
     class DelegateAdapter(StubAdapter):
         def invoke(self, messages):
+            self.closure_tools["HypothesisPropose"](
+                statement="First hypothesis for jsonl test",
+                falsification_criterion="any counter",
+                prediction="none found",
+                prior=0.5,
+            )
+            self.closure_tools["HypothesisPropose"](
+                statement="Second hypothesis for jsonl test",
+                falsification_criterion="any counter 2",
+                prediction="none found 2",
+                prior=0.5,
+            )
             self.closure_tools["Delegate"](
                 target="implementer", intent="do analysis", expected_report="",
                 hypothesis_ids=["H1", "H2"],
@@ -974,6 +1142,12 @@ def test_worker_write_rejected_outside_delegation_subfolder(tmp_path):
 
     class DelegateAdapter(StubAdapter):
         def invoke(self, messages):
+            self.closure_tools["HypothesisPropose"](
+                statement="Write sandbox rejection test",
+                falsification_criterion="any counter",
+                prediction="none found",
+                prior=0.5,
+            )
             self.closure_tools["Delegate"](
                 target="implementer", intent="test write", expected_report="",
                 hypothesis_ids=["H1"],
@@ -1014,6 +1188,12 @@ def test_worker_write_allowed_inside_delegation_subfolder(tmp_path):
 
     class DelegateAdapter(StubAdapter):
         def invoke(self, messages):
+            self.closure_tools["HypothesisPropose"](
+                statement="Write sandbox allow test",
+                falsification_criterion="any counter",
+                prediction="none found",
+                prior=0.5,
+            )
             self.closure_tools["Delegate"](
                 target="implementer", intent="test write", expected_report="",
                 hypothesis_ids=["H1"],
@@ -1129,6 +1309,12 @@ def test_worker_write_rejects_absolute_path(tmp_path):
 
     class DelegateAdapter(StubAdapter):
         def invoke(self, messages):
+            self.closure_tools["HypothesisPropose"](
+                statement="Abs path sandbox test",
+                falsification_criterion="any counter",
+                prediction="none found",
+                prior=0.5,
+            )
             self.closure_tools["Delegate"](
                 target="implementer", intent="test", expected_report="",
                 hypothesis_ids=["H1"],
@@ -1172,6 +1358,12 @@ def test_worker_write_rejects_empty_path(tmp_path):
 
     class DelegateAdapter(StubAdapter):
         def invoke(self, messages):
+            self.closure_tools["HypothesisPropose"](
+                statement="Empty path sandbox test",
+                falsification_criterion="any counter",
+                prediction="none found",
+                prior=0.5,
+            )
             self.closure_tools["Delegate"](
                 target="implementer", intent="test", expected_report="",
                 hypothesis_ids=["H1"],
@@ -1220,6 +1412,12 @@ def test_worker_write_allows_nested_subdirectory(tmp_path):
 
     class DelegateAdapter(StubAdapter):
         def invoke(self, messages):
+            self.closure_tools["HypothesisPropose"](
+                statement="Nested write sandbox test",
+                falsification_criterion="any counter",
+                prediction="none found",
+                prior=0.5,
+            )
             self.closure_tools["Delegate"](
                 target="implementer", intent="test", expected_report="",
                 hypothesis_ids=["H1"],
@@ -1347,6 +1545,12 @@ def test_delegation_jsonl_contains_token_fields(tmp_path):
 
     class DelegateAdapter(StubAdapter):
         def invoke(self, messages):
+            self.closure_tools["HypothesisPropose"](
+                statement="Token fields test hypothesis",
+                falsification_criterion="any counter",
+                prediction="none found",
+                prior=0.5,
+            )
             self.closure_tools["Delegate"](
                 target="implementer", intent="test usage", expected_report="",
                 hypothesis_ids=["H1"],
