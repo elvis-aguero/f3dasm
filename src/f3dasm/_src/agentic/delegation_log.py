@@ -48,8 +48,12 @@ class DelegationLog:
         tokens_in: int = 0,
         tokens_out: int = 0,
         cost_usd: float | None = None,
+        is_falsification_attempt: bool = False,
     ) -> None:
-        """Append one delegation record. task and deliverable are stored in full."""
+        """Append one delegation record.
+
+        task and deliverable are stored in full.
+        """
         record: dict[str, Any] = {
             "id": id,
             "from_node": from_node,
@@ -63,6 +67,7 @@ class DelegationLog:
             "tokens_in": tokens_in,
             "tokens_out": tokens_out,
             "cost_usd": cost_usd,
+            "is_falsification_attempt": is_falsification_attempt,
         }
         with self._lock:
             with self._path.open("a", encoding="utf-8") as f:
@@ -98,6 +103,11 @@ class DelegationLog:
         if not done:
             return None
         return done[-1]["id"]
+
+    def query_all(self) -> list[dict]:
+        """Return every record, oldest-first."""
+        with self._lock:
+            return self._load_all()
 
     def _load_all(self) -> list[dict]:
         """Load all records from disk. Must be called under lock or read-only context."""

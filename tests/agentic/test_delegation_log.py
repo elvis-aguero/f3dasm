@@ -177,3 +177,57 @@ def test_record_is_thread_safe(tmp_path):
     # All lines must be valid JSON
     for line in lines:
         json.loads(line)
+
+
+# ---------------------------------------------------------------------------
+# is_falsification_attempt field
+# ---------------------------------------------------------------------------
+
+
+def test_record_stores_falsification_flag(tmp_path):
+    log = _make_log(tmp_path)
+    log.record(
+        id="D001",
+        from_node="s",
+        to_node="i",
+        task="t",
+        deliverable="d",
+        hypothesis_ids=["H1"],
+        started_at="x",
+        completed_at="y",
+        status="DONE",
+        is_falsification_attempt=True,
+    )
+    rec = log.query_received("i")[0]
+    assert rec["is_falsification_attempt"] is True
+
+
+def test_record_flag_defaults_false(tmp_path):
+    log = _make_log(tmp_path)
+    _record(log)
+    rec = log.query_received("implementer")[0]
+    assert "is_falsification_attempt" in rec
+    assert rec["is_falsification_attempt"] is False
+
+
+# ---------------------------------------------------------------------------
+# query_all
+# ---------------------------------------------------------------------------
+
+
+def test_query_all_returns_every_record_oldest_first(tmp_path):
+    log = _make_log(tmp_path)
+    _record(log, id="D001", to_node="implementer", status="DONE")
+    _record(log, id="D002", to_node="debugger", status="FAILED")
+    _record(log, id="D003", to_node="implementer", status="DONE")
+
+    result = log.query_all()
+    assert len(result) == 3
+    assert result[0]["id"] == "D001"
+    assert result[1]["id"] == "D002"
+    assert result[2]["id"] == "D003"
+
+
+def test_query_all_returns_empty_when_no_records(tmp_path):
+    log = _make_log(tmp_path)
+    assert log.query_all() == []
