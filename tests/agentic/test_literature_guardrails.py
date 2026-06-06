@@ -1212,3 +1212,130 @@ class TestGetOpenAlexReferences:
         assert result.startswith("ERROR:"), result
         assert "rate-limited" in result.lower() or "cooldown" in result.lower()
         assert call_count[0] == 0, "No request should be issued during cooldown"
+
+
+# ---------------------------------------------------------------------------
+# Tests: S2 closures run in a thread with no running event loop
+# ---------------------------------------------------------------------------
+
+def _make_s2_tools(tmp_path, monkeypatch=None):
+    """Helper: build closure tools for an agent."""
+    from f3dasm._src.agentic.agents.literature import LiteratureReviewAgent
+    if monkeypatch is not None:
+        monkeypatch.setattr(lc_mod, "_sleep", lambda s: None)
+    agent = LiteratureReviewAgent()
+    return agent.build_closure_tools(
+        study_dir=tmp_path,
+        lit_reviewer_notes_dir=tmp_path / "lit",
+    )
+
+
+class TestS2EventLoopSafety:
+    """S2 closures must run in a fresh thread (no running event loop)."""
+
+    def test_search_semantic_scholar_runs_in_thread_without_loop(
+        self, tmp_path, monkeypatch
+    ):
+        """search_semantic_scholar called from inside a running event loop
+        executes the S2 client in a thread where no event loop is running.
+
+        The fake S2 client asserts asyncio.get_running_loop() raises
+        RuntimeError in its own calling thread — proving _call_in_fresh_thread
+        routed the call off the event-loop thread.
+        """
+        import asyncio
+        import json as _json
+
+        loop_errors_seen: list[bool] = []
+
+        class FakeResult:
+            paperId = "fake_id_1"
+            title = "Fake Paper"
+            year = 2024
+            venue = "NeurIPS"
+            citationCount = 42
+            authors = [{"name": "A. Author"}]
+            abstract = "Abstract text."
+            externalIds = {}
+
+        class FakeSS:
+            def search_paper(self, query, limit=10, fields=None):
+                # If we are NOT in an event loop thread, this raises.
+                try:
+                    asyncio.get_running_loop()
+                    # A loop IS running in this thread — bad.
+                    loop_errors_seen.append(False)
+                except RuntimeError:
+                    # No loop here — correct.
+                    loop_errors_seen.append(True)
+                return [FakeResult()]
+
+        monkeypatch.setattr(lc_mod, "_sleep", lambda s: None)
+
+        # Patch the SemanticScholar constructor inside the module scope.
+        with patch(
+            "semanticscholar.SemanticScholar",
+            return_value=FakeSS(),
+        ):
+            tools = _make_s2_tools(tmp_path)
+
+        if "search_semantic_scholar" not in tools:
+            pytest.skip("semanticscholar not installed")
+
+        # Invoke the closure from INSIDE a running event loop.
+        async def driver():
+            return tools["search_semantic_scholar"](query="transformers", num_results=1)
+
+        result_json = asyncio.run(driver())
+
+        # The fake saw no running loop in its own thread.
+        assert loop_errors_seen, "FakeSS.search_paper was never called"
+        assert all(loop_errors_seen), (
+            "S2 client was called from within a running event loop "
+            f"(loop_errors_seen={loop_errors_seen})"
+        )
+
+        # Result parses correctly.
+        data = _json.loads(result_json)
+        assert isinstance(data, list)
+        assert data[0]["title"] == "Fake Paper"
+
+    def test_search_semantic_scholar_timeout_returns_error_string(
+        self, tmp_path, monkeypatch
+    ):
+        """When the S2 call exceeds the timeout, return a timed-out ERROR string."""
+        import time as _time
+
+        class SlowFakeSS:
+            def search_paper(self, query, limit=10, fields=None):
+                _time.sleep(5.0)  # longer than injected timeout
+                return []
+
+        monkeypatch.setattr(lc_mod, "_sleep", lambda s: None)
+
+        with patch(
+            "semanticscholar.SemanticScholar",
+            return_value=SlowFakeSS(),
+        ):
+            tools = _make_s2_tools(tmp_path)
+
+        if "search_semantic_scholar" not in tools:
+            pytest.skip("semanticscholar not installed")
+
+        # Monkey-patch _call_in_fresh_thread to use a tiny timeout.
+        import f3dasm._src.agentic.agents.literature as lit_mod
+        orig = lit_mod._call_in_fresh_thread
+
+        def _fast_timeout(fn, *args, timeout=0.05, **kwargs):
+            return orig(fn, *args, timeout=0.05, **kwargs)
+
+        monkeypatch.setattr(lit_mod, "_call_in_fresh_thread", _fast_timeout)
+
+        result = tools["search_semantic_scholar"](query="something")
+
+        assert result.startswith("ERROR"), (
+            f"Expected ERROR string on timeout, got: {result!r}"
+        )
+        assert "timed out" in result.lower(), (
+            f"ERROR should mention 'timed out': {result!r}"
+        )

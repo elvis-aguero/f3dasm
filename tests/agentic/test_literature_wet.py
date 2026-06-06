@@ -54,6 +54,10 @@ Answer the following research questions from primary literature.
 Cite exact passages with page and paragraph references.
 Do NOT answer from memory — every claim must come from a paper in the corpus.
 
+Build a corpus of AT MOST 4 full-text papers (the most relevant ones).
+Stop adding papers once 4 are in the corpus.
+Prefer arXiv/open-access PDFs.
+
 Questions:
 1. What Gaussian Process surrogate modelling strategies have been proposed
    for high-dimensional or expensive design-of-experiments problems?
@@ -172,7 +176,7 @@ def test_literature_review_wet(tmp_path):
     run = AgenticRun(
         study_dir=study,
         graph=graph,
-        budget=15 * 60,  # 15-minute wall-clock cap
+        budget=20 * 60,  # 20-minute wall-clock cap
     )
 
     # Inject scripted strategist adapter

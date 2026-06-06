@@ -6,6 +6,18 @@ import logging
 
 from ..backends.base import Agent
 
+
+def _call_in_fresh_thread(fn, *args, timeout=30.0, **kwargs):
+    """Run *fn* in a thread with no running event loop.
+
+    The semanticscholar sync client manages its own asyncio loop and
+    breaks when called from within an already-running loop (the
+    Claude SDK closure context). A fresh thread has no loop.
+    """
+    import concurrent.futures as _cf
+    with _cf.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(fn, *args, **kwargs).result(timeout=timeout)
+
 log = logging.getLogger(__name__)
 
 # Module-level constant kept for backward compatibility with
@@ -235,14 +247,23 @@ class LiteratureReviewAgent(Agent):
                 query: str, num_results: int = 10
             ) -> str:
                 """Search for papers on Semantic Scholar."""
-                results = _sch.search_paper(
-                    query,
-                    limit=int(num_results),
-                    fields=[
-                        "title", "authors", "year", "abstract",
-                        "externalIds", "venue", "citationCount",
-                    ],
-                )
+                try:
+                    results = _call_in_fresh_thread(
+                        _sch.search_paper,
+                        query,
+                        limit=int(num_results),
+                        fields=[
+                            "title", "authors", "year", "abstract",
+                            "externalIds", "venue", "citationCount",
+                        ],
+                    )
+                except TimeoutError:
+                    return (
+                        "ERROR: Semantic Scholar request timed out"
+                        " after 30s. Try again or use OpenAlex."
+                    )
+                except Exception as exc:
+                    return f"ERROR: Semantic Scholar search failed: {exc}"
                 papers = []
                 for p in results:
                     papers.append({
@@ -263,15 +284,26 @@ class LiteratureReviewAgent(Agent):
                 paper_id: str,
             ) -> str:
                 """Get details for a paper by S2/DOI/arxiv ID."""
-                paper = _sch.get_paper(
-                    paper_id,
-                    fields=[
-                        "title", "authors", "year", "abstract",
-                        "venue", "citationCount",
-                        "influentialCitationCount",
-                        "tldr", "externalIds",
-                    ],
-                )
+                try:
+                    paper = _call_in_fresh_thread(
+                        _sch.get_paper,
+                        paper_id,
+                        fields=[
+                            "title", "authors", "year", "abstract",
+                            "venue", "citationCount",
+                            "influentialCitationCount",
+                            "tldr", "externalIds",
+                        ],
+                    )
+                except TimeoutError:
+                    return (
+                        "ERROR: Semantic Scholar request timed out"
+                        " after 30s. Try again or use OpenAlex."
+                    )
+                except Exception as exc:
+                    return (
+                        f"ERROR: Semantic Scholar paper details failed: {exc}"
+                    )
                 return _json.dumps({
                     "paperId": paper.paperId,
                     "title": paper.title,
@@ -293,13 +325,24 @@ class LiteratureReviewAgent(Agent):
                 author_id: str,
             ) -> str:
                 """Get details for an author by their S2 author ID."""
-                author = _sch.get_author(
-                    author_id,
-                    fields=[
-                        "name", "affiliations", "paperCount",
-                        "citationCount", "hIndex",
-                    ],
-                )
+                try:
+                    author = _call_in_fresh_thread(
+                        _sch.get_author,
+                        author_id,
+                        fields=[
+                            "name", "affiliations", "paperCount",
+                            "citationCount", "hIndex",
+                        ],
+                    )
+                except TimeoutError:
+                    return (
+                        "ERROR: Semantic Scholar request timed out"
+                        " after 30s. Try again or use OpenAlex."
+                    )
+                except Exception as exc:
+                    return (
+                        f"ERROR: Semantic Scholar author details failed: {exc}"
+                    )
                 return _json.dumps({
                     "authorId": author.authorId,
                     "name": author.name,
@@ -313,10 +356,22 @@ class LiteratureReviewAgent(Agent):
                 paper_id: str,
             ) -> str:
                 """Get citing papers and references (≤20 each)."""
-                paper = _sch.get_paper(
-                    paper_id,
-                    fields=["citations", "references"],
-                )
+                try:
+                    paper = _call_in_fresh_thread(
+                        _sch.get_paper,
+                        paper_id,
+                        fields=["citations", "references"],
+                    )
+                except TimeoutError:
+                    return (
+                        "ERROR: Semantic Scholar request timed out"
+                        " after 30s. Try again or use OpenAlex."
+                    )
+                except Exception as exc:
+                    return (
+                        "ERROR: Semantic Scholar citations/references"
+                        f" failed: {exc}"
+                    )
                 refs = [
                     {
                         "paperId": r.get("paperId"),
