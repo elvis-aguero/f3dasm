@@ -42,7 +42,10 @@ version = "2.2.3"
 [project.optional-dependencies]
 agentic = [
   "claude-agent-sdk>=0.2.82,<1.0.0",
-  "docling>=2.0.0",
+  # docling pulls torch, which ships no Intel-macOS wheels;
+  # PDF extraction falls back to pymupdf there.
+  "docling>=2.0.0; sys_platform != 'darwin' or platform_machine == 'arm64'",
+  "pymupdf>=1.24.0",
   "langchain-community>=0.3.0,<1.0.0",
   "langchain-core>=0.3.0,<1.0.0",
   "langchain-ollama>=0.2.0,<1.0.0",
