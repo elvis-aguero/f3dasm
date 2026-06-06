@@ -75,7 +75,9 @@ figures = [
   "matplotlib>=3.7.5"
 ]
 lit = [
-  "fastembed>=0.3.0",
+  # onnxruntime (fastembed dep) ships no Intel-macOS wheels —
+  # bge-small dense retrieval is unavailable there (BM25 fallback).
+  "fastembed>=0.3.0; sys_platform != 'darwin' or platform_machine == 'arm64'",
   "semanticscholar>=0.8.0"
 ]
 scipy = [
