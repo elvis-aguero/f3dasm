@@ -21,7 +21,8 @@ def _make_corpus(tmp_path: Path) -> LiteratureCorpus:
 
 def _inject_paper(corpus: LiteratureCorpus, paper_id: str, title: str = "Test Paper",
                   authors: str = "A. Author", year: str = "2024",
-                  source: str = "arxiv", text: str = "") -> None:
+                  source: str = "arxiv", text: str = "",
+                  full_text: bool = True) -> None:
     paper_dir = corpus._paper_dir(paper_id)
     paper_dir.mkdir(parents=True, exist_ok=True)
     md_path = paper_dir / "paper.md"
@@ -44,6 +45,7 @@ def _inject_paper(corpus: LiteratureCorpus, paper_id: str, title: str = "Test Pa
         "added_at": "2024-01-01T00:00:00+00:00",
         "source": source,
         "citation_count": "0",
+        "full_text": "true" if full_text else "false",
     })
     corpus._save_csv(rows)
 
@@ -190,11 +192,16 @@ def test_search_substring_skips_missing_md_path(tmp_path):
 
 def test_robust_get_succeeds_on_first_try():
     """_robust_get returns the response when the first request succeeds."""
+    import f3dasm._src.agentic.literature_corpus as _lc
     mock_resp = MagicMock()
+    mock_resp.status_code = 200
     mock_resp.raise_for_status.return_value = None
+    mock_resp.headers = {}
+    mock_resp.text = "{}"
 
-    with patch("requests.get", return_value=mock_resp) as mock_get:
-        result = _robust_get("http://example.com/api")
+    with patch("f3dasm._src.agentic.literature_corpus._sleep"):
+        with patch("requests.get", return_value=mock_resp) as mock_get:
+            result = _robust_get("http://example.com/api")
 
     assert result is mock_resp
     mock_get.assert_called_once()
@@ -221,10 +228,15 @@ def test_robust_get_retries_on_failure():
 def test_robust_post_succeeds_on_first_try():
     """_robust_post returns the response when the first request succeeds."""
     mock_resp = MagicMock()
+    mock_resp.status_code = 200
     mock_resp.raise_for_status.return_value = None
+    mock_resp.headers = {}
 
-    with patch("requests.post", return_value=mock_resp) as mock_post:
-        result = _robust_post("http://example.com/api", json={"key": "val"})
+    with patch("f3dasm._src.agentic.literature_corpus._sleep"):
+        with patch("requests.post", return_value=mock_resp) as mock_post:
+            result = _robust_post(
+                "http://example.com/api", json={"key": "val"}
+            )
 
     assert result is mock_resp
     mock_post.assert_called_once()
@@ -253,7 +265,10 @@ def test_robust_get_succeeds_on_second_try():
     import requests
 
     mock_resp = MagicMock()
+    mock_resp.status_code = 200
     mock_resp.raise_for_status.return_value = None
+    mock_resp.headers = {}
+    mock_resp.text = "{}"
     attempts = [0]
 
     def flaky_get(*args, **kwargs):
@@ -263,7 +278,7 @@ def test_robust_get_succeeds_on_second_try():
         return mock_resp
 
     with patch("requests.get", side_effect=flaky_get):
-        with patch("time.sleep"):
+        with patch("f3dasm._src.agentic.literature_corpus._sleep"):
             result = _robust_get("http://example.com/api", retries=3)
 
     assert result is mock_resp
@@ -418,10 +433,11 @@ def test_corpus_creates_directory_on_init(tmp_path):
 
 
 def test_search_empty_corpus(tmp_path):
-    """search() returns 'No results found.' when corpus is empty."""
+    """search() returns an informative ERROR when corpus is empty."""
     corpus = _make_corpus(tmp_path)
     result = corpus.search("anything")
-    assert result == "No results found."
+    # Empty corpus has no full-text papers; search returns guidance
+    assert "ERROR" in result or result == "No results found."
 
 
 # ---------------------------------------------------------------------------

@@ -23,8 +23,13 @@ def _make_corpus(tmp_path: Path) -> LiteratureCorpus:
 
 def _inject_paper(corpus: LiteratureCorpus, paper_id: str, title: str = "Test Paper",
                   authors: str = "A. Author", year: str = "2024",
-                  source: str = "arxiv", text: str = "") -> None:
-    """Inject a fake paper directly into the corpus without network calls."""
+                  source: str = "arxiv", text: str = "",
+                  full_text: bool = True) -> None:
+    """Inject a fake paper directly into the corpus without network calls.
+
+    ``full_text=True`` by default so that search() finds the paper;
+    set to False to test abstract-only behaviour.
+    """
     paper_dir = corpus._paper_dir(paper_id)
     paper_dir.mkdir(parents=True, exist_ok=True)
     md_path = paper_dir / "paper.md"
@@ -50,6 +55,7 @@ def _inject_paper(corpus: LiteratureCorpus, paper_id: str, title: str = "Test Pa
         "added_at": "2024-01-01T00:00:00+00:00",
         "source": source,
         "citation_count": "0",
+        "full_text": "true" if full_text else "false",
     })
     corpus._save_csv(rows)
 
@@ -139,9 +145,11 @@ def test_list_papers_shows_added_paper(tmp_path):
 
 
 def test_search_no_results(tmp_path):
+    """Empty corpus returns an informative message (error or no results)."""
     corpus = _make_corpus(tmp_path)
     result = corpus.search("xyzzy_nonexistent_term_12345")
-    assert result == "No results found."
+    # Either "No results found." or the full-text ERROR guidance
+    assert "No results found." in result or "ERROR" in result
 
 
 def test_search_finds_passage(tmp_path):

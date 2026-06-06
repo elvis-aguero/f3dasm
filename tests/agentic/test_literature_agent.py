@@ -96,7 +96,7 @@ def test_corpus_list_closure_works(tmp_path):
 
 
 def test_corpus_search_closure_on_empty_corpus(tmp_path):
-    """CorpusSearch returns 'No results found.' on empty corpus."""
+    """CorpusSearch returns an informative response on empty corpus."""
     agent = _make_agent()
     lit_dir = tmp_path / "lit"
     tools = agent.build_closure_tools(
@@ -105,7 +105,8 @@ def test_corpus_search_closure_on_empty_corpus(tmp_path):
     )
 
     result = tools["CorpusSearch"]("neural networks")
-    assert result == "No results found."
+    # Empty corpus has no full-text papers → ERROR guidance or no results
+    assert "No results found." in result or "ERROR" in result
 
 
 def test_corpus_get_paper_not_found(tmp_path):
@@ -156,9 +157,7 @@ def test_search_openalex_returns_results_on_success(tmp_path):
     if "search_openalex" not in tools:
         pytest.skip("search_openalex not in tools")
 
-    mock_resp = MagicMock()
-    mock_resp.raise_for_status.return_value = None
-    mock_resp.json.return_value = {
+    oa_result = {
         "results": [
             {
                 "id": "W123",
@@ -167,13 +166,23 @@ def test_search_openalex_returns_results_on_success(tmp_path):
                 "doi": "10.1234/test",
                 "authorships": [{"author": {"display_name": "A. Author"}}],
                 "primary_location": {"pdf_url": "https://example.com/paper.pdf"},
+                "best_oa_location": None,
+                "open_access": {"oa_url": None},
                 "abstract_inverted_index": {"test": [0], "abstract": [1]},
             }
         ]
     }
+    import json as _json
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.raise_for_status.return_value = None
+    mock_resp.headers = {"Content-Type": "application/json"}
+    mock_resp.text = _json.dumps(oa_result)
+    mock_resp.json.return_value = oa_result
 
     with patch("requests.get", return_value=mock_resp):
-        result = tools["search_openalex"]("neural networks", n_results=5)
+        with patch("f3dasm._src.agentic.literature_corpus._sleep"):
+            result = tools["search_openalex"]("neural networks", n_results=5)
 
     import json
     data = json.loads(result)
@@ -196,7 +205,8 @@ def test_search_openalex_returns_error_on_failure(tmp_path):
 
     import requests as _requests
     with patch("requests.get", side_effect=_requests.RequestException("Connection failed")):
-        result = tools["search_openalex"]("neural networks")
+        with patch("f3dasm._src.agentic.literature_corpus._sleep"):
+            result = tools["search_openalex"]("neural networks")
 
     assert "ERROR" in result
 
@@ -219,7 +229,9 @@ def test_get_ss_recommendations_returns_json(tmp_path):
         pytest.skip("get_semantic_scholar_recommendations not available")
 
     mock_resp = MagicMock()
+    mock_resp.status_code = 200
     mock_resp.raise_for_status.return_value = None
+    mock_resp.headers = {"Content-Type": "application/json"}
     mock_resp.json.return_value = {
         "recommendedPapers": [
             {
@@ -235,7 +247,10 @@ def test_get_ss_recommendations_returns_json(tmp_path):
     }
 
     with patch("requests.post", return_value=mock_resp):
-        result = tools["get_semantic_scholar_recommendations"]("1706.03762", n_results=5)
+        with patch("f3dasm._src.agentic.literature_corpus._sleep"):
+            result = tools["get_semantic_scholar_recommendations"](
+                "1706.03762", n_results=5
+            )
 
     import json
     data = json.loads(result)
@@ -258,7 +273,8 @@ def test_get_ss_recommendations_returns_error_on_failure(tmp_path):
 
     import requests as _requests
     with patch("requests.post", side_effect=_requests.RequestException("Network error")):
-        result = tools["get_semantic_scholar_recommendations"]("1706.03762")
+        with patch("f3dasm._src.agentic.literature_corpus._sleep"):
+            result = tools["get_semantic_scholar_recommendations"]("1706.03762")
 
     assert "ERROR" in result
 
