@@ -1126,16 +1126,16 @@ class StrategizerNode(AgentNode):
             hypothesis_id: str,
             status: str,
             comment: str,
+            posterior: float,
             evidence: "dict | None" = None,
-            posterior: "float | None" = None,
         ) -> str:
             """Update hypothesis status with evidence and updated belief.
 
             status: OPEN | SUPPORTED | FALSIFIED | INCONCLUSIVE.
+            posterior: your updated belief in [0, 1] — always required.
             evidence: {"delegation": "D###", "numbers": {key: value}}
               required for closing statuses; numbers must come from
               that delegation's report.
-            posterior: your updated belief in [0, 1] — always required.
             triggered_by is auto-injected from last completed
             delegation."""
             if node._ledger is None:

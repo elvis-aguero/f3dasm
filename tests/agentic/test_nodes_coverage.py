@@ -609,7 +609,7 @@ def test_hypothesis_update_coerces_json_string_evidence(tmp_path):
     node(state)
 
     assert results
-    assert not results[0].startswith("ERROR:")
+    assert "Updated H1" in results[0]
 
 
 def test_hypothesis_get_not_found(tmp_path):
