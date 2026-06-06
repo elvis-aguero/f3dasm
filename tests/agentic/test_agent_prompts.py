@@ -632,14 +632,14 @@ def test_strategizer_on_error_content():
 # NEW Test 20 — Piece A: CHECKPOINT prompt contains Comment log section
 # ---------------------------------------------------------------------------
 
-def test_checkpoint_prompt_contains_comment_log():
-    """CHECKPOINT_STRATEGIZER_PROMPT contains the ### Comment log section."""
+def test_checkpoint_prompt_contains_ledger_digest():
+    """CHECKPOINT_STRATEGIZER_PROMPT contains the ### Hypothesis ledger digest section."""
     from f3dasm._src.agentic.agent_prompts import (
         CHECKPOINT_STRATEGIZER_PROMPT,
     )
 
-    assert "### Comment log" in CHECKPOINT_STRATEGIZER_PROMPT, (
-        "CHECKPOINT_STRATEGIZER_PROMPT missing '### Comment log' section"
+    assert "### Hypothesis ledger digest" in CHECKPOINT_STRATEGIZER_PROMPT, (
+        "CHECKPOINT_STRATEGIZER_PROMPT missing '### Hypothesis ledger digest' section"
     )
 
 

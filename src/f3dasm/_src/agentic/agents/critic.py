@@ -29,9 +29,11 @@ For every claim or conclusion in the document, ask:
    a tool output or file in the workspace.
 
 2. FALSIFICATION DEFICIT
-   Was this hypothesis actually tested against a failure mode?  A
-   hypothesis confirmed only by positive examples is not falsified.
-   Flag hypotheses with no recorded refutation attempt.
+   For each hypothesis in hypotheses.json, check whether its stated
+   falsification_criterion was actually tested by a delegation
+   flagged is_falsification_attempt in the delegation log. Judge
+   the adequacy of the attempt against the criterion — a token
+   probe does not count. Flag hypotheses with no adequate attempt.
 
 3. ALTERNATIVE HYPOTHESES
    Name at least one alternative explanation for the observed result

@@ -123,10 +123,10 @@ affects the final design recommendation.  State why it is unresolved
 experiment or analysis to run next.  Justify in terms of which open
 question it resolves.  Do not propose more than one direction.>
 
-### Comment log
-<One line per currently active Comment from hypotheses.md.
-Format: `- <name>: <status>`.  Parked and refuted Comments may be
-omitted.  The canonical store is hypotheses.md; this is a digest only.>
+### Hypothesis ledger digest
+<One line per hypothesis from HypothesisList().
+Format: `- <id> [<status>] prior <p> → posterior <q>: <statement>`.
+The canonical store is hypotheses.json; this is a digest only.>
 
 After producing this report, wait.  Do not delegate until the runtime
 resumes the session.
@@ -163,7 +163,7 @@ delegation_log_jsonl  = {debug_dir}/delegation_log.jsonl
 diagnostics_jsonl     = {debug_dir}/diagnostics.jsonl
 workspace_dir         = {debug_dir}/workspace
 Use these absolute paths when calling Read() and WriteNote().
-WriteNote also accepts a bare filename such as 'hypotheses.md',
+WriteNote also accepts a bare filename such as 'meta_errors.md',
 which is anchored under strategizer_notes_dir automatically.
 Workers write exclusively inside workspace_dir/D###/.
 </run_paths>

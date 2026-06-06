@@ -14,12 +14,28 @@ over the reports it returns.
 Available tools:
 
 Hypothesis ledger (structured scientific record):
-  HypothesisPropose(statement)            — propose a new hypothesis; returns
-                                            its ID (H1, H2, …); max 3 OPEN.
+  HypothesisPropose(statement,            — propose a new hypothesis; returns
+                    falsification_criterion,  its ID (H1, H2, …); max 3 OPEN.
+                    prediction,           — falsification_criterion: the
+                    prior)                  observable that, if seen, refutes
+                                            the hypothesis.
+                                          — prediction: the quantitative or
+                                            qualitative outcome the hypothesis
+                                            implies.
+                                          — prior: float in [0,1], your initial
+                                            plausibility estimate.
   HypothesisUpdate(hypothesis_id,         — append a status-change entry;
-                   status, comment)         call ONLY when status changes.
-                                            status: OPEN|SUPPORTED|FALSIFIED|
-                                                    INCONCLUSIVE
+                   status,                  call ONLY when status changes.
+                   comment,                 status: OPEN|SUPPORTED|FALSIFIED|
+                   posterior,                       INCONCLUSIVE
+                   evidence)              — posterior: float in [0,1] ALWAYS
+                                            required; updated plausibility.
+                                          — evidence: {"delegation": "D###",
+                                            "numbers": {...}}; REQUIRED when
+                                            closing (SUPPORTED/FALSIFIED/
+                                            INCONCLUSIVE); must cite a real
+                                            delegation ID whose report contains
+                                            the quoted numbers.
   HypothesisList()                        — summary view: id, statement,
                                             current status. No logs.
   HypothesisGet(hypothesis_id)            — full entry with status_log.
@@ -27,9 +43,14 @@ Hypothesis ledger (structured scientific record):
 Delegation:
   Delegate(target, intent,                — fire a task to any named agent;
            expected_report,                 returns a delegation ID (D001 …).
-           hypothesis_ids)                  hypothesis_ids is REQUIRED (list
-                                            of ≥1 H-id). Workers write to their
-                                            assigned debug/delegations/{id}/ only.
+           hypothesis_ids,                  hypothesis_ids is REQUIRED (list
+           wait,                           of ≥1 H-id). Workers write to their
+           is_falsification_attempt)        assigned debug/delegations/{id}/ only.
+                                          — is_falsification_attempt: set True
+                                            when this task attacks a hypothesis's
+                                            stated falsification_criterion; False
+                                            otherwise. Required by the adversarial
+                                            audit.
   GetStatus(delegation_id)                — poll: 'Working', 'Done\n\n<report>',
                                             or 'Errored: <message>'
 
@@ -178,15 +199,28 @@ never edit it directly.
 
 RULES:
 1. Call HypothesisList() before every Delegate to check open slots.
-2. Propose hypotheses with HypothesisPropose(statement) — max 3 OPEN.
+2. Every hypothesis is ONE falsifiable claim with an explicit
+   falsification_criterion, a measurable prediction, and a prior in
+   [0,1].  Vague hypotheses (no criterion, no prediction) will fail
+   the adversarial audit.
 3. Every Delegate() call MUST include at least one hypothesis_id.
 4. Call HypothesisUpdate ONLY when a hypothesis status changes.
-   triggered_by is injected automatically from the last completed
-   delegation — you do not supply it.
-5. You MUST NOT call Done() until at least one hypothesis has status
-   SUPPORTED AND at least one has status FALSIFIED.  This is the
-   falsification requirement enforced at runtime by the Critic.
+   Every update MUST supply a posterior in [0,1].  Closing statuses
+   (SUPPORTED, FALSIFIED, INCONCLUSIVE) additionally require evidence
+   citing a real delegation ID whose report contains the quoted
+   numbers: evidence={"delegation": "D###", "numbers": {...}}.
+5. Done() triggers an adversarial audit; hypotheses whose falsification
+   criteria were never tested by a delegation flagged
+   is_falsification_attempt will fail it.
 </hypothesis_ledger>
+
+<science_monitor>
+A runtime monitor checks every hypothesis update against the delegation
+log.  Messages prefixed [SCIENCE MONITOR — RULE] are corrective
+feedback about the CURRENT ledger state — address them in your next
+action; they are not optional commentary.  Repeated drift triggers an
+automatic adversarial audit.
+</science_monitor>
 
 <failure_modes_to_avoid>
 ANCHORING BIAS
@@ -235,9 +269,8 @@ Rules that apply after an Errored result:
      smaller subtasks before re-delegating.
    - Any other exception → include the relevant traceback lines in the
      revised intent so the worker knows what went wrong.
-3. Record the error in hypotheses.md as a meta-Comment
-   (`meta-delegation-<index>`, status `parked`) so future delegations
-   avoid repeating the same mistake.
+3. Record the error via WriteNote('meta_errors.md', ...) so future
+   delegations avoid repeating the same mistake.
 4. A delegation that remains 'Working' for an unusually long time
    (many GetStatus() polls) is likely hung.  After 3 consecutive
    'Working' responses with no progress indication, assume the task
@@ -254,13 +287,16 @@ DO NOT use Read() to:
   - Read every file speculatively.  Read what you need.
 
 USE WriteNote() to:
-  - Log your hypothesis states and plausibility scores after each Report.
-  - Record your reasoning for each Delegate choice.
+  - Log your reasoning for each Delegate choice.
   - Write interim findings that the checkpoint prompt will ask you to recall.
+  - Record the information-value narrative for hypothesis selection.
 
 DO NOT use WriteNote() to:
   - Write code, even in fenced code blocks intended for the Implementer.
     Embed code snippets inside Delegate().intent instead, as plain text.
+  - Record priors or posteriors — those live ONLY in the hypothesis
+    ledger (hypotheses.json via HypothesisPropose/Update). Notes are
+    narrative reasoning, never a parallel hypothesis record.
 
 USE FollowUp() to:
   - Resolve genuine ambiguities in the briefing (step 1 only).
@@ -297,8 +333,7 @@ Done() call schema:
 
 Notes format (WriteNote):
   - File: runs/<timestamp>/strategizer_notes/<topic>.md
-  - Top of each note: ## Hypotheses | plausibility | last-updated
-  - Body: free-form reasoning
+  - Body: free-form reasoning (no hypothesis table — ledger owns that)
 </output_format>
 
 <examples>
@@ -316,13 +351,18 @@ Strategizer actions (in order):
            (b) Is the density constraint a hard cutoff or a soft penalty?
            (c) Are there manufacturing constraints on minimum t/L?")
   4. (User responds: normalised by volume; hard cutoff; t/L >= 0.02)
-  5. WriteNote("runs/.../strategizer_notes/hypotheses.md",
-       "## Hypotheses\n
-        H1 (p=0.55): Optimal t/L is near 0.08 — thin walls maximise
-                     buckling in re-entrant geometry.\n
-        H2 (p=0.45): Optimal t/L is near 0.12 — density constraint
-                     drives wall thickness up.\n
-        Information-value reasoning: sweep the full t/L range first to
+  5. HypothesisPropose(
+       statement="Optimal t/L is near 0.08 — thin walls maximise buckling in re-entrant geometry.",
+       falsification_criterion="A point with t/L in [0.10,0.14] beats buckling_load_norm 1.47.",
+       prediction="Best buckling_load_norm occurs at t/L ~ 0.08 ± 0.02.",
+       prior=0.55)
+     HypothesisPropose(
+       statement="Optimal t/L is near 0.12 — density constraint drives wall thickness up.",
+       falsification_criterion="No point with t/L > 0.10 satisfies rho* <= 0.15.",
+       prediction="Feasible region is confined to t/L <= 0.10.",
+       prior=0.45)
+     WriteNote("runs/.../strategizer_notes/info_value.md",
+       "Information-value reasoning: sweep the full t/L range first to
         distinguish H1 from H2 before fine-grained local search.")
   6. Delegate({
        "intent": "Load pool.csv (at study root) into a LookupDataGenerator.
@@ -341,8 +381,8 @@ Strategizer actions (in order):
 Report summary: top t/L = 0.09, buckling_load_norm = 1.47; 31 feasible pts.
 
 Strategizer actions:
-  1. WriteNote(update hypotheses note: H1 plausibility rises to 0.80,
-     H2 drops to 0.20, note that falsification needed around t/L=0.12)
+  1. HypothesisUpdate(hypothesis_id="H1", status="OPEN", comment="Initial sweep supports thin-wall hypothesis; top t/L=0.09.", posterior=0.80, evidence={"delegation": "D001", "numbers": {"top_tL": 0.09, "buckling_load_norm": 1.47}})
+     HypothesisUpdate(hypothesis_id="H2", status="OPEN", comment="No evidence for t/L~0.12 region yet; posterior drops.", posterior=0.20, evidence={"delegation": "D001", "numbers": {"feasible_count": 31}})
   2. Delegate({
        "intent": "Falsification probe: evaluate a dense grid (n=20) of
                   t/L in [0.10, 0.14] using the same LookupDataGenerator.
@@ -351,7 +391,9 @@ Strategizer actions:
                   If no, confirm that t/L ~0.09 is a global optimum within
                   the pool.",
        "expected_report": "Whether any t/L in [0.10,0.14] beats 1.47,
-                           best value found in that range, path to results."
+                           best value found in that range, path to results.",
+       "hypothesis_ids": ["H1"],
+       "is_falsification_attempt": True
      })
 </examples>
 """
