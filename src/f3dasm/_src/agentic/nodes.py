@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 from .delegation_log import DelegationLog
 from .hypothesis_ledger import HypothesisLedger
+from .science_monitor import ScienceMonitor
 
 __all__ = [
     "AgentNode", "StrategizerNode", "WorkerNode", "ImplementerNode",
@@ -168,6 +169,14 @@ class StrategizerNode(AgentNode):
         )
         # Graph-wide delegation log (demand-driven episodic memory)
         self._delegation_log: DelegationLog | None = delegation_log
+        # Science drift monitor — active when both ledger and log present
+        self._science_monitor: ScienceMonitor | None = None
+        if self._ledger is not None and delegation_log is not None:
+            self._science_monitor = ScienceMonitor(
+                self._ledger,
+                delegation_log,
+                diagnostics_writer=self._record_science_drift,
+            )
         # Running total of delegations at the START of the current __call__
         # Used to compute sequential delegation IDs (D001, D002, …)
         self._state_total_delegations: int = 0
@@ -192,10 +201,16 @@ class StrategizerNode(AgentNode):
         """Return and clear any pending push notifications, or empty string."""
         with self._notifications_lock:
             if not self._notifications:
-                return ""
-            msgs = list(self._notifications)
-            self._notifications.clear()
-        return "\n".join(msgs) + "\n\n"
+                text = ""
+            else:
+                msgs = list(self._notifications)
+                self._notifications.clear()
+                text = "\n".join(msgs) + "\n\n"
+        if self._science_monitor is not None:
+            drift = self._science_monitor.drain()
+            if drift:
+                text += drift
+        return text
 
     def _build_routing_closures(self) -> dict:
         """Return routing closure tools that write to self._route."""
@@ -490,6 +505,14 @@ class StrategizerNode(AgentNode):
                                 is_falsification_attempt
                             ),
                         )
+                        if node._science_monitor is not None:
+                            try:
+                                node._science_monitor\
+                                    .on_delegation_complete(
+                                    delegation_id
+                                )
+                            except Exception:  # noqa: BLE001
+                                pass
                 except Exception:  # noqa: BLE001
                     tb = traceback.format_exc()
                     _usage = getattr(worker, "last_usage", {}) or {}
@@ -1090,6 +1113,26 @@ class StrategizerNode(AgentNode):
         except Exception:  # noqa: BLE001
             pass
 
+    def _record_science_drift(self, payload: dict) -> None:
+        """Append a SCIENCE_DRIFT record to diagnostics.jsonl."""
+        import json as _json
+        notes = self._current_notes_dir
+        if notes is None:
+            return
+        record = {
+            "ts": datetime.now(tz=timezone.utc).isoformat(
+                timespec="seconds"),
+            "node": self._name,
+            "error_type": "SCIENCE_DRIFT",
+            **payload,
+        }
+        try:
+            path = Path(notes).parent / "diagnostics.jsonl"
+            with path.open("a", encoding="utf-8") as f:
+                f.write(_json.dumps(record) + "\n")
+        except Exception:  # noqa: BLE001
+            pass
+
     def _wrap_closure(self, fn: Any, node_name: str) -> Any:
         """Return a version of *fn* that records ERROR returns and exceptions.
 
@@ -1253,7 +1296,7 @@ class StrategizerNode(AgentNode):
                     ]
                 if done_entries:
                     triggered_by = done_entries[-1][0]
-            return node._ledger.update(
+            result = node._ledger.update(
                 hypothesis_id,
                 status,
                 comment,
@@ -1261,6 +1304,16 @@ class StrategizerNode(AgentNode):
                 posterior,
                 triggered_by,
             )
+            if (
+                node._science_monitor is not None
+                and not result.startswith("ERROR:")
+            ):
+                inline = node._science_monitor.on_hypothesis_update(
+                    hypothesis_id
+                )
+                if inline:
+                    result += "\n\n" + "\n".join(inline)
+            return result
 
         def HypothesisList() -> str:
             """List all hypotheses with id, status, belief, statement."""

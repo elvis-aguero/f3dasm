@@ -2385,3 +2385,223 @@ def test_wrap_closure_recall_history_regression():
 
     wrapped = node._wrap_closure(g, "strategizer")
     assert wrapped(n="5") == "-5"
+
+
+# ---------------------------------------------------------------------------
+# ScienceMonitor integration tests
+# ---------------------------------------------------------------------------
+
+_GOOD_WORKER_REPORT = (
+    "## Report\n"
+    "### Actions taken\n- ran sweep\n"
+    "### Files touched\n- results.csv\n"
+    "### Conclusions\nOK\n"
+    "### Numbers\nbest_y: 1.47"
+)
+
+
+def test_monitor_violation_appears_in_next_tool_result(tmp_path):
+    """SUPPORTED_WITHOUT_ATTACK violation appears in next draining tool result.
+
+    Flow: propose H1, delegate with wait=True (worker returns a Report
+    WITHOUT is_falsification_attempt), update H1 to SUPPORTED citing
+    that delegation, then call WriteNote() (a draining closure) — assert
+    its result contains '[SCIENCE MONITOR — SUPPORTED_WITHOUT_ATTACK]'.
+    """
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    from f3dasm._src.agentic.delegation_log import DelegationLog
+
+    drain_results: list[str] = []
+    delegation_ids: list[str] = []
+
+    class MonitorAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["HypothesisPropose"](
+                statement="Best_y < 2 on Ackley 8D",
+                falsification_criterion="any run with best_y >= 2",
+                prediction="best_y will be ~1.47",
+                prior=0.6,
+            )
+            # wait=True, not a falsification attempt
+            # D001 is the first delegation in this run
+            self.closure_tools["Delegate"](
+                target="implementer",
+                intent="run sweep",
+                expected_report="",
+                hypothesis_ids=["H1"],
+                wait=True,
+                is_falsification_attempt=False,
+            )
+            d_id = "D001"
+            delegation_ids.append(d_id)
+            # Update to SUPPORTED citing that delegation
+            self.closure_tools["HypothesisUpdate"](
+                hypothesis_id="H1",
+                status="SUPPORTED",
+                comment="numbers match",
+                posterior=0.85,
+                evidence={
+                    "delegation": d_id,
+                    "numbers": {"best_y": 1.47},
+                },
+            )
+            # WriteNote is a draining closure — monitor text appears here
+            r = self.closure_tools["WriteNote"](
+                "scratch.md", "x"
+            )
+            drain_results.append(r)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    jsonl_path = tmp_path / "delegation_log.jsonl"
+    delegation_log = DelegationLog(jsonl_path)
+    worker = StubAdapter(response=_GOOD_WORKER_REPORT)
+    adapter = MonitorAdapter()
+    spec = _ledger_spec()
+    node = StrategizerNode(
+        adapter,
+        name="strategizer",
+        outgoing=["implementer"],
+        spec=spec,
+        worker_adapters={"implementer": worker},
+        notes_dir=tmp_path,
+        delegation_log=delegation_log,
+    )
+    node._current_notes_dir = tmp_path
+    node(make_state(study_dir=str(tmp_path)))
+
+    assert drain_results, "WriteNote was never called"
+    assert any(
+        "[SCIENCE MONITOR — SUPPORTED_WITHOUT_ATTACK]" in r
+        for r in drain_results
+    ), (
+        f"Expected SUPPORTED_WITHOUT_ATTACK in drain result, got:"
+        f" {drain_results!r}"
+    )
+
+
+def test_monitor_error_returned_inline_on_update(tmp_path):
+    """HypothesisUpdate citing nonexistent D999 returns inline error.
+
+    The ledger accepts the update (D-id validity is a monitor concern).
+    The return value of HypothesisUpdate must contain
+    '[SCIENCE MONITOR — EVIDENCE_DELEGATION_EXISTS]'.
+    """
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    from f3dasm._src.agentic.delegation_log import DelegationLog
+
+    update_results: list[str] = []
+
+    class BadEvidenceAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["HypothesisPropose"](
+                statement="Claim about results",
+                falsification_criterion="any counter",
+                prediction="none found",
+                prior=0.5,
+            )
+            # Update citing a non-existent delegation D999
+            r = self.closure_tools["HypothesisUpdate"](
+                hypothesis_id="H1",
+                status="SUPPORTED",
+                comment="trust me",
+                posterior=0.8,
+                evidence={"delegation": "D999"},
+            )
+            update_results.append(r)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    jsonl_path = tmp_path / "delegation_log.jsonl"
+    delegation_log = DelegationLog(jsonl_path)
+    adapter = BadEvidenceAdapter()
+    spec = _ledger_spec()
+    node = StrategizerNode(
+        adapter,
+        name="strategizer",
+        outgoing=["implementer"],
+        spec=spec,
+        worker_adapters={"implementer": StubAdapter()},
+        notes_dir=tmp_path,
+        delegation_log=delegation_log,
+    )
+    node._current_notes_dir = tmp_path
+    node(make_state(study_dir=str(tmp_path)))
+
+    assert update_results, "HypothesisUpdate was never called"
+    assert any(
+        "[SCIENCE MONITOR — EVIDENCE_DELEGATION_EXISTS]" in r
+        for r in update_results
+    ), (
+        f"Expected EVIDENCE_DELEGATION_EXISTS inline, got:"
+        f" {update_results!r}"
+    )
+
+
+def test_science_drift_written_to_diagnostics(tmp_path):
+    """SCIENCE_DRIFT record appears in diagnostics.jsonl.
+
+    After a HypothesisUpdate citing nonexistent D999, the monitor fires
+    EVIDENCE_DELEGATION_EXISTS and the diagnostics writer writes a record
+    with error_type == 'SCIENCE_DRIFT' and a 'rule' field.
+    """
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    from f3dasm._src.agentic.delegation_log import DelegationLog
+
+    class BadEvidenceAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["HypothesisPropose"](
+                statement="Drift diagnostics claim",
+                falsification_criterion="any counter",
+                prediction="none found",
+                prior=0.5,
+            )
+            self.closure_tools["HypothesisUpdate"](
+                hypothesis_id="H1",
+                status="SUPPORTED",
+                comment="fabricated",
+                posterior=0.8,
+                evidence={"delegation": "D999"},
+            )
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    debug_dir = tmp_path / "debug"
+    debug_dir.mkdir()
+    notes_dir = debug_dir / "strategizer_notes"
+    notes_dir.mkdir()
+
+    jsonl_path = tmp_path / "delegation_log.jsonl"
+    delegation_log = DelegationLog(jsonl_path)
+    adapter = BadEvidenceAdapter()
+    spec = _ledger_spec()
+    node = StrategizerNode(
+        adapter,
+        name="strategizer",
+        outgoing=["implementer"],
+        spec=spec,
+        worker_adapters={"implementer": StubAdapter()},
+        notes_dir=notes_dir,
+        delegation_log=delegation_log,
+    )
+    node._current_notes_dir = notes_dir
+    node(make_state(study_dir=str(tmp_path)))
+
+    diag_path = debug_dir / "diagnostics.jsonl"
+    assert diag_path.exists(), (
+        f"diagnostics.jsonl not created at {diag_path}"
+    )
+    records = [
+        _json.loads(line)
+        for line in diag_path.read_text().strip().splitlines()
+    ]
+    drift_records = [
+        r for r in records
+        if r.get("error_type") == "SCIENCE_DRIFT"
+    ]
+    assert drift_records, (
+        f"No SCIENCE_DRIFT record found; records: {records!r}"
+    )
+    assert "rule" in drift_records[0], (
+        f"SCIENCE_DRIFT record missing 'rule': {drift_records[0]!r}"
+    )
