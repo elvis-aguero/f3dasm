@@ -30,8 +30,23 @@ class DelegationLog:
     def __init__(self, log_path: Path) -> None:
         self._path = Path(log_path)
         self._lock = threading.Lock()
+        # Monotonic sequence counter for globally-unique delegation IDs.
+        # Shared across all orchestrating nodes that hold a reference to
+        # this log — guarantees D### uniqueness even when datagenerator
+        # and implementer both delegate to literature_reviewer.
+        self._seq: int = 0
         # Ensure parent directory exists
         self._path.parent.mkdir(parents=True, exist_ok=True)
+
+    def next_id(self) -> str:
+        """Return the next globally-unique delegation ID (e.g. ``"D001"``).
+
+        Thread-safe: increments the shared monotonic counter under
+        ``self._lock``.
+        """
+        with self._lock:
+            self._seq += 1
+            return f"D{self._seq:03d}"
 
     def record(
         self,

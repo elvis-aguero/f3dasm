@@ -1,8 +1,13 @@
 """Public API for the agentic-f3dasm layer.
 
-Architecture: LangGraph StateGraph with two default nodes:
-- **StrategizerAgent** — orchestrates via Delegate/Done/Ask closures.
-- **ImplementerAgent** — executes tasks using Bash/Read/Write/Edit tools.
+Architecture: LangGraph StateGraph with a 5-node default topology:
+- **StrategizerAgent** — entry; forms hypotheses, plans, synthesises.
+- **LiteratureReviewAgent** — methodology from primary literature.
+- **DataGeneratorAgent** — BUILDS the physics DataGenerator Block.
+- **F3dasmImplementerAgent** — RUNS the f3dasm pipeline end-to-end:
+  DoE-execution (sampling), data-generation runs, ML, Optimization.
+  The ONLY agent that evaluates designs.
+- **AdversarialCritiqueAgent** — final adversarial quality gate.
 
 The user's only required input is ``<study-dir>/PROBLEM_STATEMENT.md``.
 """
@@ -22,9 +27,9 @@ from .._src.agentic.agents import (
     AdversarialCritiqueAgent,
     DataGeneratorAgent,
     DebuggerAgent,
+    F3dasmImplementerAgent,
     ImplementerAgent,
     LiteratureReviewAgent,
-    OptimizationAgent,
     StrategizerAgent,
 )
 from .._src.agentic.backends.base import Agent, Edge, Graph
@@ -56,7 +61,7 @@ __all__ = [
     "InstrumentedDataGenerator",
     "AgenticOptimizerAdapter",
     "DataGeneratorAgent",
-    "OptimizationAgent",
+    "F3dasmImplementerAgent",
     "AgenticRun",
     "AgenticRunError",
     "AgenticState",

@@ -8,15 +8,14 @@ from ._graphs import _default_graph
 from .critic import AdversarialCritiqueAgent
 from .datagenerator import DataGeneratorAgent
 from .debugger import DebuggerAgent
-from .implementer import F3dasmImplementer, ImplementerAgent
+from .implementer import F3dasmImplementer, F3dasmImplementerAgent, ImplementerAgent
 from .literature import LiteratureReviewAgent
-from .optimization import OptimizationAgent
 from .strategizer import StrategizerAgent
 
 __all__ = [
     "AdversarialCritiqueAgent",
     "DataGeneratorAgent",
-    "OptimizationAgent",
+    "F3dasmImplementerAgent",
     "StrategizerAgent",
     "F3dasmImplementer",
     "ImplementerAgent",  # backward-compatible alias

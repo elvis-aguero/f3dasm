@@ -276,33 +276,50 @@ with a `BUDGET EXCEEDED` banner. Live delegations survive loop-backs.
 
 ## Defining a graph
 
+When no `graph=` is passed, the **5-node ratified default topology** is used:
+
+```
+strategizer (entry)
+  → literature_reviewer   (methodology)
+  → datagenerator         (BUILDS the DataGenerator Block)
+  → implementer           (RUNS the pipeline: DoE-exec + datagen + ML + Opt)
+  → critic                (adversarial gate)
+datagenerator → literature_reviewer  (consult methodology before building)
+implementer   → literature_reviewer  (consult methodology before fitting)
+```
+
+A connected `critic` activates the `Done()` gate and `AskForFeedback`; without
+it, `Done()` closes directly.
+
+To define a custom graph:
+
 ```python
 from f3dasm.agentic import Edge, Graph, AgenticRun
 from f3dasm.agentic import (
-    StrategizerAgent, ImplementerAgent,
-    AdversarialCritiqueAgent, LiteratureReviewAgent,
+    StrategizerAgent, F3dasmImplementerAgent,
+    DataGeneratorAgent, AdversarialCritiqueAgent, LiteratureReviewAgent,
 )
 
 graph = Graph(
     nodes={
-        "strategizer": StrategizerAgent(),
-        "implementer": ImplementerAgent(),
-        "critic": AdversarialCritiqueAgent(),
+        "strategizer":       StrategizerAgent(),
         "literature_reviewer": LiteratureReviewAgent(),
+        "datagenerator":     DataGeneratorAgent(),
+        "implementer":       F3dasmImplementerAgent(),
+        "critic":            AdversarialCritiqueAgent(),
     },
     edges=(
+        Edge("strategizer", "literature_reviewer"),
+        Edge("strategizer", "datagenerator"),
         Edge("strategizer", "implementer"),
         Edge("strategizer", "critic"),
-        Edge("strategizer", "literature_reviewer"),
+        Edge("datagenerator", "literature_reviewer"),
+        Edge("implementer",   "literature_reviewer"),
     ),
     entry="strategizer",
 )
 AgenticRun(study_dir="studies/my_problem", graph=graph).execute()
 ```
-
-When no `graph=` is passed, a sensible default topology is built. A connected
-`critic` activates the `Done()` gate and `AskForFeedback`; without it, `Done()`
-closes directly.
 
 ### Agent class attributes
 
@@ -354,14 +371,17 @@ delegation's `debug/delegations/D###/` folder.
 
 ## Agent roster
 
+The default topology is **5 nodes**. Each agent owns exactly one
+responsibility; routing is enforced by the build/run split:
+
 | Agent | role | Tools | Purpose |
 |---|---|---|---|
-| `StrategizerAgent` | strategizer | Done, FollowUp, WriteNote, ReadNote, WriteDeliverable (+ injected) | orchestrates: hypotheses, delegations, synthesis. Entry node. |
-| `F3dasmImplementer` (`ImplementerAgent`) | implementer | Bash, Edit, Read, Write, Glob, Grep, ReportEvals | runs f3dasm pipelines, evaluates designs, produces data |
-| `AdversarialCritiqueAgent` | critic | Read, Glob | adversarial quality gate; verdict PASS/REVISE/REJECT |
-| `LiteratureReviewAgent` | implementer | Read, Grep, Glob (+ corpus/MCP tools) | primary-source literature review |
+| `StrategizerAgent` | strategizer | Done, FollowUp, WriteNote, ReadNote, WriteDeliverable (+ injected) | scientific method, DoE decisions, hypotheses, synthesis, replicate.py, Done. Entry node. |
+| `LiteratureReviewAgent` | implementer | Read, Grep, Glob (+ corpus/MCP tools) | methodology from primary literature |
+| `DataGeneratorAgent` | implementer | Bash, Edit, Read, Write, Glob, Grep, ReportEvals | **BUILDS** the physics DataGenerator Block; validates on one sample; delivers artifact. Does NOT run/evaluate/fit. |
+| `F3dasmImplementerAgent` (`ImplementerAgent`) | implementer | Bash, Edit, Read, Write, Glob, Grep, ReportEvals | **RUNS** the f3dasm pipeline: DoE-execution (sampling), runs the DataGenerator Block to produce data, fits surrogates (sklearn/botorch), runs the exploit loop. The **only** agent that calls the evaluator. |
+| `AdversarialCritiqueAgent` | critic | Read, Glob | adversarial audit vs the ledger; final quality gate. |
 | `DebuggerAgent` | implementer | Bash, Read, Grep, Edit, Write | debugging delegations |
-| `DataGeneratorAgent` | implementer | Bash, Edit, Read, Write, Glob, Grep, ReportEvals | authors `DataGenerator` subclasses |
 
 ---
 

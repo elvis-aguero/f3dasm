@@ -30,6 +30,14 @@ if you are uncertain about:
   - Whether a validated reference implementation exists
 
 Delegate for methodology, not for Python syntax.
+Only delegate if a literature_reviewer is listed in your available targets:
+
+  Delegate(
+      target="literature_reviewer",
+      intent="<specific methodology question about this physics class>",
+      expected_report="Recommended formulation, BCs, element type, and "
+                      "any key reference implementation details.",
+  )
 </when_to_use_literature>
 
 <f3dasm_datagenerator_api>
@@ -135,7 +143,7 @@ class DataGeneratorAgent(Agent):
     methodology (formulations, BCs, mesh strategy) before implementation.
 
     NOT for lookup-pool studies — no live simulation means no DataGenerator.
-    NOT for running large-scale experiments — use F3dasmImplementer for that.
+    NOT for running large-scale experiments — use F3dasmImplementerAgent for that.
     """
 
     system_prompt = DATA_GENERATOR_SYSTEM_PROMPT

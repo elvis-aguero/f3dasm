@@ -466,12 +466,25 @@ class StrategizerNode(AgentNode):
                         f"{sorted(known) or '(none proposed yet)'}."
                     )
 
-            # Sequential delegation ID: D001, D002, …
-            # _delegation_seq is monotonic and never reset, so IDs are
-            # unique even after the registry is pruned on loop-back.
-            with node._registry_lock:
-                node._delegation_seq += 1
-                delegation_id = f"D{node._delegation_seq:03d}"
+            # Delegation ID: globally unique when a shared DelegationLog
+            # is present (multiple orchestrating nodes share one log, so
+            # IDs must be unique across all of them).  Falls back to the
+            # per-node monotonic counter when no log is attached.
+            if node._delegation_log is not None:
+                delegation_id = node._delegation_log.next_id()
+                # Keep per-node seq in sync so checkpoint/WorkerNode
+                # paths that read _delegation_seq stay consistent.
+                with node._registry_lock:
+                    try:
+                        node._delegation_seq = int(
+                            delegation_id[1:]
+                        )
+                    except (ValueError, IndexError):
+                        pass
+            else:
+                with node._registry_lock:
+                    node._delegation_seq += 1
+                    delegation_id = f"D{node._delegation_seq:03d}"
 
             start_time_mono = time.monotonic()
             started_at = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
