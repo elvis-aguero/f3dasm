@@ -513,9 +513,178 @@ def _load_run_config() -> dict:
 
 
 # ==========================================================================
+# Module-level mtime cache: {str(store_dir): (mtime, RunStateSummary)}
+_RSS_CACHE: dict[str, tuple[float, "RunStateSummary"]] = {}
+
+_PROVENANCE_COLS = frozenset({"_delegation_id", "source", "_ts"})
+
+
+class RunStateSummary:
+    """Read-only summary of the canonical evaluation ledger.
+
+    Computed from the store at read time; never written by agents.
+    Cached at module level by (store_dir, output.csv mtime) so repeated
+    calls within a turn are O(1).
+    """
+
+    def __init__(
+        self,
+        *,
+        n_rows: int,
+        n_per_delegation: dict,
+        n_per_source: dict,
+        n_per_fidelity: "dict | None",
+        output_stats: dict,
+    ) -> None:
+        self.n_rows = n_rows
+        self.n_per_delegation = n_per_delegation
+        self.n_per_source = n_per_source
+        self.n_per_fidelity = n_per_fidelity
+        self.output_stats = output_stats
+
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_store(
+        cls,
+        store_dir: "Path | str",
+        *,
+        fidelity_column: "Optional[str]" = None,
+    ) -> "RunStateSummary | None":
+        """Build a RunStateSummary from the canonical store.
+
+        Returns ``None`` if the store does not exist or is empty.
+        Caches the result by (store_dir, mtime) so the DataFrame is not
+        re-parsed on every call within a turn.
+
+        Parameters
+        ----------
+        store_dir : Path or str
+            The run-level directory that *contains* ``experiment_data/``.
+        fidelity_column : str or None
+            Name of the fidelity input column.  Grouping is only done when
+            this column is present in the ExperimentData INPUT columns.
+        """
+        store_dir = Path(store_dir)
+        csv_path = store_dir / "experiment_data" / "output.csv"
+        if not csv_path.exists():
+            return None
+
+        key = str(store_dir)
+        mtime = csv_path.stat().st_mtime
+        cached = _RSS_CACHE.get(key)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
+
+        # Re-parse
+        try:
+            data = ExperimentData.from_file(project_dir=store_dir)
+            df_in, df_out = data.to_pandas()
+        except Exception:  # noqa: BLE001 — empty/corrupt store
+            return None
+
+        if df_out.empty:
+            return None
+
+        n_rows = len(df_out)
+        n_per_delegation: dict = {}
+        if "_delegation_id" in df_out.columns:
+            n_per_delegation = (
+                df_out["_delegation_id"]
+                .value_counts()
+                .to_dict()
+            )
+        n_per_source: dict = {}
+        if "source" in df_out.columns:
+            n_per_source = (
+                df_out["source"]
+                .value_counts()
+                .to_dict()
+            )
+
+        # Fidelity: only group when column is in INPUT columns
+        n_per_fidelity: "dict | None" = None
+        if (
+            fidelity_column is not None
+            and df_in is not None
+            and fidelity_column in df_in.columns
+        ):
+            n_per_fidelity = (
+                df_in[fidelity_column]
+                .value_counts()
+                .to_dict()
+            )
+
+        # Output stats: numeric, non-provenance output columns
+        output_stats: dict = {}
+        for col in df_out.columns:
+            if col in _PROVENANCE_COLS:
+                continue
+            series = df_out[col]
+            try:
+                import pandas as _pd
+                numeric = _pd.to_numeric(series, errors="coerce").dropna()
+            except Exception:  # noqa: BLE001
+                continue
+            if numeric.empty:
+                continue
+            output_stats[col] = {
+                "min": float(numeric.min()),
+                "max": float(numeric.max()),
+                "mean": float(numeric.mean()),
+            }
+
+        summary = cls(
+            n_rows=n_rows,
+            n_per_delegation=n_per_delegation,
+            n_per_source=n_per_source,
+            n_per_fidelity=n_per_fidelity,
+            output_stats=output_stats,
+        )
+        _RSS_CACHE[key] = (mtime, summary)
+        return summary
+
+    # ------------------------------------------------------------------
+
+    def format(self) -> str:
+        """Compact human/LLM-readable block, typically ≤ 25 lines."""
+        lines: list[str] = [
+            f"Canonical store: {self.n_rows} total rows",
+        ]
+        if self.n_per_delegation:
+            parts = ", ".join(
+                f"{k}={v}" for k, v in sorted(self.n_per_delegation.items())
+            )
+            lines.append(f"  rows per delegation: {parts}")
+        if self.n_per_source:
+            parts = ", ".join(
+                f"{k}={v}" for k, v in sorted(self.n_per_source.items())
+            )
+            lines.append(f"  rows per source: {parts}")
+        if self.n_per_fidelity is not None:
+            parts = ", ".join(
+                f"{k}={v}"
+                for k, v in sorted(
+                    self.n_per_fidelity.items(), key=lambda kv: kv[0]
+                )
+            )
+            lines.append(f"  rows per fidelity: {parts}")
+        if self.output_stats:
+            lines.append("  output ranges:")
+            for col, stats in sorted(self.output_stats.items()):
+                lines.append(
+                    f"    {col}: min={stats['min']:.4g}"
+                    f"  max={stats['max']:.4g}"
+                    f"  mean={stats['mean']:.4g}"
+                )
+        return "\n".join(lines)
+
+
+# ==========================================================================
 
 __all__ = [
     "InstrumentedDataGenerator",
+    "RunStateSummary",
     "get_evaluator",
     "load_inner_evaluator",
 ]

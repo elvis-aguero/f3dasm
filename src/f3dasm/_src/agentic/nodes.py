@@ -687,6 +687,7 @@ class StrategizerNode(AgentNode):
                             is_falsification_attempt=bool(
                                 is_falsification_attempt
                             ),
+                            evals=_evals,
                         )
                         if node._science_monitor is not None:
                             try:
@@ -1122,12 +1123,172 @@ class StrategizerNode(AgentNode):
                     )
                 return "\n\n---\n\n".join(parts)
 
+        # ------------------------------------------------------------------
+        # RecallStore / QueryStore: canonical ledger read tools.
+        # Store dir: notes_dir (run_dir/debug/strategizer_notes) →
+        #   parent = debug/, parent.parent = run_dir = store_dir.
+        # ------------------------------------------------------------------
+
+        def _derive_store_dir() -> "Path | None":
+            nd = node._current_notes_dir
+            if nd is None:
+                return None
+            return nd.parent.parent
+
+        def RecallStore() -> str:
+            """Summary of the run's canonical evaluation ledger: rows per
+            delegation/source, output ranges. Call before deciding the next
+            delegation."""
+            from .instrumented import RunStateSummary
+            sd = _derive_store_dir()
+            if sd is None:
+                return (
+                    "Canonical store is empty — no instrumented "
+                    "evaluations recorded yet."
+                )
+            summary = RunStateSummary.from_store(sd)
+            if summary is None:
+                return (
+                    "Canonical store is empty — no instrumented "
+                    "evaluations recorded yet."
+                )
+            return summary.format()
+
+        def QueryStore(
+            delegation_ids: "str | list | None" = None,
+            source: "str | None" = None,
+            n_best: "int | None" = None,
+            output_name: "str | None" = None,
+        ) -> str:
+            """Filtered view of the evaluation ledger (e.g. rows from D001+D003
+            only). Use to ground claims or to select training subsets; cite row
+            values from here as evidence."""
+            import json as _json
+
+            from ..errors import EmptyFileError, ReachMaximumTriesError
+            from ..experimentdata import ExperimentData
+            from .instrumented import _PROVENANCE_COLS
+
+            sd = _derive_store_dir()
+            if sd is None:
+                return (
+                    "Canonical store is empty — no instrumented "
+                    "evaluations recorded yet."
+                )
+            try:
+                data = ExperimentData.from_file(project_dir=sd)
+                df_in, df_out = data.to_pandas()
+            except (FileNotFoundError, EmptyFileError,
+                    ReachMaximumTriesError):
+                return (
+                    "Canonical store is empty — no instrumented "
+                    "evaluations recorded yet."
+                )
+            if df_out.empty:
+                return (
+                    "Canonical store is empty — no instrumented "
+                    "evaluations recorded yet."
+                )
+
+            # Decode delegation_ids: JSON / comma / bare / list
+            d_ids: "list[str] | None" = None
+            if delegation_ids is not None:
+                if isinstance(delegation_ids, list):
+                    d_ids = [str(x) for x in delegation_ids]
+                elif isinstance(delegation_ids, str):
+                    raw = delegation_ids.strip()
+                    if raw.startswith("["):
+                        try:
+                            decoded = _json.loads(raw)
+                            d_ids = (
+                                [str(h) for h in decoded]
+                                if isinstance(decoded, list)
+                                else [raw]
+                            )
+                        except _json.JSONDecodeError:
+                            d_ids = [raw]
+                    elif "," in raw:
+                        d_ids = [
+                            p.strip() for p in raw.split(",")
+                            if p.strip()
+                        ]
+                    else:
+                        d_ids = [raw]
+
+            # Apply filters (read-only: build a boolean mask)
+            import pandas as _pd
+            mask = _pd.Series([True] * len(df_out), index=df_out.index)
+            if d_ids is not None and "_delegation_id" in df_out.columns:
+                mask &= df_out["_delegation_id"].isin(d_ids)
+            if source is not None and "source" in df_out.columns:
+                mask &= df_out["source"] == source
+
+            filtered = df_out[mask]
+            filtered_in = df_in[mask] if df_in is not None else None
+
+            if filtered.empty:
+                return "No rows match the given filters."
+
+            # n_best: return the n rows with smallest output_name value
+            if n_best is not None and output_name is not None:
+                if output_name not in filtered.columns:
+                    return (
+                        f"ERROR: output column {output_name!r} not found. "
+                        f"Available: {list(filtered.columns)}"
+                    )
+                import pandas as _pd2
+                col_num = _pd2.to_numeric(
+                    filtered[output_name], errors="coerce"
+                )
+                best_idx = col_num.nsmallest(n_best).index
+                best_rows = filtered.loc[best_idx]
+                # Include input columns + output_name + _delegation_id
+                show_cols = []
+                if filtered_in is not None:
+                    input_cols = [
+                        c for c in filtered_in.columns
+                        if c not in _PROVENANCE_COLS
+                    ]
+                    show_cols.extend(input_cols)
+                show_cols.append(output_name)
+                if "_delegation_id" in best_rows.columns:
+                    show_cols.append("_delegation_id")
+                show_cols = [c for c in show_cols if c in best_rows.columns]
+
+                if filtered_in is not None:
+                    best_in = filtered_in.loc[best_idx, [
+                        c for c in filtered_in.columns
+                        if c in show_cols
+                    ]]
+                    combined = _pd2.concat(
+                        [best_in, best_rows[
+                            [c for c in show_cols
+                             if c not in best_in.columns]
+                        ]], axis=1
+                    )
+                else:
+                    combined = best_rows[
+                        [c for c in show_cols if c in best_rows.columns]
+                    ]
+                return combined.to_string(index=False)
+
+            # Default: return count + first 20 rows
+            n_shown = min(20, len(filtered))
+            subset = filtered.iloc[:n_shown]
+            return (
+                f"{len(filtered)} rows match. "
+                f"Showing first {n_shown}:\n"
+                + subset.to_string(index=False)
+            )
+
         # Topology-injected tools go to every orchestrating node.
         closures: dict = {
             "Delegate": Delegate,
             "GetStatus": GetStatus,
             "Reply": Reply,
             "FollowUp": FollowUp,
+            "RecallStore": RecallStore,
+            "QueryStore": QueryStore,
         }
 
         if node._delegation_log is not None:
@@ -1553,6 +1714,11 @@ class StrategizerNode(AgentNode):
             )
             if self._ledger is None:
                 self._ledger = HypothesisLedger(self._current_notes_dir)
+            # Wire canonical store dir into ScienceMonitor lazily.
+            if self._science_monitor is not None:
+                self._science_monitor.store_dir = (
+                    self._current_notes_dir.parent.parent
+                )
 
         # Capture total_delegations so Delegate() can seed the counter.
         self._state_total_delegations = state.get("total_delegations", 0)

@@ -54,6 +54,7 @@ class ScienceMonitor:
         stale_k: int = STALE_K,
         max_inject: int = MAX_INJECT_PER_TURN,
         escalation_cap: int = ESCALATION_CAP,
+        store_dir: "str | None" = None,
     ) -> None:
         self._ledger = ledger
         self._dlog = delegation_log
@@ -67,6 +68,9 @@ class ScienceMonitor:
         self._error_streak: dict[tuple, int] = {}  # key → consecutive
         self._escalations = 0
         self._pending_escalation: list[str] | None = None
+        # Optional canonical store path for UNLEDGERED_EVALS rule.
+        # Set lazily by StrategizerNode.__call__ when run_dir is known.
+        self.store_dir: "str | None" = store_dir
 
     def evaluate(self) -> list[Violation]:
         """Run all rules against current state; return live violations."""
@@ -87,6 +91,7 @@ class ScienceMonitor:
             out += self._check_hypothesis(h_id, h, by_id, completed)
         out += self._check_stale(hypotheses, completed)
         out += self._check_unanchored(hypotheses, completed)
+        out += self._check_unledgered(records)
         return out
 
     def _check_hypothesis(self, h_id, h, by_id, completed):
@@ -210,6 +215,43 @@ class ScienceMonitor:
                     "### Numbers content. Its result cannot anchor "
                     "a hypothesis update — re-delegate for concrete "
                     "measurements."))
+        return out
+
+    def _check_unledgered(self, all_records: list[dict]) -> list[Violation]:
+        """UNLEDGERED_EVALS: DONE delegations that reported evals but wrote
+        no rows to the canonical store. No-ops when store_dir is None."""
+        if self.store_dir is None:
+            return []
+        from pathlib import Path as _Path
+        sd = _Path(self.store_dir)
+        # Lazy summary via mtime cache — cheap on repeated calls.
+        try:
+            from .instrumented import RunStateSummary
+            summary = RunStateSummary.from_store(sd)
+        except Exception:  # noqa: BLE001
+            summary = None
+        rows_per_delegation: dict = {}
+        if summary is not None:
+            rows_per_delegation = summary.n_per_delegation
+
+        out: list[Violation] = []
+        for r in all_records:
+            if r.get("status") != "DONE":
+                continue
+            evals = r.get("evals", 0) or 0
+            if evals <= 0:
+                continue
+            d_id = r.get("id", "")
+            if rows_per_delegation.get(d_id, 0) > 0:
+                continue
+            out.append(Violation(
+                "UNLEDGERED_EVALS", "warn", None,
+                f"Delegation {d_id} reported {evals} evaluation(s) but "
+                "wrote none to the canonical ledger — it bypassed "
+                "get_evaluator(). Numbers from it cannot be "
+                "groundtruthed; instruct workers to evaluate via "
+                "get_evaluator().",
+            ))
         return out
 
     def _numbers_match(self, numbers: dict, deliverable: str) -> bool:

@@ -49,6 +49,7 @@ class DelegationLog:
         tokens_out: int = 0,
         cost_usd: float | None = None,
         is_falsification_attempt: bool = False,
+        evals: int = 0,
     ) -> None:
         """Append one delegation record.
 
@@ -68,6 +69,7 @@ class DelegationLog:
             "tokens_out": tokens_out,
             "cost_usd": cost_usd,
             "is_falsification_attempt": is_falsification_attempt,
+            "evals": evals,
         }
         with self._lock:
             with self._path.open("a", encoding="utf-8") as f:
