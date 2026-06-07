@@ -2,3 +2,7 @@ model: claude-haiku-4-5-20251001
 backend: claude
 budget: "00:15:00"
 eval_budget: 1000
+
+evaluator:
+  entrypoint: "workspace/evaluator.py:evaluate_kw"
+  output_names: [f]

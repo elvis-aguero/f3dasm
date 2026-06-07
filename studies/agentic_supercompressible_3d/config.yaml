@@ -2,3 +2,9 @@ model: claude-sonnet-4-6
 backend: claude
 budget: "03:00:00"
 checkpoint_every: 30
+
+evaluator:
+  lookup:
+    pool: "experiment_data"
+    input_columns: [ratio_d, ratio_pitch, ratio_top_diameter]
+    output_columns: [coilable, sigma_crit, energy]
