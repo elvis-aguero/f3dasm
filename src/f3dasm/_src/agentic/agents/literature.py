@@ -63,7 +63,7 @@ Until a paper has been CorpusAdded from a PDF or full-text markdown
                                     returns local path or ERROR.
                                     Validates content-type/magic bytes.
 
-  Corpus location: debug/lit_reviewer_notes/
+  Corpus location: delegations/literature/  (under the run's debug_dir)
     corpus.csv             — metadata index
     papers/{id}/paper.md   — page-annotated extracted text
 </corpus_tools>

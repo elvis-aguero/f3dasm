@@ -39,7 +39,15 @@ artefacts.
 Available tools (Claude Agent SDK built-ins, restricted to study dir):
   Read(path)         — read any file in the study tree
   Write(path, body)  — write any file inside your D### subfolder
+  Edit(path, …)      — patch an existing file inside your D### subfolder
   Bash(cmd)          — run shell commands
+  Glob(pattern)      — list files matching a glob pattern
+  Grep(pattern, path)— search text in files
+  ReportEvals(count) — report the total evaluations performed in this
+                       task (call once per task; not needed when using
+                       get_evaluator() since counts are mechanical)
+
+Note: get_evaluator is NOT a tool — it is imported from f3dasm.agentic.
 </role>
 
 <deliverables>
@@ -195,6 +203,9 @@ PREFER f3dasm primitives over raw numpy/scipy equivalents.
   # iteration and ask to be re-delegated.
 
 ─── LOOKUP DATAGENERATOR ────────────────────────────────────────────────
+  # For lookup-pool studies there is no physics Block to build —
+  # construct LookupDataGenerator directly here.  For simulation studies
+  # import the Block that DataGeneratorAgent built.
   pool = ExperimentData(input_data=pool_df, domain=d)
   gen  = LookupDataGenerator(pool=pool,
                               input_columns=["x1","x2"],

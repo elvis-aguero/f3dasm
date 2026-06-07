@@ -2,6 +2,8 @@
 
 from f3dasm._src.agentic.agent_prompts import (
     CHECKPOINT_STRATEGIZER_PROMPT,
+    IMPLEMENTER_SYSTEM_PROMPT_OLLAMA,
+    RUN_PATHS_PREAMBLE_TEMPLATE,
 )
 from f3dasm._src.agentic.agents.critic import (
     ADVERSARIAL_CRITIQUE_SYSTEM_PROMPT,
@@ -77,3 +79,80 @@ def test_replicate_deliverable_consumes_ledger_and_asserts():
     # must NOT instruct re-running the expensive evaluator
     assert "does NOT re-run the expensive" in \
         STRATEGIZER_SYSTEM_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# Prompt-audit tests (audit fixes A-M)
+# ---------------------------------------------------------------------------
+
+def test_no_two_agent_framing_in_any_prompt():
+    """No prompt should use the stale 'two-agent' framing."""
+    from f3dasm._src.agentic.agents.implementer import (
+        IMPLEMENTER_SYSTEM_PROMPT,
+    )
+    from f3dasm._src.agentic.agents.literature import (
+        LITERATURE_REVIEW_SYSTEM_PROMPT,
+    )
+    for name, prompt in (
+        ("STRATEGIZER", STRATEGIZER_SYSTEM_PROMPT),
+        ("IMPLEMENTER", IMPLEMENTER_SYSTEM_PROMPT),
+        ("OLLAMA", IMPLEMENTER_SYSTEM_PROMPT_OLLAMA),
+        ("LITERATURE", LITERATURE_REVIEW_SYSTEM_PROMPT),
+        ("CRITIC", ADVERSARIAL_CRITIQUE_SYSTEM_PROMPT),
+    ):
+        assert "two-agent" not in prompt.lower(), (
+            f"{name} prompt contains stale 'two-agent' framing"
+        )
+
+
+def test_strategizer_ledger_read_tools_documented():
+    """RecallStore, QueryStore, RecallHistory are documented in the
+    strategizer prompt."""
+    for tool in ("RecallStore", "QueryStore", "RecallHistory"):
+        assert tool in STRATEGIZER_SYSTEM_PROMPT, (
+            f"STRATEGIZER_SYSTEM_PROMPT missing tool '{tool}'"
+        )
+
+
+def test_strategizer_ledger_is_ground_truth():
+    """Strategizer prompt states the canonical ledger is ground truth."""
+    lower = STRATEGIZER_SYSTEM_PROMPT.lower()
+    assert "ground truth" in lower, (
+        "STRATEGIZER_SYSTEM_PROMPT missing 'ground truth' ledger-"
+        "evidence statement"
+    )
+
+
+def test_strategizer_no_builtin_gp_claim():
+    """Strategizer architecture section must not list CMA-ES/GP as
+    f3dasm-native; tpesampler should be present near optimization."""
+    lower = STRATEGIZER_SYSTEM_PROMPT.lower()
+    assert "tpesampler" in lower, (
+        "STRATEGIZER_SYSTEM_PROMPT does not mention 'tpesampler' in "
+        "optimization guidance"
+    )
+
+
+def test_ollama_implementer_contains_get_evaluator():
+    """Ollama implementer prompt must document get_evaluator."""
+    assert "get_evaluator" in IMPLEMENTER_SYSTEM_PROMPT_OLLAMA, (
+        "IMPLEMENTER_SYSTEM_PROMPT_OLLAMA missing 'get_evaluator'"
+    )
+
+
+def test_run_paths_renders_delegations_not_workspace():
+    """RUN_PATHS_PREAMBLE_TEMPLATE must render 'delegations', not
+    '/workspace', as workspace_dir."""
+    out = RUN_PATHS_PREAMBLE_TEMPLATE.format(
+        study_dir="/s",
+        run_dir="/s/runs/T",
+        debug_dir="/s/runs/T/debug",
+        notes_dir="/s/runs/T/debug/strategizer_notes",
+        experiment_data_dir="/s/runs/T/experiment_data",
+    )
+    assert "delegations" in out, (
+        "RUN_PATHS_PREAMBLE_TEMPLATE did not render 'delegations'"
+    )
+    assert "/workspace" not in out, (
+        "RUN_PATHS_PREAMBLE_TEMPLATE still renders '/workspace'"
+    )
