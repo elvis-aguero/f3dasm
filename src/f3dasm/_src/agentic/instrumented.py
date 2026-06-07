@@ -36,6 +36,7 @@ from filelock import FileLock
 
 from ..core import DataGenerator
 from ..design.domain import Domain
+from ..errors import EmptyFileError, ReachMaximumTriesError
 from ..experimentdata import ExperimentData
 from ..experimentsample import ExperimentSample, JobStatus
 
@@ -184,11 +185,20 @@ class InstrumentedDataGenerator(DataGenerator):
         batch = self._build_batch_experimentdata(batch_domain)
 
         with FileLock(str(self.lock_path)):
+            # Absent store (FileNotFoundError) OR a torn/empty CSV from an
+            # interrupted prior write (EmptyFileError / retry-exhausted):
+            # treat as fresh and let this locked write heal it. We do NOT
+            # catch broader errors — a populated store that fails to parse
+            # must propagate, never be silently overwritten with the batch.
             try:
                 canon = ExperimentData.from_file(
                     project_dir=self.store_dir
                 )
-            except FileNotFoundError:
+            except (
+                FileNotFoundError,
+                EmptyFileError,
+                ReachMaximumTriesError,
+            ):
                 canon = ExperimentData(domain=batch_domain)
 
             # Ensure provenance columns are declared on the canon domain.
@@ -239,8 +249,8 @@ def get_evaluator(inner: Optional[DataGenerator] = None) -> (
     ----------
     inner : DataGenerator or None, optional
         If provided, used as the wrapped evaluator.  If ``None``, Phase 2
-        entrypoint resolution is required — this raises ``NotImplementedError``
-        with a TODO.
+        entrypoint resolution is required — this raises
+        ``NotImplementedError`` with a TODO.
 
     Returns
     -------
