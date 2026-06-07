@@ -278,7 +278,7 @@ with a `BUDGET EXCEEDED` banner. Live delegations survive loop-backs.
 
 ```python
 from f3dasm.agentic import Edge, Graph, AgenticRun
-from f3dasm.agentic.agents import (
+from f3dasm.agentic import (
     StrategizerAgent, ImplementerAgent,
     AdversarialCritiqueAgent, LiteratureReviewAgent,
 )
@@ -361,7 +361,7 @@ delegation's `debug/delegations/D###/` folder.
 | `AdversarialCritiqueAgent` | critic | Read, Glob | adversarial quality gate; verdict PASS/REVISE/REJECT |
 | `LiteratureReviewAgent` | implementer | Read, Grep, Glob (+ corpus/MCP tools) | primary-source literature review |
 | `DebuggerAgent` | implementer | Bash, Read, Grep, Edit, Write | debugging delegations |
-| `DataGeneratorImplementerAgent` | implementer | Bash, Edit, Read, Write, Glob, Grep, ReportEvals | authors `DataGenerator` subclasses |
+| `DataGeneratorAgent` | implementer | Bash, Edit, Read, Write, Glob, Grep, ReportEvals | authors `DataGenerator` subclasses |
 
 ---
 
@@ -510,7 +510,7 @@ src/f3dasm/_src/agentic/
     lookup.py               # LookupDataGenerator (dataset/pool studies)
     literature_corpus.py    # corpus + rate-limited HTTP + dense retrieval
     container_runner.py     # ContainerRunner (Colima/Docker whole-run isolation)
-    optimizer.py            # AgenticOptimizer (f3dasm Optimizer interface)
+    optimizer.py            # AgenticOptimizerAdapter (wraps an agentic run AS an f3dasm Optimizer (agentic-as-optimizer adapter))
     _embed_worker.py        # out-of-process bge-small embedder
     agents/                 # strategizer, implementer, critic, literature, debugger, datagenerator
     backends/               # base (Agent/Edge/Graph), claude, ollama

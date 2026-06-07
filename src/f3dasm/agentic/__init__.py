@@ -20,6 +20,7 @@ from .._src.agentic.agent_runtime import (
 )
 from .._src.agentic.agents import (
     AdversarialCritiqueAgent,
+    DataGeneratorAgent,
     DebuggerAgent,
     ImplementerAgent,
     LiteratureReviewAgent,
@@ -41,7 +42,7 @@ from .._src.agentic.nodes import (
     StrategizerNode,
     WorkerNode,
 )
-from .._src.agentic.optimizer import AgenticOptimizer
+from .._src.agentic.optimizer import AgenticOptimizerAdapter
 
 __author__ = "Elvis Aguero (elvis_alexander_aguero_vera@brown.edu)"
 __credits__ = ["Elvis Aguero"]
@@ -52,7 +53,8 @@ __all__ = [
     "AgentNode",
     "get_evaluator",
     "InstrumentedDataGenerator",
-    "AgenticOptimizer",
+    "AgenticOptimizerAdapter",
+    "DataGeneratorAgent",
     "AgenticRun",
     "AgenticRunError",
     "AgenticState",

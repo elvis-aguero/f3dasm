@@ -6,7 +6,7 @@ making agents ADAS-searchable via inspect.getsource().
 
 from ._graphs import _default_graph
 from .critic import AdversarialCritiqueAgent
-from .datagenerator import DataGeneratorImplementerAgent
+from .datagenerator import DataGeneratorAgent
 from .debugger import DebuggerAgent
 from .implementer import F3dasmImplementer, ImplementerAgent
 from .literature import LiteratureReviewAgent
@@ -14,7 +14,7 @@ from .strategizer import StrategizerAgent
 
 __all__ = [
     "AdversarialCritiqueAgent",
-    "DataGeneratorImplementerAgent",
+    "DataGeneratorAgent",
     "StrategizerAgent",
     "F3dasmImplementer",
     "ImplementerAgent",  # backward-compatible alias

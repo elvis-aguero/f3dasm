@@ -1,4 +1,4 @@
-"""DataGeneratorImplementerAgent — produces validated f3dasm DataGenerator artifacts."""
+"""DataGeneratorAgent — produces validated f3dasm DataGenerator artifacts."""
 
 from __future__ import annotations
 
@@ -119,7 +119,7 @@ You may append additional free-form content after these sections.
 """
 
 
-class DataGeneratorImplementerAgent(Agent):
+class DataGeneratorAgent(Agent):
     """Produces validated f3dasm DataGenerator objects ready for pipeline use.
 
     Writes a Python DataGenerator (subclass or @datagenerator-decorated

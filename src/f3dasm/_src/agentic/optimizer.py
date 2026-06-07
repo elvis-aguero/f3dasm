@@ -1,4 +1,4 @@
-"""AgenticOptimizer — f3dasm Optimizer backed by an agentic run."""
+"""AgenticOptimizerAdapter — f3dasm Optimizer backed by an agentic run."""
 
 from __future__ import annotations
 
@@ -11,11 +11,13 @@ __author__ = "Elvis Aguero (elvis_alexander_aguero_vera@brown.edu)"
 __credits__ = ["Elvis Aguero"]
 __status__ = "Experimental"
 
-__all__ = ["AgenticOptimizer"]
+__all__ = ["AgenticOptimizerAdapter"]
 
 
-class AgenticOptimizer:
-    """f3dasm Optimizer backed by an :class:`~agent_runtime.AgenticRun`.
+class AgenticOptimizerAdapter:
+    """Wraps an agentic run AS an f3dasm Optimizer (agentic-as-optimizer adapter).
+
+    Backed by :class:`~agent_runtime.AgenticRun`.
 
     Implements the standard ``forward(ExperimentData) -> ExperimentData``
     interface so it can be used anywhere a regular f3dasm Optimizer is
@@ -56,7 +58,7 @@ class AgenticOptimizer:
             and how outputs are read back) is not yet implemented.
         """
         raise NotImplementedError(
-            "AgenticOptimizer.forward() is not yet implemented. "
+            "AgenticOptimizerAdapter.forward() is not yet implemented. "
             "The serialisation contract between ExperimentData and the "
             "agentic workspace is pending. Use AgenticRun.execute() directly "
             "for standalone agentic runs."
