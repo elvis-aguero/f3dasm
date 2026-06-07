@@ -357,7 +357,10 @@ def load_inner_evaluator(
                     **kwargs,
                 ) -> ExperimentSample:
                     result = _fn(**experiment_sample._input_data)
-                    if not isinstance(result, (list, tuple)):
+                    if isinstance(result, dict):
+                        # map by declared output name, not order
+                        result = [result[n] for n in _out_names]
+                    elif not isinstance(result, (list, tuple)):
                         result = [result]
                     for name, val in zip(_out_names, result):
                         experiment_sample._output_data[name] = val
