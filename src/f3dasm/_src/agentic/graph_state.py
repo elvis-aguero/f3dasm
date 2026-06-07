@@ -31,6 +31,10 @@ class AgenticState(MessagesState):
     token_totals: dict | None
     # Per-node tool-call error counts (ERROR: returns + exceptions)
     error_counts: dict | None
+    # Canonical run-level ExperimentData store project_dir.
+    # Set by AgenticRun.execute() so nodes and workers can locate the
+    # shared store without re-deriving it from run_dir.
+    experiment_data_dir: str | None
 
 
 # ---------------------------------------------------------------------------

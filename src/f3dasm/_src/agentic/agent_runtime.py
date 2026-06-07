@@ -60,6 +60,37 @@ def _load_study_config(study_dir: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
+def _init_canonical_store(run_dir: Path, study_dir: Path) -> dict:
+    """Create canonical store dirs and write run_config.json sidecar.
+
+    Creates:
+    - ``<run_dir>/experiment_data/`` — shared ExperimentData project_dir
+    - ``<run_dir>/debug/eval_counter/`` — per-delegation .count files
+    - ``<run_dir>/debug/run_config.json`` — config read by get_evaluator()
+
+    Returns the config dict that was written.
+    """
+    import json as _json
+
+    store_dir = run_dir / "experiment_data"
+    counter_dir = run_dir / "debug" / "eval_counter"
+    store_dir.mkdir(parents=True, exist_ok=True)
+    counter_dir.mkdir(parents=True, exist_ok=True)
+
+    config: dict = {
+        "store_dir": str(store_dir),
+        "counter_dir": str(counter_dir),
+        "lock_path": str(store_dir / ".lock"),
+        "evaluator_name": study_dir.name,
+        "fidelity_column": None,
+        "evaluator_entrypoint": None,
+    }
+    (run_dir / "debug" / "run_config.json").write_text(
+        _json.dumps(config, indent=2), encoding="utf-8"
+    )
+    return config
+
+
 def _parse_budget_str(value) -> float | None:
     """Parse budget: float seconds passthrough, or 'HH:MM:SS' string."""
     if value is None:
@@ -169,6 +200,9 @@ class AgenticRun:
         # lit_reviewer_notes_dir is created by LiteratureCorpus.__init__
         self._run_dir = run_dir
 
+        # Canonical store: experiment_data/ + eval_counter/ + run_config.json
+        canonical_cfg = _init_canonical_store(run_dir, self.study_dir)
+
         # Set up run.log
         log = logging.getLogger(f"f3dasm.agentic.{ts}")
         log.setLevel(logging.INFO)
@@ -221,6 +255,7 @@ class AgenticRun:
             required_deliverables=(
                 getattr(self, "_required_deliverables", None) or None
             ),
+            experiment_data_dir=canonical_cfg["store_dir"],
         )
 
         log.info("Invoking graph")

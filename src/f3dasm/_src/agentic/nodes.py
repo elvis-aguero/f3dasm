@@ -24,8 +24,43 @@ from .science_monitor import ScienceMonitor
 
 __all__ = [
     "AgentNode", "StrategizerNode", "WorkerNode", "ImplementerNode",
-    "_to_adapter_messages"
+    "_to_adapter_messages",
+    "_resolve_delegation_evals",
 ]
+
+
+def _resolve_delegation_evals(
+    counter_dir: "Path | None",
+    delegation_id: str,
+    reported: int,
+) -> int:
+    """Return the eval count for a delegation.
+
+    Prefers the mechanical counter written by InstrumentedDataGenerator
+    (``<counter_dir>/<delegation_id>.count``) over the honour-system
+    ReportEvals self-report.  Falls back to *reported* if the file is
+    absent or unparseable.
+
+    Parameters
+    ----------
+    counter_dir:
+        Directory that holds per-delegation ``.count`` files.
+        ``None`` disables mechanical counting and always returns
+        *reported*.
+    delegation_id:
+        E.g. ``"D003"``.
+    reported:
+        The value from ``ReportEvals`` (honour-system fallback).
+    """
+    if counter_dir is None:
+        return reported
+    count_file = Path(counter_dir) / f"{delegation_id}.count"
+    if not count_file.exists():
+        return reported
+    try:
+        return int(count_file.read_text().strip())
+    except (ValueError, OSError):
+        return reported
 
 _REQUIRED_SUBSECTIONS = [
     "### Actions taken",
@@ -595,11 +630,25 @@ class StrategizerNode(AgentNode):
                             # (already classified correctly by _record_tool_error)
                             break  # one log entry per pattern match per delegation
 
+                    # Mechanical counter preferred over self-reported
+                    # ReportEvals: InstrumentedDataGenerator writes an
+                    # authoritative .count file; fall back to the
+                    # honour-system evals_box only when the file is absent.
+                    _notes = node._current_notes_dir
+                    _counter_dir = (
+                        _notes.parent / "eval_counter"
+                        if _notes is not None else None
+                    )
+                    _evals = _resolve_delegation_evals(
+                        _counter_dir,
+                        delegation_id,
+                        evals_box["count"],
+                    )
                     with node._registry_lock:
                         node._registry[delegation_id].update({
                             "status": "Done",
                             "result": text,
-                            "evals": evals_box["count"],
+                            "evals": _evals,
                             "usage": _usage,
                         })
                     with node._notifications_lock:

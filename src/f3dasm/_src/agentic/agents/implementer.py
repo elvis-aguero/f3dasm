@@ -104,6 +104,21 @@ section before reaching for scipy.stats.qmc, scipy.optimize, or sklearn.
   result = black_box.call(data, mode="sequential")
   result.store("{delegation_id}/results")
 
+─── CANONICAL EVALUATOR (preferred) ────────────────────────────────────
+  # get_evaluator() wraps your DataGenerator so that results are written
+  # automatically to the run's shared ExperimentData store with provenance
+  # stamping and a mechanical eval counter — you do NOT need ReportEvals
+  # when using this path.
+  from f3dasm.agentic import get_evaluator
+
+  gen = get_evaluator(inner=black_box)   # black_box = @datagenerator fn
+  data = data.run(data_generator=gen)    # or gen.call(data, mode=...)
+  gen.flush()                            # flush buffered rows at end
+
+  # get_evaluator() reads run_config.json from the run hierarchy
+  # automatically.  Use ReportEvals as a fallback only when you author
+  # your own DataGenerator subclass without get_evaluator.
+
 ─── DATAGENERATOR (subclass for stateful generators) ────────────────────
   class MyGen(DataGenerator):
       def execute(self, sample: ExperimentSample, **kw) -> ExperimentSample:

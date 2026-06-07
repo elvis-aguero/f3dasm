@@ -2962,3 +2962,75 @@ def test_delegate_decodes_json_and_comma_string_hypothesis_ids(tmp_path):
         entries = list(node._registry.values())
     assert entries[0]["hypothesis_ids"] == ["H1", "H2"]
     assert entries[1]["hypothesis_ids"] == ["H1", "H2"]
+
+
+# ---------------------------------------------------------------------------
+# _resolve_delegation_evals unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_delegation_evals_returns_reported_when_no_counter_dir():
+    """Falls back to reported when counter_dir is None."""
+    from f3dasm._src.agentic.nodes import _resolve_delegation_evals
+
+    assert _resolve_delegation_evals(None, "D001", 77) == 77
+
+
+def test_resolve_delegation_evals_returns_reported_when_file_missing(tmp_path):
+    """Falls back to reported when .count file does not exist."""
+    from f3dasm._src.agentic.nodes import _resolve_delegation_evals
+
+    result = _resolve_delegation_evals(tmp_path, "D001", 55)
+    assert result == 55
+
+
+def test_resolve_delegation_evals_reads_mechanical_count(tmp_path):
+    """Returns mechanical count from .count file when present."""
+    from f3dasm._src.agentic.nodes import _resolve_delegation_evals
+
+    (tmp_path / "D001.count").write_text("42")
+    result = _resolve_delegation_evals(tmp_path, "D001", 7)
+    assert result == 42
+
+
+def test_resolve_delegation_evals_mechanical_overrides_self_report(tmp_path):
+    """Mechanical count overrides a different ReportEvals self-report."""
+    from f3dasm._src.agentic.nodes import _resolve_delegation_evals
+
+    (tmp_path / "D003.count").write_text("100")
+    result = _resolve_delegation_evals(tmp_path, "D003", 5)
+    assert result == 100
+
+
+def test_resolve_delegation_evals_falls_back_on_bad_file(tmp_path):
+    """Falls back to reported when .count file contains non-integer."""
+    from f3dasm._src.agentic.nodes import _resolve_delegation_evals
+
+    (tmp_path / "D002.count").write_text("not_an_int")
+    result = _resolve_delegation_evals(tmp_path, "D002", 33)
+    assert result == 33
+
+
+def test_resolve_delegation_evals_counter_dir_path_resolution(tmp_path):
+    """counter_dir is derived as notes_dir.parent / 'eval_counter', and
+    _resolve_delegation_evals correctly reads from it.
+
+    This is the deterministic unit-test of the counter_dir derivation
+    path used inside StrategizerNode._run().
+    """
+    from f3dasm._src.agentic.nodes import _resolve_delegation_evals
+
+    # Simulate the path derivation: notes_dir is debug/strategizer_notes,
+    # so counter_dir = notes_dir.parent / "eval_counter"
+    debug_dir = tmp_path / "debug"
+    notes_dir = debug_dir / "strategizer_notes"
+    notes_dir.mkdir(parents=True)
+    counter_dir = notes_dir.parent / "eval_counter"
+    counter_dir.mkdir()
+
+    # Write a .count file for D001 (mechanical count = 42)
+    (counter_dir / "D001.count").write_text("42")
+
+    # Reported (honour-system) is 7 — mechanical should win
+    result = _resolve_delegation_evals(counter_dir, "D001", 7)
+    assert result == 42

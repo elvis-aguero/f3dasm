@@ -217,3 +217,140 @@ def test_make_adapter_claude_extra_closures_injected(tmp_path):
             result = run._make_adapter("implementer", agent)
 
     assert "SpecialTool" in mock_instance.closure_tools
+
+
+# ---------------------------------------------------------------------------
+# _init_canonical_store helper
+# ---------------------------------------------------------------------------
+
+
+def test_init_canonical_store_creates_dirs(tmp_path):
+    """_init_canonical_store creates experiment_data/ and eval_counter/."""
+    from f3dasm._src.agentic.agent_runtime import _init_canonical_store
+
+    run_dir = tmp_path / "runs" / "20260101T000000"
+    (run_dir / "debug").mkdir(parents=True, exist_ok=True)
+    study_dir = tmp_path / "my_study"
+
+    _init_canonical_store(run_dir, study_dir)
+
+    assert (run_dir / "experiment_data").is_dir()
+    assert (run_dir / "debug" / "eval_counter").is_dir()
+
+
+def test_init_canonical_store_writes_run_config_json(tmp_path):
+    """_init_canonical_store writes run_config.json with correct keys."""
+    import json
+    from f3dasm._src.agentic.agent_runtime import _init_canonical_store
+
+    run_dir = tmp_path / "runs" / "20260101T000000"
+    (run_dir / "debug").mkdir(parents=True, exist_ok=True)
+    study_dir = tmp_path / "my_study"
+
+    cfg = _init_canonical_store(run_dir, study_dir)
+
+    cfg_path = run_dir / "debug" / "run_config.json"
+    assert cfg_path.exists()
+    loaded = json.loads(cfg_path.read_text())
+    assert loaded["store_dir"] == str(run_dir / "experiment_data")
+    assert loaded["counter_dir"] == str(
+        run_dir / "debug" / "eval_counter"
+    )
+    assert loaded["lock_path"] == str(
+        run_dir / "experiment_data" / ".lock"
+    )
+    assert loaded["evaluator_name"] == "my_study"
+    assert loaded["fidelity_column"] is None
+    assert loaded["evaluator_entrypoint"] is None
+    # return value matches written file
+    assert cfg == loaded
+
+
+def test_init_canonical_store_returns_config_dict(tmp_path):
+    """_init_canonical_store return value is the config dict."""
+    from f3dasm._src.agentic.agent_runtime import _init_canonical_store
+
+    run_dir = tmp_path / "runs" / "ts"
+    (run_dir / "debug").mkdir(parents=True, exist_ok=True)
+    study_dir = tmp_path / "study_x"
+
+    result = _init_canonical_store(run_dir, study_dir)
+
+    assert isinstance(result, dict)
+    assert "store_dir" in result
+    assert "counter_dir" in result
+
+
+def test_execute_creates_canonical_store_dirs_and_state(tmp_path):
+    """After execute(), canonical store dirs exist and state has
+    experiment_data_dir.
+    """
+    from langgraph.checkpoint.memory import MemorySaver
+
+    from f3dasm._src.agentic.agent_runtime import (
+        DEFAULT_MODEL,
+        AgenticRun,
+        _default_graph,
+    )
+    from f3dasm._src.agentic.graph_builder import build_graph
+
+    (tmp_path / "PROBLEM_STATEMENT.md").write_text("Find min of f(x)=x^2")
+    (tmp_path / "replicate.py").write_text("# test\n")
+
+    state_snapshots: list[dict] = []
+
+    class CapturingStratAdapter:
+        closure_tools: dict = {}
+
+        def invoke(self, messages):
+            state_snapshots.append(dict(self.closure_tools))
+            self.closure_tools["Done"](summary="Done.")
+            self.closure_tools["Done"](summary="Done.")
+            return "Done."
+
+    class StubImplAdapter:
+        closure_tools: dict = {}
+
+        def invoke(self, messages):
+            return "## Report\nDone."
+
+    graph_spec = _default_graph()
+    compiled = build_graph(
+        graph_spec,
+        lambda n, a: (
+            CapturingStratAdapter()
+            if n == "strategizer"
+            else StubImplAdapter()
+        ),
+        MemorySaver(),
+        study_dir=tmp_path,
+    )
+
+    run = AgenticRun.__new__(AgenticRun)
+    run.study_dir = tmp_path
+    run._model = DEFAULT_MODEL
+    run._budget = None
+    run._graph_spec = graph_spec
+    run._graph = compiled
+
+    run.execute()
+
+    # run_dir was set
+    assert run._run_dir is not None
+    run_dir = run._run_dir
+
+    # dirs exist
+    assert (run_dir / "experiment_data").is_dir()
+    assert (run_dir / "debug" / "eval_counter").is_dir()
+
+    # run_config.json exists with correct keys
+    import json
+
+    cfg = json.loads(
+        (run_dir / "debug" / "run_config.json").read_text()
+    )
+    assert cfg["store_dir"] == str(run_dir / "experiment_data")
+    assert cfg["counter_dir"] == str(
+        run_dir / "debug" / "eval_counter"
+    )
+    assert cfg["evaluator_name"] == tmp_path.name
