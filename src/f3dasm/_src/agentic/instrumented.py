@@ -236,6 +236,149 @@ class InstrumentedDataGenerator(DataGenerator):
 # ==========================================================================
 
 
+def load_inner_evaluator(
+    run_config: dict, study_dir: Path
+) -> "DataGenerator | None":
+    """Resolve and instantiate the inner evaluator from run_config.
+
+    Resolution order
+    ----------------
+    1. ``evaluator_lookup`` present → build a
+       :class:`.LookupDataGenerator` over the named pool.
+    2. ``evaluator_entrypoint`` present → load via file-location
+       import.  Entrypoint format: ``"path/to/file.py:AttrName"``
+       (path is relative to *study_dir*; no package structure needed).
+
+       - If the resolved attr is a :class:`.DataGenerator` subclass →
+         instantiate no-args.
+       - If it is a callable (bare function) →
+         wrap with ``@datagenerator(output_names=...)`` applied
+         functionally.  The callable **must** accept ``**kwargs``
+         whose keys are the input column names of the sample.
+         ``evaluator_output_names`` in run_config is required in this
+         case.
+    3. Neither present → return ``None``.
+
+    Parameters
+    ----------
+    run_config : dict
+        The dict loaded from ``run_config.json``.
+    study_dir : Path
+        Root of the study tree (pool paths and entrypoint paths are
+        resolved relative to this directory).
+
+    Returns
+    -------
+    DataGenerator or None
+    """
+    import importlib.util
+    import sys
+
+    lookup_cfg = run_config.get("evaluator_lookup")
+    if lookup_cfg:
+        from .lookup import LookupDataGenerator
+
+        pool_rel = lookup_cfg["pool"]
+        pool_project = study_dir / pool_rel
+        pool = ExperimentData.from_file(project_dir=pool_project)
+        return LookupDataGenerator(
+            pool=pool,
+            input_columns=lookup_cfg["input_columns"],
+            output_columns=lookup_cfg.get("output_columns"),
+        )
+
+    entrypoint = run_config.get("evaluator_entrypoint")
+    if entrypoint:
+        if ":" not in entrypoint:
+            raise ValueError(
+                f"evaluator_entrypoint must be 'path/to/file.py:attr', "
+                f"got {entrypoint!r}"
+            )
+        file_part, attr = entrypoint.rsplit(":", 1)
+        abs_file = (study_dir / file_part).resolve()
+        if not abs_file.exists():
+            raise FileNotFoundError(
+                f"Evaluator file not found: {abs_file} "
+                f"(entrypoint={entrypoint!r})"
+            )
+        module_name = (
+            "_f3dasm_eval_"
+            + abs_file.stem.replace("-", "_").replace(".", "_")
+        )
+        spec = importlib.util.spec_from_file_location(
+            module_name, abs_file
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError(
+                f"Cannot load module from {abs_file}"
+            )
+        mod = importlib.util.module_from_spec(spec)
+        # Temporarily add study_dir to sys.path so the loaded module
+        # can perform its own relative imports if needed.
+        _injected = str(study_dir) not in sys.path
+        if _injected:
+            sys.path.insert(0, str(study_dir))
+        try:
+            spec.loader.exec_module(mod)
+        finally:
+            if _injected and str(study_dir) in sys.path:
+                sys.path.remove(str(study_dir))
+
+        obj = getattr(mod, attr)
+
+        # DataGenerator subclass → instantiate
+        try:
+            if isinstance(obj, type) and issubclass(obj, DataGenerator):
+                return obj()
+        except TypeError:
+            pass
+
+        # Callable (bare function) → wrap with @datagenerator.
+        # The contract: the callable accepts **kwargs whose keys are
+        # the ExperimentSample's input column names.  We create a thin
+        # adapter that passes all _input_data as kwargs so that both
+        # VAR_KEYWORD (**kwargs) and named-parameter callables work.
+        if callable(obj):
+            output_names = run_config.get("evaluator_output_names")
+            if not output_names:
+                raise ValueError(
+                    f"evaluator_entrypoint {entrypoint!r} resolves to a "
+                    "callable (not a DataGenerator subclass).  "
+                    "Set 'evaluator_output_names' in config.yaml "
+                    "(e.g. output_names: [f])."
+                )
+            _fn = obj
+            _out_names = list(output_names)
+
+            class _BareCallableGen(DataGenerator):
+                def execute(
+                    self,
+                    experiment_sample: ExperimentSample,
+                    **kwargs,
+                ) -> ExperimentSample:
+                    result = _fn(**experiment_sample._input_data)
+                    if not isinstance(result, (list, tuple)):
+                        result = [result]
+                    for name, val in zip(_out_names, result):
+                        experiment_sample._output_data[name] = val
+                    experiment_sample.job_status = (
+                        JobStatus.FINISHED
+                    )
+                    return experiment_sample
+
+            return _BareCallableGen()
+
+        raise ValueError(
+            f"Resolved attr {attr!r} from {entrypoint!r} is neither a "
+            "DataGenerator subclass nor a callable."
+        )
+
+    return None
+
+
+# ==========================================================================
+
+
 def get_evaluator(inner: Optional[DataGenerator] = None) -> (
     InstrumentedDataGenerator
 ):
@@ -285,11 +428,24 @@ def get_evaluator(inner: Optional[DataGenerator] = None) -> (
     fidelity_column = run_config.get("fidelity_column")
 
     if inner is None:
-        raise NotImplementedError(
-            "Phase 2 will resolve the evaluator from "
-            "run_config['evaluator_entrypoint'].  Pass an explicit "
-            "'inner' DataGenerator for Phase 1."
+        study_dir_str = run_config.get("study_dir")
+        if study_dir_str is None:
+            raise ValueError(
+                "run_config.json is missing 'study_dir' key; "
+                "re-run your study to regenerate it."
+            )
+        resolved = load_inner_evaluator(
+            run_config, Path(study_dir_str)
         )
+        if resolved is None:
+            raise ValueError(
+                "This study declares no evaluator entrypoint in its "
+                "config.yaml.  Either add an 'evaluator:' block to "
+                "config.yaml (see docs), author your own DataGenerator "
+                "and pass it via get_evaluator(inner=...), or report "
+                "evaluation counts manually via ReportEvals."
+            )
+        inner = resolved
 
     return InstrumentedDataGenerator(
         inner=inner,
@@ -344,4 +500,8 @@ def _load_run_config() -> dict:
 
 # ==========================================================================
 
-__all__ = ["InstrumentedDataGenerator", "get_evaluator"]
+__all__ = [
+    "InstrumentedDataGenerator",
+    "get_evaluator",
+    "load_inner_evaluator",
+]

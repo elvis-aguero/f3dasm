@@ -198,6 +198,10 @@ write outside your own — the Write tool will reject it.
 To access study assets (evaluator, lookup pools, etc.) use study_dir.
 Do NOT write to /tmp or any path outside workspace_dir — files there
 will be lost and are invisible to the Strategizer.
+Evaluate designs ONLY through the instrumented evaluator: \
+`from f3dasm.agentic import get_evaluator; gen = get_evaluator()` \
+— results are recorded in the run's canonical evaluation ledger \
+automatically. Raw evaluator imports bypass the ledger.
 </workspace>
 
 """

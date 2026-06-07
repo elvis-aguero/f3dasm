@@ -60,13 +60,32 @@ def _load_study_config(study_dir: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
-def _init_canonical_store(run_dir: Path, study_dir: Path) -> dict:
+def _init_canonical_store(
+    run_dir: Path,
+    study_dir: Path,
+    evaluator_config: dict | None = None,
+) -> dict:
     """Create canonical store dirs and write run_config.json sidecar.
 
     Creates:
     - ``<run_dir>/experiment_data/`` — shared ExperimentData project_dir
     - ``<run_dir>/debug/eval_counter/`` — per-delegation .count files
     - ``<run_dir>/debug/run_config.json`` — config read by get_evaluator()
+
+    Parameters
+    ----------
+    run_dir : Path
+        The timestamped run directory.
+    study_dir : Path
+        The study root (contains config.yaml, PROBLEM_STATEMENT.md, …).
+    evaluator_config : dict or None, optional
+        Parsed ``evaluator:`` block from config.yaml.  Keys:
+
+        - ``entrypoint`` (str) — ``"path/to/file.py:attr"``
+        - ``output_names`` (list[str]) — required for bare-fn entrypoints
+        - ``lookup`` (dict) — ``{"pool": ..., "input_columns": ...,
+          "output_columns": ...}``
+        - ``fidelity_column`` (str or None)
 
     Returns the config dict that was written.
     """
@@ -77,13 +96,18 @@ def _init_canonical_store(run_dir: Path, study_dir: Path) -> dict:
     store_dir.mkdir(parents=True, exist_ok=True)
     counter_dir.mkdir(parents=True, exist_ok=True)
 
+    eval_cfg = evaluator_config or {}
+
     config: dict = {
         "store_dir": str(store_dir),
         "counter_dir": str(counter_dir),
         "lock_path": str(store_dir / ".lock"),
         "evaluator_name": study_dir.name,
-        "fidelity_column": None,
-        "evaluator_entrypoint": None,
+        "study_dir": str(study_dir),
+        "fidelity_column": eval_cfg.get("fidelity_column"),
+        "evaluator_entrypoint": eval_cfg.get("entrypoint"),
+        "evaluator_output_names": eval_cfg.get("output_names"),
+        "evaluator_lookup": eval_cfg.get("lookup"),
     }
     (run_dir / "debug" / "run_config.json").write_text(
         _json.dumps(config, indent=2), encoding="utf-8"
@@ -201,7 +225,10 @@ class AgenticRun:
         self._run_dir = run_dir
 
         # Canonical store: experiment_data/ + eval_counter/ + run_config.json
-        canonical_cfg = _init_canonical_store(run_dir, self.study_dir)
+        _eval_cfg = _load_study_config(self.study_dir).get("evaluator")
+        canonical_cfg = _init_canonical_store(
+            run_dir, self.study_dir, evaluator_config=_eval_cfg
+        )
 
         # Set up run.log
         log = logging.getLogger(f"f3dasm.agentic.{ts}")

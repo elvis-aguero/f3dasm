@@ -213,8 +213,15 @@ class StrategizerNode(AgentNode):
                 diagnostics_writer=self._record_science_drift,
             )
         # Running total of delegations at the START of the current __call__
-        # Used to compute sequential delegation IDs (D001, D002, …)
+        # Used as a seed for the delegation sequence counter.
         self._state_total_delegations: int = 0
+        # Monotonic per-node delegation counter — never reset within a
+        # run.  Seeded from _state_total_delegations on first __call__
+        # so checkpoint-resumed runs continue from the correct offset.
+        # Because it never resets, it avoids the ID collision that
+        # occurs when completed delegations are pruned from the registry
+        # but _state_total_delegations has not yet accumulated them.
+        self._delegation_seq: int = 0
         # Two-shot Done() gate: first call warns, second call closes.
         # Resets to False whenever a new Delegate() fires.
         self._done_warned: bool = False
@@ -451,10 +458,11 @@ class StrategizerNode(AgentNode):
                     )
 
             # Sequential delegation ID: D001, D002, …
+            # _delegation_seq is monotonic and never reset, so IDs are
+            # unique even after the registry is pruned on loop-back.
             with node._registry_lock:
-                offset = len(node._registry)
-            global_n = node._state_total_delegations + offset + 1
-            delegation_id = f"D{global_n:03d}"
+                node._delegation_seq += 1
+                delegation_id = f"D{node._delegation_seq:03d}"
 
             start_time_mono = time.monotonic()
             started_at = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
@@ -1546,8 +1554,13 @@ class StrategizerNode(AgentNode):
             if self._ledger is None:
                 self._ledger = HypothesisLedger(self._current_notes_dir)
 
-        # Capture total_delegations so Delegate() can compute sequential IDs
+        # Capture total_delegations so Delegate() can seed the counter.
         self._state_total_delegations = state.get("total_delegations", 0)
+        # Seed the monotonic counter from state on first __call__ (or
+        # after a checkpoint rebuild).  Never decremented — ensures IDs
+        # are unique even when the registry is pruned between turns.
+        if self._delegation_seq < self._state_total_delegations:
+            self._delegation_seq = self._state_total_delegations
 
         # Soft budget warnings — appended to context, run is NOT stopped.
         # 95%: early warning, start wrapping up.
