@@ -10,11 +10,13 @@ from .datagenerator import DataGeneratorAgent
 from .debugger import DebuggerAgent
 from .implementer import F3dasmImplementer, ImplementerAgent
 from .literature import LiteratureReviewAgent
+from .optimization import OptimizationAgent
 from .strategizer import StrategizerAgent
 
 __all__ = [
     "AdversarialCritiqueAgent",
     "DataGeneratorAgent",
+    "OptimizationAgent",
     "StrategizerAgent",
     "F3dasmImplementer",
     "ImplementerAgent",  # backward-compatible alias

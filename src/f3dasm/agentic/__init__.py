@@ -24,6 +24,7 @@ from .._src.agentic.agents import (
     DebuggerAgent,
     ImplementerAgent,
     LiteratureReviewAgent,
+    OptimizationAgent,
     StrategizerAgent,
 )
 from .._src.agentic.backends.base import Agent, Edge, Graph
@@ -55,6 +56,7 @@ __all__ = [
     "InstrumentedDataGenerator",
     "AgenticOptimizerAdapter",
     "DataGeneratorAgent",
+    "OptimizationAgent",
     "AgenticRun",
     "AgenticRunError",
     "AgenticState",
