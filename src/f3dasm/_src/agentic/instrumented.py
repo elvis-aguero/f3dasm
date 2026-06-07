@@ -515,6 +515,10 @@ def _load_run_config() -> dict:
 # ==========================================================================
 # Module-level mtime cache: {str(store_dir): (mtime, RunStateSummary)}
 _RSS_CACHE: dict[str, tuple[float, "RunStateSummary"]] = {}
+# Guards _RSS_CACHE: the summary is read from main (closure) threads and
+# refreshed from background delegation threads. Benign on CPython, but
+# the lock makes it correct on free-threaded builds too.
+_RSS_CACHE_LOCK = __import__("threading").Lock()
 
 _PROVENANCE_COLS = frozenset({"_delegation_id", "source", "_ts"})
 
@@ -572,7 +576,8 @@ class RunStateSummary:
 
         key = str(store_dir)
         mtime = csv_path.stat().st_mtime
-        cached = _RSS_CACHE.get(key)
+        with _RSS_CACHE_LOCK:
+            cached = _RSS_CACHE.get(key)
         if cached is not None and cached[0] == mtime:
             return cached[1]
 
@@ -641,7 +646,8 @@ class RunStateSummary:
             n_per_fidelity=n_per_fidelity,
             output_stats=output_stats,
         )
-        _RSS_CACHE[key] = (mtime, summary)
+        with _RSS_CACHE_LOCK:
+            _RSS_CACHE[key] = (mtime, summary)
         return summary
 
     # ------------------------------------------------------------------

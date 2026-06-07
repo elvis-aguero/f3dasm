@@ -244,8 +244,11 @@ class ScienceMonitor:
             d_id = r.get("id", "")
             if rows_per_delegation.get(d_id, 0) > 0:
                 continue
+            # Key on the delegation id (not None) so multiple
+            # simultaneously-unledgered delegations each get their own
+            # message + dedupe bookkeeping instead of collapsing to one.
             out.append(Violation(
-                "UNLEDGERED_EVALS", "warn", None,
+                "UNLEDGERED_EVALS", "warn", d_id,
                 f"Delegation {d_id} reported {evals} evaluation(s) but "
                 "wrote none to the canonical ledger — it bypassed "
                 "get_evaluator(). Numbers from it cannot be "
