@@ -557,3 +557,85 @@ def test_numbers_section_with_markdown_bold_keys(tmp_path):
     record_done(dlog, "D001", [h], bold_report)
     rules = {v.rule for v in mon.evaluate()}
     assert "UNANCHORED_DELEGATION" not in rules
+
+
+# ---------------------------------------------------------------------------
+# UNLEDGERED_EVALS: path-bug regression tests (Bug #A)
+# ---------------------------------------------------------------------------
+
+
+def test_unledgered_does_not_fire_when_store_has_rows(tmp_path):
+    """UNLEDGERED_EVALS must NOT fire when the store has rows for the
+    delegation.
+
+    Bug #A: when store_dir was one level too shallow (run_dir instead of
+    run_dir/experiment_data), RunStateSummary returned None even for a
+    full store, causing false-positive UNLEDGERED fires.
+    This test verifies the rule is silent when rows exist.
+    """
+    from unittest.mock import patch
+    from f3dasm._src.agentic.instrumented import RunStateSummary
+
+    ledger, dlog, mon, _ = make_world(tmp_path)
+    h = propose(ledger)
+
+    # D001 reported evals=5 in the delegation log
+    dlog.record(
+        id="D001", from_node="strategizer", to_node="implementer",
+        task="t", deliverable=REPORT, hypothesis_ids=[h],
+        started_at="x", completed_at="y", status="DONE",
+        evals=5,
+    )
+
+    # Attach a store_dir so UNLEDGERED_EVALS rule runs
+    store_dir = tmp_path / "experiment_data"
+    store_dir.mkdir()
+    mon.store_dir = str(store_dir)
+
+    # Stub the summary so the store appears full for D001
+    stub = RunStateSummary(
+        n_rows=5,
+        n_per_delegation={"D001": 5},
+        n_per_source={},
+        n_per_fidelity=None,
+        output_stats={},
+    )
+    with patch.object(RunStateSummary, "from_store", return_value=stub):
+        violations = mon.evaluate()
+
+    rules = {v.rule for v in violations}
+    assert "UNLEDGERED_EVALS" not in rules, (
+        "UNLEDGERED_EVALS fired as a false positive when store had "
+        f"rows for D001; violations: {violations}"
+    )
+
+
+def test_unledgered_fires_when_store_has_no_rows(tmp_path):
+    """UNLEDGERED_EVALS fires when delegation reported evals but wrote
+    no rows to the canonical store."""
+    from unittest.mock import patch
+    from f3dasm._src.agentic.instrumented import RunStateSummary
+
+    ledger, dlog, mon, _ = make_world(tmp_path)
+    h = propose(ledger)
+
+    dlog.record(
+        id="D001", from_node="strategizer", to_node="implementer",
+        task="t", deliverable=REPORT, hypothesis_ids=[h],
+        started_at="x", completed_at="y", status="DONE",
+        evals=10,
+    )
+
+    store_dir = tmp_path / "experiment_data"
+    store_dir.mkdir()
+    mon.store_dir = str(store_dir)
+
+    # Store is empty — summary returns None
+    with patch.object(RunStateSummary, "from_store", return_value=None):
+        violations = mon.evaluate()
+
+    rules = {v.rule for v in violations}
+    assert "UNLEDGERED_EVALS" in rules, (
+        "UNLEDGERED_EVALS should fire when delegation reported evals "
+        f"but store has no rows; violations: {violations}"
+    )

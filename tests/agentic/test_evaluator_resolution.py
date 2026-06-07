@@ -31,7 +31,6 @@ from f3dasm._src.experimentsample import ExperimentSample, JobStatus
 def _write_run_config(
     directory: Path,
     store_dir: Path,
-    counter_dir: Path,
     study_dir: Path,
     *,
     evaluator_entrypoint: str | None = None,
@@ -41,7 +40,6 @@ def _write_run_config(
 ) -> None:
     cfg = {
         "store_dir": str(store_dir),
-        "counter_dir": str(counter_dir),
         "lock_path": str(store_dir / "experiment_data" / ".lock"),
         "evaluator_name": "test_study",
         "evaluator_entrypoint": evaluator_entrypoint,
@@ -85,14 +83,11 @@ def test_bare_fn_file_path_entrypoint_resolves(tmp_path, monkeypatch):
     # Build delegation workspace
     store_dir = tmp_path / "store"
     store_dir.mkdir()
-    counter_dir = tmp_path / "counters"
-    counter_dir.mkdir()
     debug_dir, delegation_dir = _make_delegation_dir(tmp_path)
 
     _write_run_config(
         debug_dir,
         store_dir,
-        counter_dir,
         study_dir,
         evaluator_entrypoint="tiny_eval.py:evaluate_kw",
         evaluator_output_names=["f"],
@@ -151,14 +146,11 @@ def test_datagenerator_class_entrypoint_resolves(tmp_path, monkeypatch):
 
     store_dir = tmp_path / "store"
     store_dir.mkdir()
-    counter_dir = tmp_path / "counters"
-    counter_dir.mkdir()
     debug_dir, delegation_dir = _make_delegation_dir(tmp_path)
 
     _write_run_config(
         debug_dir,
         store_dir,
-        counter_dir,
         study_dir,
         evaluator_entrypoint="mygen.py:DoubleGen",
     )
@@ -224,14 +216,11 @@ def test_lookup_config_resolves_to_lookup_data_generator(
 
     store_dir = tmp_path / "store"
     store_dir.mkdir()
-    counter_dir = tmp_path / "counters"
-    counter_dir.mkdir()
     debug_dir, delegation_dir = _make_delegation_dir(tmp_path)
 
     _write_run_config(
         debug_dir,
         store_dir,
-        counter_dir,
         study_dir,
         evaluator_lookup={
             "pool": "mypool",
@@ -272,8 +261,6 @@ def test_no_evaluator_config_raises_clear_error(
 
     store_dir = tmp_path / "store"
     store_dir.mkdir()
-    counter_dir = tmp_path / "counters"
-    counter_dir.mkdir()
     study_dir = tmp_path / "study"
     study_dir.mkdir()
     debug_dir, delegation_dir = _make_delegation_dir(tmp_path)
@@ -281,7 +268,6 @@ def test_no_evaluator_config_raises_clear_error(
     _write_run_config(
         debug_dir,
         store_dir,
-        counter_dir,
         study_dir,
         evaluator_entrypoint=None,
         evaluator_lookup=None,

@@ -84,32 +84,7 @@ def test_execute_stamps_provenance(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 2. Eval counter
-# ---------------------------------------------------------------------------
-
-
-def test_eval_counter_written(tmp_path):
-    from f3dasm._src.agentic.instrumented import InstrumentedDataGenerator
-
-    counter_path = tmp_path / "D001.count"
-    gen = InstrumentedDataGenerator(
-        inner=_SumGenerator(),
-        store_dir=tmp_path,
-        delegation_id="D001",
-        source="test_source",
-        counter_path=counter_path,
-        flush_every=1,
-    )
-    N = 4
-    for i in range(N):
-        gen.execute(_make_sample(float(i) * 0.1))
-
-    assert counter_path.exists()
-    assert int(counter_path.read_text().strip()) == N
-
-
-# ---------------------------------------------------------------------------
-# 3. Concurrent appends — no rows lost
+# 2. Concurrent appends — no rows lost
 # ---------------------------------------------------------------------------
 
 
@@ -222,12 +197,9 @@ def test_get_evaluator_binds_delegation_id_from_cwd(
 
     store_dir = tmp_path / "store"
     store_dir.mkdir()
-    counter_dir = tmp_path / "counters"
-    counter_dir.mkdir()
 
     run_config = {
         "store_dir": str(store_dir),
-        "counter_dir": str(counter_dir),
         "lock_path": str(store_dir / "experiment_data" / ".lock"),
         "source": "test_eval",
         "evaluator_name": "test_eval",
@@ -317,18 +289,20 @@ def test_public_api_importable():
     )
 
 
-def test_counter_accumulates_across_generator_instances(tmp_path):
-    """A second generator in the SAME delegation continues the count.
+def test_store_rows_accumulate_across_generator_instances(tmp_path):
+    """Two generators in the SAME delegation accumulate rows in store.
 
-    Observed live: a worker built one generator per phase; each
-    restarted at 0 and overwrote the counter (280) while the store
-    accumulated rows (508). The counter must seed from the file.
+    Observed live: a worker built one generator per phase; the store
+    accumulated rows (600) correctly while a counter undercounted (300).
+    The store is now the single source of truth for eval counts.
     """
-    counter = tmp_path / "D001.count"
-
     from f3dasm._src.agentic.instrumented import (
         InstrumentedDataGenerator,
+        RunStateSummary,
     )
+
+    store_dir = tmp_path / "store"
+    store_dir.mkdir()
 
     def make_gen():
         @datagenerator(output_names=["f"])
@@ -336,15 +310,18 @@ def test_counter_accumulates_across_generator_instances(tmp_path):
             return float(sum(kw.values()))
 
         return InstrumentedDataGenerator(
-            inner, tmp_path / "store", "D001",
-            source="s", counter_path=counter, flush_every=1,
+            inner, store_dir, "D001",
+            source="s", flush_every=1,
         )
 
     g1 = make_gen()
     g1.execute(_make_sample(0.1))
     g1.execute(_make_sample(0.2))
-    assert int(counter.read_text()) == 2
 
     g2 = make_gen()  # new instance, same delegation
     g2.execute(_make_sample(0.3))
-    assert int(counter.read_text()) == 3
+
+    summary = RunStateSummary.from_store(store_dir)
+    assert summary is not None
+    # Store accumulates across both generator instances
+    assert summary.n_per_delegation.get("D001", 0) == 3

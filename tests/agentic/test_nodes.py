@@ -2969,68 +2969,108 @@ def test_delegate_decodes_json_and_comma_string_hypothesis_ids(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_delegation_evals_returns_reported_when_no_counter_dir():
-    """Falls back to reported when counter_dir is None."""
+def test_resolve_delegation_evals_returns_reported_when_no_store_dir():
+    """Falls back to reported when store_dir is None."""
     from f3dasm._src.agentic.nodes import _resolve_delegation_evals
 
     assert _resolve_delegation_evals(None, "D001", 77) == 77
 
 
-def test_resolve_delegation_evals_returns_reported_when_file_missing(tmp_path):
-    """Falls back to reported when .count file does not exist."""
+def test_resolve_delegation_evals_returns_reported_when_store_empty(
+    tmp_path,
+):
+    """Falls back to reported when store has no rows for delegation."""
     from f3dasm._src.agentic.nodes import _resolve_delegation_evals
+    from unittest.mock import patch
+    from f3dasm._src.agentic.instrumented import RunStateSummary
 
-    result = _resolve_delegation_evals(tmp_path, "D001", 55)
+    # Store exists but has no data for D001
+    stub = RunStateSummary(
+        n_rows=0,
+        n_per_delegation={},
+        n_per_source={},
+        n_per_fidelity=None,
+        output_stats={},
+    )
+    with patch.object(RunStateSummary, "from_store", return_value=stub):
+        result = _resolve_delegation_evals(tmp_path, "D001", 55)
     assert result == 55
 
 
-def test_resolve_delegation_evals_reads_mechanical_count(tmp_path):
-    """Returns mechanical count from .count file when present."""
+def test_resolve_delegation_evals_reads_store_rows(tmp_path):
+    """Returns row count from store when delegation has rows."""
     from f3dasm._src.agentic.nodes import _resolve_delegation_evals
+    from unittest.mock import patch
+    from f3dasm._src.agentic.instrumented import RunStateSummary
 
-    (tmp_path / "D001.count").write_text("42")
-    result = _resolve_delegation_evals(tmp_path, "D001", 7)
+    stub = RunStateSummary(
+        n_rows=42,
+        n_per_delegation={"D001": 42},
+        n_per_source={},
+        n_per_fidelity=None,
+        output_stats={},
+    )
+    with patch.object(RunStateSummary, "from_store", return_value=stub):
+        result = _resolve_delegation_evals(tmp_path, "D001", 7)
     assert result == 42
 
 
-def test_resolve_delegation_evals_mechanical_overrides_self_report(tmp_path):
-    """Mechanical count overrides a different ReportEvals self-report."""
+def test_resolve_delegation_evals_store_overrides_self_report(tmp_path):
+    """Store row count overrides a different ReportEvals self-report."""
     from f3dasm._src.agentic.nodes import _resolve_delegation_evals
+    from unittest.mock import patch
+    from f3dasm._src.agentic.instrumented import RunStateSummary
 
-    (tmp_path / "D003.count").write_text("100")
-    result = _resolve_delegation_evals(tmp_path, "D003", 5)
+    stub = RunStateSummary(
+        n_rows=100,
+        n_per_delegation={"D003": 100},
+        n_per_source={},
+        n_per_fidelity=None,
+        output_stats={},
+    )
+    with patch.object(RunStateSummary, "from_store", return_value=stub):
+        result = _resolve_delegation_evals(tmp_path, "D003", 5)
     assert result == 100
 
 
-def test_resolve_delegation_evals_falls_back_on_bad_file(tmp_path):
-    """Falls back to reported when .count file contains non-integer."""
+def test_resolve_delegation_evals_falls_back_when_store_none(tmp_path):
+    """Falls back to reported when RunStateSummary returns None."""
     from f3dasm._src.agentic.nodes import _resolve_delegation_evals
+    from unittest.mock import patch
+    from f3dasm._src.agentic.instrumented import RunStateSummary
 
-    (tmp_path / "D002.count").write_text("not_an_int")
-    result = _resolve_delegation_evals(tmp_path, "D002", 33)
+    with patch.object(RunStateSummary, "from_store", return_value=None):
+        result = _resolve_delegation_evals(tmp_path, "D002", 33)
     assert result == 33
 
 
-def test_resolve_delegation_evals_counter_dir_path_resolution(tmp_path):
-    """counter_dir is derived as notes_dir.parent / 'eval_counter', and
-    _resolve_delegation_evals correctly reads from it.
+def test_resolve_delegation_evals_store_dir_path_resolution(tmp_path):
+    """store_dir is derived as notes_dir.parent.parent/'experiment_data',
+    and _resolve_delegation_evals correctly counts rows for a delegation.
 
-    This is the deterministic unit-test of the counter_dir derivation
+    This is the deterministic unit-test of the store_dir derivation
     path used inside StrategizerNode._run().
     """
     from f3dasm._src.agentic.nodes import _resolve_delegation_evals
+    from unittest.mock import patch
+    from f3dasm._src.agentic.instrumented import RunStateSummary
 
-    # Simulate the path derivation: notes_dir is debug/strategizer_notes,
-    # so counter_dir = notes_dir.parent / "eval_counter"
+    # Simulate path derivation:
+    # notes_dir = run_dir/debug/strategizer_notes
+    # store_dir = notes_dir.parent.parent / "experiment_data"
     debug_dir = tmp_path / "debug"
     notes_dir = debug_dir / "strategizer_notes"
     notes_dir.mkdir(parents=True)
-    counter_dir = notes_dir.parent / "eval_counter"
-    counter_dir.mkdir()
+    store_dir = notes_dir.parent.parent / "experiment_data"
+    store_dir.mkdir()
 
-    # Write a .count file for D001 (mechanical count = 42)
-    (counter_dir / "D001.count").write_text("42")
-
-    # Reported (honour-system) is 7 — mechanical should win
-    result = _resolve_delegation_evals(counter_dir, "D001", 7)
+    stub = RunStateSummary(
+        n_rows=42,
+        n_per_delegation={"D001": 42},
+        n_per_source={},
+        n_per_fidelity=None,
+        output_stats={},
+    )
+    with patch.object(RunStateSummary, "from_store", return_value=stub):
+        result = _resolve_delegation_evals(store_dir, "D001", 7)
     assert result == 42

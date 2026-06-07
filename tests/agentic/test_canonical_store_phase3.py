@@ -326,7 +326,11 @@ class TestRecallStoreClosure:
 
     def test_recall_store_returns_summary_when_store_exists(self, tmp_path):
         run_dir, notes_dir = _build_run_layout(tmp_path)
-        store_dir = run_dir  # experiment_data/ lives under run_dir
+        # _derive_store_dir() returns run_dir/experiment_data.
+        # RunStateSummary.from_store(run_dir/experiment_data) reads
+        # run_dir/experiment_data/experiment_data/output.csv, so
+        # _build_store must use run_dir/experiment_data as project_dir.
+        store_dir = run_dir / "experiment_data"
         _build_store(store_dir, [
             (0.1, 1.0, "D001"),
             (0.2, 2.0, "D001"),
@@ -392,7 +396,10 @@ class TestQueryStoreClosure:
 
     def _setup_store_and_node(self, tmp_path):
         run_dir, notes_dir = _build_run_layout(tmp_path)
-        store_dir = run_dir
+        # _derive_store_dir() returns run_dir/experiment_data.
+        # Use run_dir/experiment_data as project_dir so data lands at
+        # run_dir/experiment_data/experiment_data/output.csv ✓
+        store_dir = run_dir / "experiment_data"
         _build_store(store_dir, [
             (0.1, 5.0, "D001"),
             (0.2, 3.0, "D001"),

@@ -225,7 +225,7 @@ def test_make_adapter_claude_extra_closures_injected(tmp_path):
 
 
 def test_init_canonical_store_creates_dirs(tmp_path):
-    """_init_canonical_store creates experiment_data/ and eval_counter/."""
+    """_init_canonical_store creates experiment_data/."""
     from f3dasm._src.agentic.agent_runtime import _init_canonical_store
 
     run_dir = tmp_path / "runs" / "20260101T000000"
@@ -235,7 +235,8 @@ def test_init_canonical_store_creates_dirs(tmp_path):
     _init_canonical_store(run_dir, study_dir)
 
     assert (run_dir / "experiment_data").is_dir()
-    assert (run_dir / "debug" / "eval_counter").is_dir()
+    # eval_counter directory is no longer created (counter removed)
+    assert not (run_dir / "debug" / "eval_counter").exists()
 
 
 def test_init_canonical_store_writes_run_config_json(tmp_path):
@@ -253,9 +254,7 @@ def test_init_canonical_store_writes_run_config_json(tmp_path):
     assert cfg_path.exists()
     loaded = json.loads(cfg_path.read_text())
     assert loaded["store_dir"] == str(run_dir / "experiment_data")
-    assert loaded["counter_dir"] == str(
-        run_dir / "debug" / "eval_counter"
-    )
+    assert "counter_dir" not in loaded
     assert loaded["lock_path"] == str(
         run_dir / "experiment_data" / ".lock"
     )
@@ -278,7 +277,7 @@ def test_init_canonical_store_returns_config_dict(tmp_path):
 
     assert isinstance(result, dict)
     assert "store_dir" in result
-    assert "counter_dir" in result
+    assert "counter_dir" not in result
 
 
 def test_execute_creates_canonical_store_dirs_and_state(tmp_path):
@@ -341,7 +340,8 @@ def test_execute_creates_canonical_store_dirs_and_state(tmp_path):
 
     # dirs exist
     assert (run_dir / "experiment_data").is_dir()
-    assert (run_dir / "debug" / "eval_counter").is_dir()
+    # eval_counter directory is no longer created (counter removed)
+    assert not (run_dir / "debug" / "eval_counter").exists()
 
     # run_config.json exists with correct keys
     import json
@@ -350,7 +350,5 @@ def test_execute_creates_canonical_store_dirs_and_state(tmp_path):
         (run_dir / "debug" / "run_config.json").read_text()
     )
     assert cfg["store_dir"] == str(run_dir / "experiment_data")
-    assert cfg["counter_dir"] == str(
-        run_dir / "debug" / "eval_counter"
-    )
+    assert "counter_dir" not in cfg
     assert cfg["evaluator_name"] == tmp_path.name

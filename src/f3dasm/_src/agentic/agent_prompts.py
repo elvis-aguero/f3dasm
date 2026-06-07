@@ -202,7 +202,8 @@ will be lost and are invisible to the Strategizer.
 Evaluate designs ONLY through the instrumented evaluator: \
 `from f3dasm.agentic import get_evaluator; gen = get_evaluator()` \
 — results are recorded in the run's canonical evaluation ledger \
-automatically. Raw evaluator imports bypass the ledger.
+automatically. Raw evaluator imports bypass the ledger, are flagged \
+by the monitor, and can invalidate the run.
 </workspace>
 
 """

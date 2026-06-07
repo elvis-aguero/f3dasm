@@ -30,37 +30,41 @@ __all__ = [
 
 
 def _resolve_delegation_evals(
-    counter_dir: "Path | None",
+    store_dir: "Path | None",
     delegation_id: str,
     reported: int,
 ) -> int:
     """Return the eval count for a delegation.
 
-    Prefers the mechanical counter written by InstrumentedDataGenerator
-    (``<counter_dir>/<delegation_id>.count``) over the honour-system
-    ReportEvals self-report.  Falls back to *reported* if the file is
-    absent or unparseable.
+    Prefers the row count from the canonical evaluation ledger
+    (authoritative) over the honour-system ReportEvals self-report.
+    Falls back to *reported* for delegations that bypassed the ledger
+    (wrote no rows) — e.g. delegations using lookup tables directly.
 
     Parameters
     ----------
-    counter_dir:
-        Directory that holds per-delegation ``.count`` files.
-        ``None`` disables mechanical counting and always returns
-        *reported*.
+    store_dir:
+        The run-level directory that contains ``experiment_data/``
+        (i.e. ``run_config["store_dir"]``).  ``None`` disables ledger
+        counting and always returns *reported*.
     delegation_id:
         E.g. ``"D003"``.
     reported:
         The value from ``ReportEvals`` (honour-system fallback).
     """
-    if counter_dir is None:
-        return reported
-    count_file = Path(counter_dir) / f"{delegation_id}.count"
-    if not count_file.exists():
+    if store_dir is None:
         return reported
     try:
-        return int(count_file.read_text().strip())
-    except (ValueError, OSError):
-        return reported
+        from .instrumented import RunStateSummary
+        summary = RunStateSummary.from_store(store_dir)
+        if (
+            summary is not None
+            and summary.n_per_delegation.get(delegation_id, 0) > 0
+        ):
+            return summary.n_per_delegation[delegation_id]
+    except Exception:  # noqa: BLE001
+        pass
+    return reported
 
 # Time budget is a SOFT constraint (warnings only). This multiple is the
 # run-level cost backstop: a run is aborted once it exceeds
@@ -643,17 +647,18 @@ class StrategizerNode(AgentNode):
                             # (already classified correctly by _record_tool_error)
                             break  # one log entry per pattern match per delegation
 
-                    # Mechanical counter preferred over self-reported
-                    # ReportEvals: InstrumentedDataGenerator writes an
-                    # authoritative .count file; fall back to the
-                    # honour-system evals_box only when the file is absent.
+                    # Ledger row count preferred over self-reported
+                    # ReportEvals: count rows per delegation_id in the
+                    # canonical store (authoritative); fall back to
+                    # the honour-system evals_box when the delegation
+                    # wrote no rows (bypassed get_evaluator).
                     _notes = node._current_notes_dir
-                    _counter_dir = (
-                        _notes.parent / "eval_counter"
+                    _store_dir = (
+                        _notes.parent.parent / "experiment_data"
                         if _notes is not None else None
                     )
                     _evals = _resolve_delegation_evals(
-                        _counter_dir,
+                        _store_dir,
                         delegation_id,
                         evals_box["count"],
                     )
@@ -1137,15 +1142,19 @@ class StrategizerNode(AgentNode):
 
         # ------------------------------------------------------------------
         # RecallStore / QueryStore: canonical ledger read tools.
-        # Store dir: notes_dir (run_dir/debug/strategizer_notes) →
-        #   parent = debug/, parent.parent = run_dir = store_dir.
+        # notes_dir = run_dir/debug/strategizer_notes
+        #   → parent       = run_dir/debug/
+        #   → parent.parent = run_dir
+        #   → store_dir    = run_dir/experiment_data
+        # RunStateSummary.from_store(store_dir) reads
+        #   store_dir/experiment_data/output.csv  ✓
         # ------------------------------------------------------------------
 
         def _derive_store_dir() -> "Path | None":
             nd = node._current_notes_dir
             if nd is None:
                 return None
-            return nd.parent.parent
+            return nd.parent.parent / "experiment_data"
 
         def RecallStore() -> str:
             """Summary of the run's canonical evaluation ledger: rows per
@@ -1727,9 +1736,13 @@ class StrategizerNode(AgentNode):
             if self._ledger is None:
                 self._ledger = HypothesisLedger(self._current_notes_dir)
             # Wire canonical store dir into ScienceMonitor lazily.
+            # notes_dir.parent.parent = run_dir; store_dir adds
+            # /experiment_data so RunStateSummary.from_store can
+            # find run_dir/experiment_data/experiment_data/output.csv
             if self._science_monitor is not None:
                 self._science_monitor.store_dir = (
                     self._current_notes_dir.parent.parent
+                    / "experiment_data"
                 )
 
         # Capture total_delegations so Delegate() can seed the counter.

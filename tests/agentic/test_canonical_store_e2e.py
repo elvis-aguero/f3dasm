@@ -1,18 +1,17 @@
 """End-to-end seam test: real _init_canonical_store consumed by real
-get_evaluator from a simulated worker cwd, through append + counter +
+get_evaluator from a simulated worker cwd, through append and
 the runtime's eval-resolution helper. No LLM, deterministic.
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from f3dasm import ExperimentData, datagenerator
 from f3dasm._src.samplers import RandomUniform
 from f3dasm.design import Domain
 from f3dasm._src.agentic.agent_runtime import _init_canonical_store
-from f3dasm._src.agentic.instrumented import get_evaluator
+from f3dasm._src.agentic.instrumented import RunStateSummary, get_evaluator
 from f3dasm._src.agentic.nodes import _resolve_delegation_evals
 
 
@@ -45,7 +44,8 @@ def test_runtime_config_to_store_roundtrip(tmp_path, monkeypatch):
     gen.flush()
 
     # 4. canonical store has the rows with provenance
-    canon = ExperimentData.from_file(project_dir=cfg["store_dir"])
+    store_dir = Path(cfg["store_dir"])
+    canon = ExperimentData.from_file(project_dir=store_dir)
     _, out = canon.to_pandas()
     assert len(out) == 4
     assert (out["_delegation_id"] == "D001").all()
@@ -53,8 +53,21 @@ def test_runtime_config_to_store_roundtrip(tmp_path, monkeypatch):
     assert out["_ts"].notna().all()
     assert "f" in out.columns
 
-    # 5. mechanical counter file written, and the runtime helper reads it
-    counter_dir = Path(cfg["counter_dir"])
-    assert int((counter_dir / "D001.count").read_text()) == 4
-    # honor-system "reported" value is overridden by the mechanical count
-    assert _resolve_delegation_evals(counter_dir, "D001", reported=999) == 4
+    # 5. store is the single source of truth — RunStateSummary.from_store
+    # reads the same store_dir that InstrumentedDataGenerator wrote to.
+    # This is the regression guard for the write-path/read-path agreement.
+    summary = RunStateSummary.from_store(cfg["store_dir"])
+    assert summary is not None, (
+        "RunStateSummary.from_store(run_config['store_dir']) returned None; "
+        "write-path and read-path store_dir disagree."
+    )
+    assert summary.n_per_delegation.get("D001", 0) == 4, (
+        f"Expected 4 rows for D001, got {summary.n_per_delegation}"
+    )
+
+    # 6. _resolve_delegation_evals counts store rows, not a counter file
+    evals = _resolve_delegation_evals(store_dir, "D001", reported=999)
+    assert evals == 4, (
+        f"Expected 4 (from store), got {evals}; reported=999 should be "
+        "overridden by the ledger."
+    )

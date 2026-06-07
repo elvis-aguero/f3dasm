@@ -69,7 +69,6 @@ def _init_canonical_store(
 
     Creates:
     - ``<run_dir>/experiment_data/`` — shared ExperimentData project_dir
-    - ``<run_dir>/debug/eval_counter/`` — per-delegation .count files
     - ``<run_dir>/debug/run_config.json`` — config read by get_evaluator()
 
     Parameters
@@ -92,15 +91,12 @@ def _init_canonical_store(
     import json as _json
 
     store_dir = run_dir / "experiment_data"
-    counter_dir = run_dir / "debug" / "eval_counter"
     store_dir.mkdir(parents=True, exist_ok=True)
-    counter_dir.mkdir(parents=True, exist_ok=True)
 
     eval_cfg = evaluator_config or {}
 
     config: dict = {
         "store_dir": str(store_dir),
-        "counter_dir": str(counter_dir),
         "lock_path": str(store_dir / ".lock"),
         "evaluator_name": study_dir.name,
         "study_dir": str(study_dir),
@@ -224,7 +220,7 @@ class AgenticRun:
         # lit_reviewer_notes_dir is created by LiteratureCorpus.__init__
         self._run_dir = run_dir
 
-        # Canonical store: experiment_data/ + eval_counter/ + run_config.json
+        # Canonical store: experiment_data/ + run_config.json
         _eval_cfg = _load_study_config(self.study_dir).get("evaluator")
         canonical_cfg = _init_canonical_store(
             run_dir, self.study_dir, evaluator_config=_eval_cfg

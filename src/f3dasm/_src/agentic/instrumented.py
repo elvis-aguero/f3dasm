@@ -8,7 +8,6 @@ Provides :class:`InstrumentedDataGenerator`, a wrapper that:
 3. Buffers samples and flushes them to a shared ``ExperimentData`` store
    under a ``FileLock`` so concurrent delegations cannot corrupt the
    ledger.
-4. Writes a running eval count to a per-delegation counter file.
 
 Also provides :func:`get_evaluator`, a factory that reads
 ``run_config.json`` from the delegation workspace and returns a
@@ -73,9 +72,6 @@ class InstrumentedDataGenerator(DataGenerator):
     fidelity_column : str or None, optional
         Name of the study's fidelity input column if any.  Unused in
         Phase 1 — accepted only for forward-compatibility.
-    counter_path : Path or str or None, optional
-        File to overwrite with the running eval count after each
-        ``execute``.  If ``None`` no counter file is written.
     lock_path : Path or str or None, optional
         Path for the ``FileLock``.  Defaults to
         ``<store_dir>/experiment_data/.lock``.
@@ -92,7 +88,6 @@ class InstrumentedDataGenerator(DataGenerator):
         *,
         source: str = "",
         fidelity_column: Optional[str] = None,
-        counter_path: Optional[Path | str] = None,
         lock_path: Optional[Path | str] = None,
         flush_every: int = 1,
     ) -> None:
@@ -101,9 +96,6 @@ class InstrumentedDataGenerator(DataGenerator):
         self.delegation_id = delegation_id
         self.source = source
         self.fidelity_column = fidelity_column  # unused Phase 1
-        self.counter_path = (
-            Path(counter_path) if counter_path is not None else None
-        )
         self.flush_every = flush_every
 
         if lock_path is None:
@@ -113,18 +105,6 @@ class InstrumentedDataGenerator(DataGenerator):
         self.lock_path = Path(lock_path)
 
         self._buffer: list[ExperimentSample] = []
-        # Seed from an existing counter so multiple generator
-        # instances within ONE delegation accumulate rather than
-        # overwrite (observed live: a worker built one generator per
-        # phase and the counter undercounted vs the store).
-        self._eval_count: int = 0
-        if self.counter_path is not None:
-            try:
-                self._eval_count = int(
-                    self.counter_path.read_text().strip()
-                )
-            except (FileNotFoundError, ValueError, OSError):
-                self._eval_count = 0
 
     # ------------------------------------------------------------------
 
@@ -157,14 +137,9 @@ class InstrumentedDataGenerator(DataGenerator):
         out._output_data["_ts"] = ts
 
         self._buffer.append(deepcopy(out))
-        self._eval_count += 1
 
         if len(self._buffer) >= self.flush_every:
             self._flush()
-
-        if self.counter_path is not None:
-            self.counter_path.parent.mkdir(parents=True, exist_ok=True)
-            self.counter_path.write_text(str(self._eval_count))
 
         return out
 
@@ -427,8 +402,6 @@ def get_evaluator(inner: Optional[DataGenerator] = None) -> (
     run_config = _load_run_config()
 
     store_dir = Path(run_config["store_dir"])
-    counter_dir = Path(run_config["counter_dir"])
-    counter_path = counter_dir / f"{delegation_id}.count"
     lock_path_str = run_config.get("lock_path")
     lock_path = (
         Path(lock_path_str)
@@ -467,7 +440,6 @@ def get_evaluator(inner: Optional[DataGenerator] = None) -> (
         delegation_id=delegation_id,
         source=source,
         fidelity_column=fidelity_column,
-        counter_path=counter_path,
         lock_path=lock_path,
     )
 
