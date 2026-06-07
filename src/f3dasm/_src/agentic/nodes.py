@@ -62,6 +62,11 @@ def _resolve_delegation_evals(
     except (ValueError, OSError):
         return reported
 
+# Time budget is a SOFT constraint (warnings only). This multiple is the
+# run-level cost backstop: a run is aborted once it exceeds
+# RUN_BACKSTOP_MULTIPLE x the time budget, to bound runaway cost.
+RUN_BACKSTOP_MULTIPLE = 2.0
+
 _REQUIRED_SUBSECTIONS = [
     "### Actions taken",
     "### Files touched",
@@ -858,7 +863,14 @@ class StrategizerNode(AgentNode):
                         already_sent = node._budget_notified_pcts
                         if threshold not in already_sent:
                             already_sent.add(threshold)
+                            _over = pct >= RUN_BACKSTOP_MULTIPLE * 100
                             msg = (
+                                f"BACKSTOP IMMINENT: {pct:.0f}% of time "
+                                "budget — past the "
+                                f"{int(RUN_BACKSTOP_MULTIPLE)}x cost "
+                                "backstop. Stop polling and call Done() "
+                                "NOW with a partial report."
+                            ) if _over else (
                                 f"BUDGET: {pct:.0f}% of time budget consumed. "
                                 "Wrap up your current work and return a partial "
                                 "report as soon as possible."
@@ -1728,9 +1740,9 @@ class StrategizerNode(AgentNode):
         if self._delegation_seq < self._state_total_delegations:
             self._delegation_seq = self._state_total_delegations
 
-        # Soft budget warnings — appended to context, run is NOT stopped.
-        # 95%: early warning, start wrapping up.
-        # 100%: final warning with 5% cleanup window remaining.
+        # Time budget is a SOFT constraint — warnings only; the run is
+        # never force-terminated for exceeding it. A separate run-level
+        # backstop (RUN_BACKSTOP_MULTIPLE x budget) bounds runaway cost.
         budget_warnings: list[dict] = []
         budget = state.get("budget_seconds")
         start = state.get("start_time")
@@ -1741,14 +1753,15 @@ class StrategizerNode(AgentNode):
             elapsed = time.time() - start
             pct = elapsed / budget
             if pct >= 1.0:
-                cleanup_remaining = max(0.0, budget * 1.05 - elapsed)
                 budget_warnings.append({
                     "role": "user",
                     "content": (
                         f"CRITICAL: time budget fully consumed "
                         f"({elapsed:.0f}s / {budget:.0f}s). "
-                        f"You have ~{cleanup_remaining:.0f}s (5% cleanup window) "
-                        "to call Done(). Do not start new delegations."
+                        "Wrap up and call Done() now; do not start new "
+                        "delegations. (Budget is advisory — the run "
+                        "continues, but a hard cost backstop applies at "
+                        f"{int(RUN_BACKSTOP_MULTIPLE)}x budget.)"
                     ),
                 })
             elif pct >= 0.95:
@@ -1773,12 +1786,15 @@ class StrategizerNode(AgentNode):
                 ),
             })
 
-        # ── Hard budget stop ──────────────────────────────────────────────────
-        # If the 5 % cleanup window has already been exhausted, do NOT invoke
-        # the adapter — return immediately with a BUDGET EXCEEDED banner.
+        # ── Run-level cost backstop ───────────────────────────────────────────
+        # Time budget itself is SOFT (warnings only). This is a separate
+        # outermost guard: if the run blows past RUN_BACKSTOP_MULTIPLE x the
+        # budget it is aborted to bound runaway cost — a backstop, not the
+        # budget being a hard constraint. Checked between turns; a turn stuck
+        # polling is nudged toward Done() via GetStatus (see budget broadcast).
         if budget is not None and start is not None:
             _elapsed_now = time.time() - start
-            if _elapsed_now > budget * 1.05:
+            if _elapsed_now > budget * RUN_BACKSTOP_MULTIPLE:
                 # Collect any abandoned delegations for reporting
                 with self._registry_lock:
                     _abandoned = [
@@ -1796,10 +1812,12 @@ class StrategizerNode(AgentNode):
                         _prior_text = str(_m.content)
                         break
                 _budget_report = (
-                    "## ⚠ BUDGET EXCEEDED\n\n"
-                    "Run terminated by the runtime after the 5% cleanup "
-                    f"window ({_elapsed_now:.0f}s elapsed / "
-                    f"{budget:.0f}s budget)."
+                    "## ⚠ RUN BACKSTOP\n\n"
+                    "Run aborted by the cost backstop at "
+                    f"{int(RUN_BACKSTOP_MULTIPLE)}x the time budget "
+                    f"({_elapsed_now:.0f}s elapsed / {budget:.0f}s "
+                    "budget). The budget is advisory; this guard only "
+                    "bounds runaway cost."
                 )
                 if _abandoned:
                     _budget_report += (

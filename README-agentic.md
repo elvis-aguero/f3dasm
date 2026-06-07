@@ -130,11 +130,18 @@ required_deliverables:                        # hard gate before Done() (replica
   - replicate.py                              #   is always required regardless)
 ```
 
-**Budget semantics.** Wall-clock budget gives a soft warning at 95% and 100%,
-then a **hard stop** once the 5% cleanup window is exhausted (the run terminates
-with a `BUDGET EXCEEDED` banner rather than drifting). Eval budget is a soft
-warning. `replicate.py` is always a required deliverable; `Done()` is refused
-until it exists.
+**Budget semantics.** The wall-clock budget is a **soft** constraint: warnings
+at 95% and 100% are appended to the strategizer's context, but the run is never
+force-terminated for merely exceeding it. A separate **run-level cost backstop**
+(default `2×` the budget, `RUN_BACKSTOP_MULTIPLE` in `nodes.py`) aborts the whole
+run with a `RUN BACKSTOP` banner — a guard against runaway cost, not a hard
+budget. Eval budget is a soft warning. `replicate.py` is always required;
+`Done()` is refused until it exists.
+
+Note: budget/backstop checks happen between strategizer turns, so a single very
+long turn (e.g. polling a slow delegation) can overrun before the backstop
+fires; the GetStatus poller nudges a stuck turn toward `Done()` past the
+backstop.
 
 ## What "good" looks like
 

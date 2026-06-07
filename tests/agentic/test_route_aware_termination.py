@@ -4,7 +4,7 @@ Covers:
 - Bounded re-prompt on unaccepted termination (max 3 attempts)
 - UNGATED banner on exhausted attempts
 - Accepted Done() → clean END with no banner
-- Hard budget stop (elapsed > 1.05 * budget)
+- Run-level cost backstop (elapsed > RUN_BACKSTOP_MULTIPLE * budget)
 - Working delegations survive loopbacks
 - Ledger duplicate-statement guard
 - ReadNote directory guard
@@ -187,8 +187,8 @@ def test_accepted_done_no_banner():
 # ---------------------------------------------------------------------------
 
 
-def test_hard_budget_stop_skips_invoke():
-    """When elapsed > 1.05 * budget, adapter.invoke is NOT called; returns BUDGET EXCEEDED."""
+def test_run_backstop_aborts_past_multiple():
+    """Past RUN_BACKSTOP_MULTIPLE x budget, invoke is skipped; RUN BACKSTOP."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
     study_dir = Path(tempfile.mkdtemp(prefix="f3dasm_rat_"))
@@ -200,7 +200,7 @@ def test_hard_budget_stop_skips_invoke():
         adapter, name="strategizer", outgoing=["implementer"], spec=spec,
     )
 
-    # budget=10s, started 100s ago → elapsed >> 1.05 * budget
+    # budget=10s, started 100s ago → elapsed = 10x budget >> 2x backstop
     state = _make_state(study_dir=study_dir)
     state["budget_seconds"] = 10
     state["start_time"] = time.time() - 100
@@ -208,13 +208,36 @@ def test_hard_budget_stop_skips_invoke():
     cmd = node(state)
 
     assert adapter.invoke_count == 0, (
-        f"adapter.invoke was called {adapter.invoke_count} time(s) but should have been skipped"
+        f"adapter.invoke called {adapter.invoke_count}x; should be skipped"
     )
-    assert cmd.goto == END, f"Expected END from budget stop, got {cmd.goto!r}"
+    assert cmd.goto == END
     assert cmd.update.get("done") is True
-    last_report = cmd.update.get("last_report", "")
-    assert "BUDGET EXCEEDED" in last_report, (
-        f"Expected 'BUDGET EXCEEDED' in last_report; got: {last_report!r}"
+    assert "RUN BACKSTOP" in cmd.update.get("last_report", "")
+
+
+def test_soft_budget_does_not_terminate_below_backstop():
+    """Time budget is SOFT: past 100% but below the backstop, the run
+    CONTINUES (adapter.invoke is called) — warning only, no force-end."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    study_dir = Path(tempfile.mkdtemp(prefix="f3dasm_rat_"))
+    (study_dir / "replicate.py").write_text("# test\n")
+
+    adapter = StubAdapter(response="Continuing despite soft warning.")
+    spec = _minimal_spec()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+    )
+
+    # budget=10s, started 15s ago → 1.5x budget: over 100%, under 2x
+    state = _make_state(study_dir=study_dir)
+    state["budget_seconds"] = 10
+    state["start_time"] = time.time() - 15
+
+    node(state)
+
+    assert adapter.invoke_count == 1, (
+        "soft budget must NOT force-terminate below the backstop"
     )
 
 
