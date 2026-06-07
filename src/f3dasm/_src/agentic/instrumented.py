@@ -113,7 +113,18 @@ class InstrumentedDataGenerator(DataGenerator):
         self.lock_path = Path(lock_path)
 
         self._buffer: list[ExperimentSample] = []
+        # Seed from an existing counter so multiple generator
+        # instances within ONE delegation accumulate rather than
+        # overwrite (observed live: a worker built one generator per
+        # phase and the counter undercounted vs the store).
         self._eval_count: int = 0
+        if self.counter_path is not None:
+            try:
+                self._eval_count = int(
+                    self.counter_path.read_text().strip()
+                )
+            except (FileNotFoundError, ValueError, OSError):
+                self._eval_count = 0
 
     # ------------------------------------------------------------------
 

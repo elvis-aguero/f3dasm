@@ -315,3 +315,36 @@ def test_public_api_importable():
         InstrumentedDataGenerator,
         get_evaluator,
     )
+
+
+def test_counter_accumulates_across_generator_instances(tmp_path):
+    """A second generator in the SAME delegation continues the count.
+
+    Observed live: a worker built one generator per phase; each
+    restarted at 0 and overwrote the counter (280) while the store
+    accumulated rows (508). The counter must seed from the file.
+    """
+    counter = tmp_path / "D001.count"
+
+    from f3dasm._src.agentic.instrumented import (
+        InstrumentedDataGenerator,
+    )
+
+    def make_gen():
+        @datagenerator(output_names=["f"])
+        def inner(**kw):
+            return float(sum(kw.values()))
+
+        return InstrumentedDataGenerator(
+            inner, tmp_path / "store", "D001",
+            source="s", counter_path=counter, flush_every=1,
+        )
+
+    g1 = make_gen()
+    g1.execute(_make_sample(0.1))
+    g1.execute(_make_sample(0.2))
+    assert int(counter.read_text()) == 2
+
+    g2 = make_gen()  # new instance, same delegation
+    g2.execute(_make_sample(0.3))
+    assert int(counter.read_text()) == 3
