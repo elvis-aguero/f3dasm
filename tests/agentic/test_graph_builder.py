@@ -281,3 +281,20 @@ def test_repr_arrow_shows_preamble():
     g = _two_node_graph()
     r = repr(g)
     assert "Focus on Python." in r
+
+
+def test_to_mermaid_styles_nodes_and_edges():
+    """Styled mermaid: classDef per agent class, class assignments,
+    and dotted (consultation) arrows from non-entry sources."""
+    from f3dasm._src.agentic.agents._graphs import _default_graph
+    m = _default_graph().to_mermaid()
+    # colour styling present
+    assert "classDef StrategizerAgent fill:#" in m
+    assert "class strategizer StrategizerAgent" in m
+    # entry-sourced edge is a solid delegation arrow
+    assert "strategizer --> critic" in m
+    # non-entry-sourced edge (specialist consults lit) is dotted
+    assert "datagenerator -.-> literature_reviewer" in m
+    assert "implementer -.-> literature_reviewer" in m
+    # labels carry class + role/description
+    assert "<b>strategizer</b><br/>StrategizerAgent" in m

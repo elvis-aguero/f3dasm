@@ -187,27 +187,71 @@ class Graph:
                 return e
         return None
 
-    def to_mermaid(self) -> str:
-        """Return a Mermaid flowchart string for this graph.
+    # Curated semantic colours (fill, stroke) by agent class name;
+    # unknown classes cycle a fallback palette so any graph stays legible.
+    _MERMAID_COLOURS = {
+        "StrategizerAgent": ("#1d4ed8", "#1e3a8a"),
+        "LiteratureReviewAgent": ("#6d28d9", "#4c1d95"),
+        "DataGeneratorAgent": ("#b45309", "#7c2d12"),
+        "F3dasmImplementerAgent": ("#15803d", "#14532d"),
+        "AdversarialCritiqueAgent": ("#b91c1c", "#7f1d1d"),
+        "DebuggerAgent": ("#475569", "#1e293b"),
+    }
+    _MERMAID_FALLBACK = [
+        ("#0f766e", "#134e4a"), ("#a16207", "#713f12"),
+        ("#be185d", "#831843"), ("#4338ca", "#312e81"),
+    ]
 
-        Paste the output at https://mermaid.live to render it, or use
-        any Mermaid-aware renderer (GitHub markdown, Jupyter extensions, etc.).
+    def to_mermaid(self) -> str:
+        """Return a styled Mermaid flowchart for this graph.
+
+        Generated from the live spec: node labels carry each agent's
+        class, role, and a short description; nodes are coloured by agent
+        class; edges from the entry node render as solid delegation
+        arrows and edges from worker nodes as dotted consultation arrows.
+        Paste at https://mermaid.live or any Mermaid-aware renderer
+        (GitHub markdown, Jupyter, VS Code).
         """
+        def _clean(text: str, n: int = 46) -> str:
+            t = " ".join(str(text).split()).replace('"', "'")
+            return (t[: n - 1] + "…") if len(t) > n else t
+
         lines = ["flowchart TD"]
+        colours: dict = {}
+        members: dict = {}
+        fb = 0
         for name in self.nodes:
             agent = self.nodes[name]
-            label = f"{name}\\n{type(agent).__name__}"
+            cls = type(agent).__name__
+            if cls not in colours:
+                if cls in self._MERMAID_COLOURS:
+                    colours[cls] = self._MERMAID_COLOURS[cls]
+                else:
+                    colours[cls] = self._MERMAID_FALLBACK[
+                        fb % len(self._MERMAID_FALLBACK)]
+                    fb += 1
+            members.setdefault(cls, []).append(name)
+            desc = _clean(
+                getattr(agent, "description", "") or agent.role)
+            label = f"<b>{name}</b><br/>{cls}<br/><i>{desc}</i>"
             if name == self.entry:
                 lines.append(f'    {name}(["{label}"])')
             else:
                 lines.append(f'    {name}["{label}"]')
         for e in self.edges:
+            arrow = "-->" if e.source == self.entry else "-.->"
             if e.preamble:
-                tail = "…" if len(e.preamble) > 35 else ""
-                snippet = e.preamble[:35] + tail
-                lines.append(f'    {e.source} -->|"{snippet}"| {e.target}')
+                snippet = _clean(e.preamble, 35)
+                lines.append(
+                    f'    {e.source} {arrow}|"{snippet}"| {e.target}')
             else:
-                lines.append(f'    {e.source} --> {e.target}')
+                lines.append(f'    {e.source} {arrow} {e.target}')
+        for cls, (fill, stroke) in colours.items():
+            lines.append(
+                f"    classDef {cls} fill:{fill},stroke:{stroke},"
+                "color:#fff,stroke-width:1px;")
+        for cls, names in members.items():
+            lines.append(f"    class {','.join(names)} {cls}")
         return "\n".join(lines)
 
     def __repr__(self) -> str:
