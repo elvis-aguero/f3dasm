@@ -751,6 +751,7 @@ def test_run_paths_preamble_template_placeholders():
         run_dir="/a/study/runs/ts",
         debug_dir="/a/study/runs/ts/debug",
         notes_dir="/a/notes",
+        experiment_data_dir="/a/study/runs/ts/experiment_data",
     )
     assert "/a/study" in result, (
         "study_dir substitution not found in result"
