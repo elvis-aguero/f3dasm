@@ -30,6 +30,10 @@ from .._src.agentic.backends.claude import ClaudeAdapter
 from .._src.agentic.backends.ollama import OllamaAdapter
 from .._src.agentic.graph_builder import build_graph
 from .._src.agentic.graph_state import AgenticState
+from .._src.agentic.instrumented import (
+    InstrumentedDataGenerator,
+    get_evaluator,
+)
 from .._src.agentic.lookup import LookupDataGenerator
 from .._src.agentic.nodes import (
     AgentNode,
@@ -46,6 +50,8 @@ __status__ = "Experimental"
 __all__ = [
     "Agent",
     "AgentNode",
+    "get_evaluator",
+    "InstrumentedDataGenerator",
     "AgenticOptimizer",
     "AgenticRun",
     "AgenticRunError",
