@@ -161,6 +161,7 @@ strategizer_notes_dir = {notes_dir}
 hypotheses_json       = {notes_dir}/hypotheses.json
 delegation_log_jsonl  = {debug_dir}/delegation_log.jsonl
 diagnostics_jsonl     = {debug_dir}/diagnostics.jsonl
+experiment_data_dir   = {experiment_data_dir}
 workspace_dir         = {debug_dir}/workspace
 Use these absolute paths when calling Read() and WriteNote().
 WriteNote also accepts a bare filename such as 'meta_errors.md',

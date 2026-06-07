@@ -130,11 +130,28 @@ Every run produces exactly two primary outputs at study_dir/:
                   before calling Done(). This is a hard runtime requirement:
                   Done() will be refused with an error if replicate.py is absent.
 
-What replicate.py should contain depends on the problem — read
-PROBLEM_STATEMENT.md for what constitutes a reproducible result.  In general
-it is a self-contained Python script that a reader can run to reproduce the
-main finding of this run.  Write it as your last action before Done().
-Do not delegate it to a worker.
+replicate.py takes the run's canonical evaluation ledger as INPUT and
+reproduces the headline finding from it — it does NOT re-run the expensive
+evaluator. Its required shape:
+
+  1. Load the shipped ledger from the absolute experiment_data_dir given
+     in <run_paths> (paste that path as a string literal):
+       from f3dasm import ExperimentData
+       data = ExperimentData.from_file(project_dir=r"<experiment_data_dir>")
+     (the ledger directory must travel with replicate.py if shared off
+      this machine).
+  2. Reproduce the analysis that yielded your conclusion — filter to feasible
+     rows, select the best by the objective, etc. — using the ledger's
+     columns (inputs, outputs, and provenance: _delegation_id, source).
+     You may express this as an f3dasm Pipeline (Step that loads the ledger
+     >> analysis Step) or as plain analysis code; either is fine.
+  3. END with an assertion of your headline number, so running the script is
+     a pass/fail replication test, e.g.:
+       assert abs(best_value - <reported>) < <tol>, (best_value, <reported>)
+       print("REPLICATED:", best_value)
+
+Read PROBLEM_STATEMENT.md for what constitutes the reproducible result.
+Write replicate.py as your last action before Done(); do not delegate it.
 
 A run closes ONLY through an accepted Done(). Ending your turn after a
 refused Done() does not end the run — the runtime re-prompts you, and after

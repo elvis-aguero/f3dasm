@@ -378,6 +378,7 @@ class AgenticRun:
                 run_dir=run_dir,
                 debug_dir=debug_dir,
                 notes_dir=notes_dir,
+                experiment_data_dir=Path(run_dir) / "experiment_data",
             )
             system_prompt = preamble + agent.system_prompt
             cwd = self.study_dir

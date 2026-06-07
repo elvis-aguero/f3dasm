@@ -52,3 +52,28 @@ def test_prompts_are_case_generic():
 
 def test_strategizer_mentions_science_monitor():
     assert "[SCIENCE MONITOR" in STRATEGIZER_SYSTEM_PROMPT
+
+
+def test_run_paths_preamble_has_experiment_data_dir():
+    from f3dasm._src.agentic.agent_prompts import (
+        RUN_PATHS_PREAMBLE_TEMPLATE,
+    )
+    # must format cleanly with the new required field
+    out = RUN_PATHS_PREAMBLE_TEMPLATE.format(
+        study_dir="/s", run_dir="/s/runs/T", debug_dir="/s/runs/T/debug",
+        notes_dir="/s/runs/T/debug/strategizer_notes",
+        experiment_data_dir="/s/runs/T/experiment_data",
+    )
+    assert "experiment_data_dir" in out
+    assert "/s/runs/T/experiment_data" in out
+
+
+def test_replicate_deliverable_consumes_ledger_and_asserts():
+    assert "ExperimentData.from_file" in STRATEGIZER_SYSTEM_PROMPT
+    # replicate.py must self-assert (pass/fail replication test)
+    assert "assert" in STRATEGIZER_SYSTEM_PROMPT
+    assert "canonical evaluation ledger as INPUT" in \
+        STRATEGIZER_SYSTEM_PROMPT
+    # must NOT instruct re-running the expensive evaluator
+    assert "does NOT re-run the expensive" in \
+        STRATEGIZER_SYSTEM_PROMPT
