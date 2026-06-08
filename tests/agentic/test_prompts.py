@@ -81,6 +81,21 @@ def test_replicate_deliverable_consumes_ledger_and_asserts():
         STRATEGIZER_SYSTEM_PROMPT
 
 
+def test_strategizer_has_replicate_authoring_primer():
+    """The strategizer AUTHORS replicate.py, so it must carry a concrete
+    f3dasm primer (not just a one-line load) — load the ledger, read its
+    frames, select, and assert a DERIVED number (not hardcoded)."""
+    p = STRATEGIZER_SYSTEM_PROMPT
+    # concrete ledger-read API, not just from_file
+    assert "to_pandas()" in p
+    assert "TEMPLATE" in p
+    # the optional f3dasm Pipeline form is shown as actionable code
+    assert "Pipeline(" in p and "Step(" in p
+    # explicit anti-hardcoding guidance the critic can lean on
+    low = p.lower()
+    assert "hardcod" in low and "derive" in low
+
+
 # ---------------------------------------------------------------------------
 # Prompt-audit tests (audit fixes A-M)
 # ---------------------------------------------------------------------------

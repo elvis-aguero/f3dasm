@@ -192,24 +192,56 @@ Every run produces exactly two primary outputs at study_dir/:
                   Done() will be refused with an error if replicate.py is absent.
 
 replicate.py takes the run's canonical evaluation ledger as INPUT and
-reproduces the headline finding from it — it does NOT re-run the expensive
-evaluator. Its required shape:
+reproduces the headline finding FROM IT — it does NOT re-run the expensive
+evaluator. It loads the shipped ledger, redoes your selection/analysis from
+the ledger's own columns, and ASSERTS your headline number, so running it is
+a pass/fail replication test. Hardcoding the answer instead of deriving it
+from the ledger defeats the purpose and the critic will reject it.
 
-  1. Load the shipped ledger from the absolute experiment_data_dir given
-     in <run_paths> (paste that path as a string literal):
-       from f3dasm import ExperimentData
-       data = ExperimentData.from_file(project_dir=r"<experiment_data_dir>")
-     (the ledger directory must travel with replicate.py if shared off
-      this machine).
-  2. Reproduce the analysis that yielded your conclusion — filter to feasible
-     rows, select the best by the objective, etc. — using the ledger's
-     columns (inputs, outputs, and provenance: _delegation_id, source).
-     You may express this as an f3dasm Pipeline (Step that loads the ledger
-     >> analysis Step) or as plain analysis code; either is fine.
-  3. END with an assertion of your headline number, so running the script is
-     a pass/fail replication test, e.g.:
-       assert abs(best_value - <reported>) < <tol>, (best_value, <reported>)
-       print("REPLICATED:", best_value)
+─── PRIMER: the ledger is an f3dasm ExperimentData ─────────────────────
+  from f3dasm import ExperimentData
+  data = ExperimentData.from_file(project_dir=r"<experiment_data_dir>")
+  df_in, df_out = data.to_pandas()       # inputs frame, outputs frame
+  # df_out carries your objective/feasibility columns PLUS provenance:
+  #   _delegation_id (e.g. 'D000' ground-truth pool, 'D001'+ live evals),
+  #   source, _ts
+  # Select straight from the frames — that IS the reproduction.
+
+─── replicate.py TEMPLATE (plain analysis — the common case) ───────────
+  # Replace <obj_col>/<feas_col>/<reported>/<tol> with YOUR problem's
+  # column names and headline; use idxmin() if you minimise.
+  from f3dasm import ExperimentData
+
+  data = ExperimentData.from_file(project_dir=r"<experiment_data_dir>")
+  df_in, df_out = data.to_pandas()
+
+  # 1. Filter to feasible rows IF your problem has a feasibility column:
+  feasible = df_out[df_out["<feas_col>"] == 1]
+  # 2. Select the best row by your objective (max or min as appropriate):
+  best = feasible.loc[feasible["<obj_col>"].idxmax()]
+  best_value = float(best["<obj_col>"])
+
+  # 3. Assert your headline number — DERIVED above, never hardcoded:
+  REPORTED, TOL = <reported>, <tol>
+  assert abs(best_value - REPORTED) < TOL, (best_value, REPORTED)
+  print("REPLICATED:", best_value)
+
+─── OPTIONAL: express it as an f3dasm Pipeline ─────────────────────────
+  # Same logic, wrapped so the runtime could run it uniformly later:
+  from f3dasm import Pipeline, Step
+  LEDGER = r"<experiment_data_dir>"
+  def _load(_):
+      return ExperimentData.from_file(project_dir=LEDGER)
+  def _check(d):
+      _, o = d.to_pandas()
+      bv = float(o[o["<feas_col>"] == 1]["<obj_col>"].max())
+      assert abs(bv - <reported>) < <tol>
+      print("REPLICATED:", bv)
+      return d
+  Pipeline([Step(block=_load), Step(block=_check)]).run()
+
+Useful ExperimentData reads: data.to_pandas(), data.to_numpy("output"),
+data.get_n_best_output("<obj>", n=1), len(data).
 
 Read PROBLEM_STATEMENT.md for what constitutes the reproducible result.
 Write replicate.py as your last action before Done(); do not delegate it.
