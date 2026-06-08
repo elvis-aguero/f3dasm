@@ -5,6 +5,9 @@
 
 from __future__ import annotations
 
+import os
+import random
+import time
 from dataclasses import dataclass
 
 # ---------------------------------------------------------------------------
@@ -276,10 +279,6 @@ class Graph:
 # Transient-error retry (shared by all backend adapters)
 # ---------------------------------------------------------------------------
 
-import os
-import random
-import time
-
 # Substrings (case-insensitive) marking a retryable transient failure. The
 # Claude path runs through claude-agent-sdk (not the anthropic SDK) and the
 # Ollama path through langchain/httpx, so there is no shared exception class to
@@ -312,7 +311,7 @@ def retry_on_transient(
     base_delay: float | None = None,
     max_delay: float = 60.0,
 ):
-    """Call ``fn()`` retrying transient failures with exponential backoff + jitter.
+    """Call ``fn()`` retrying transient failures with backoff + jitter.
 
     Non-transient exceptions propagate immediately. Defaults come from
     ``F3DASM_LLM_RETRY_MAX`` (default 5) and ``F3DASM_LLM_RETRY_BASE`` (2.0s).

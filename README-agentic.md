@@ -100,6 +100,33 @@ EOF
 uv run python -m f3dasm.agentic studies/my_problem
 ```
 
+## Resilience: retry & resume
+
+**Transient API failures retry automatically.** Both backends wrap each model
+turn in exponential backoff (`retry_on_transient`, `backends/base.py`): 429 /
+503 / `overloaded` / timeout / connection errors are retried up to
+`F3DASM_LLM_RETRY_MAX` times (default 5, base delay `F3DASM_LLM_RETRY_BASE`=2s).
+Auth errors, 400s, and tool/logic errors are **not** retried — they surface
+immediately.
+
+**Runs checkpoint to disk and can resume.** Each run persists a LangGraph
+checkpoint to `runs/<ts>/debug/checkpoints.sqlite`, keyed by a stable
+`thread_id` in `runs/<ts>/debug/thread_id`. If a run crashes (OOM, host reboot,
+killed process), resume it from the last completed strategizer turn:
+
+```python
+AgenticRun(study_dir="studies/x",
+           resume_from="studies/x/runs/<ts>").execute()
+```
+
+Checkpoints land at **strategizer-turn boundaries**. On resume the run restores
+the conversation plus the on-disk artifacts (hypothesis ledger, delegation log,
+canonical evaluation store) — all append-only, so **no completed evaluation is
+ever lost**. A delegation that was *mid-flight* at crash time is not restored;
+the strategizer re-issues it. Long runs are not capped at the LangGraph default
+of 25 super-steps — `recursion_limit` is raised (override with
+`F3DASM_RECURSION_LIMIT`).
+
 ## config.yaml reference
 
 `config.yaml` is optional; every key has a default.

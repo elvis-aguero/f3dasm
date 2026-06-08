@@ -255,6 +255,7 @@ class AgenticRun:
         max_ask: int = 1,
         container: bool = False,
         container_image: str = "f3dasm-agentic:latest",
+        resume_from: Path | None = None,
     ) -> None:
         self.study_dir = Path(study_dir).resolve()
         cfg = _load_study_config(self.study_dir)
@@ -282,6 +283,9 @@ class AgenticRun:
         self._max_ask = max_ask
         self._container = container
         self._container_image = container_image
+        self._resume_from = (
+            Path(resume_from) if resume_from is not None else None
+        )
         self._run_dir = None  # set in execute()
 
     def execute(self) -> str:
@@ -310,9 +314,20 @@ class AgenticRun:
             )
         problem = problem_path.read_text(encoding="utf-8")
 
-        # Create run directory
-        ts = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S")
-        run_dir = self.study_dir / "runs" / ts
+        # Create run directory (or reuse an existing one when resuming).
+        # getattr default: some tests build AgenticRun via __new__.
+        _resume = getattr(self, "_resume_from", None)
+        if _resume is not None:
+            run_dir = _resume.resolve()
+            if not (run_dir / "debug" / "thread_id").exists():
+                raise AgenticRunError(
+                    f"resume_from={run_dir} is not a resumable run dir "
+                    "(no debug/thread_id)"
+                )
+            ts = run_dir.name
+        else:
+            ts = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%S")
+            run_dir = self.study_dir / "runs" / ts
         debug_dir = run_dir / "debug"
         debug_dir.mkdir(parents=True, exist_ok=True)
         notes_dir = debug_dir / "strategizer_notes"
@@ -376,20 +391,17 @@ class AgenticRun:
         workspace_dir = debug_dir / "delegations"
         workspace_dir.mkdir(parents=True, exist_ok=True)
 
-        # Build the graph now (after _run_dir is set) so _make_adapter sees it
-        # If a pre-built graph was injected (e.g. in tests), use it directly.
-        graph = getattr(self, "_graph", None) or build_graph(
-            self._graph_spec, self._make_adapter, study_dir=self.study_dir,
-            interactive=self._interactive, max_ask=self._max_ask,
-            notes_dir=notes_dir,
-            lit_reviewer_notes_dir=lit_reviewer_notes_dir,
-            workspace_dir=workspace_dir,
-            delegation_log=delegation_log,
-        )
+        # Stable thread_id: persisted so a crashed run can be resumed against
+        # the same LangGraph checkpoint. Resume reads it back; a fresh run
+        # mints and stores it (own file: run_config.json is rewritten).
+        import os
+        _tid_path = debug_dir / "thread_id"
+        if _resume is not None:
+            thread_id = _tid_path.read_text().strip()
+        else:
+            thread_id = str(uuid.uuid4())
+            _tid_path.write_text(thread_id)
 
-        config: dict[str, Any] = {
-            "configurable": {"thread_id": str(uuid.uuid4())}
-        }
         initial_state = AgenticState(
             messages=[HumanMessage(content=problem)],
             study_dir=str(self.study_dir),
@@ -408,8 +420,30 @@ class AgenticRun:
             experiment_data_dir=canonical_cfg["store_dir"],
         )
 
+        config: dict[str, Any] = {
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": int(
+                os.environ.get("F3DASM_RECURSION_LIMIT", "500")
+            ),
+        }
+
+        # Durable checkpoint to disk so the run survives a crash; resume passes
+        # None as input (LangGraph convention: replay from last checkpoint).
+        from langgraph.checkpoint.sqlite import SqliteSaver
+        ckpt_path = debug_dir / "checkpoints.sqlite"
         log.info("Invoking graph")
-        result = graph.invoke(initial_state, config=config)
+        with SqliteSaver.from_conn_string(str(ckpt_path)) as saver:
+            graph = getattr(self, "_graph", None) or build_graph(
+                self._graph_spec, self._make_adapter, study_dir=self.study_dir,
+                interactive=self._interactive, max_ask=self._max_ask,
+                notes_dir=notes_dir,
+                lit_reviewer_notes_dir=lit_reviewer_notes_dir,
+                workspace_dir=workspace_dir,
+                delegation_log=delegation_log,
+                checkpointer=saver,
+            )
+            graph_input = None if _resume is not None else initial_state
+            result = graph.invoke(graph_input, config=config)
         report = result.get("last_report") or ""
         evals = result.get("evals_used", 0)
         tokens = result.get("token_totals") or {}
