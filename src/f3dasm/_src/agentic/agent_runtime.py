@@ -111,6 +111,64 @@ def _init_canonical_store(
     return config
 
 
+def register_evaluator_entrypoint(
+    run_config_path: Path,
+    generator_file: Path | str,
+    attr: str,
+    output_names: "list | None" = None,
+) -> str:
+    """Register an agent-authored DataGenerator as the canonical oracle.
+
+    Atomically updates ``run_config.json`` so the next ``get_evaluator()``
+    call (which re-reads the config on every invocation) resolves the
+    authored generator with no manual config edit.  This is the runtime
+    side of the datagenerator → oracle handoff: the agent writes the
+    generator file (+ a registration manifest); the runtime points the
+    canonical entrypoint at it.
+
+    Parameters
+    ----------
+    run_config_path : Path
+        Path to the run's ``run_config.json``.
+    generator_file : Path or str
+        Path to the authored generator ``.py``.  An absolute path is made
+        relative to the study root (``study_dir`` in the config); a relative
+        path is assumed already study-relative and kept as-is.
+        ``load_inner_evaluator`` resolves it as ``study_dir / file_part``.
+    attr : str
+        Name of the callable or ``DataGenerator`` subclass inside that file.
+    output_names : list or None, optional
+        Output column names — required when ``attr`` is a bare callable.
+
+    Returns
+    -------
+    str
+        The ``"file:attr"`` entrypoint that was written.
+    """
+    import json as _json
+    import os as _os
+
+    run_config_path = Path(run_config_path)
+    config = _json.loads(run_config_path.read_text(encoding="utf-8"))
+
+    gen_path = Path(generator_file)
+    if gen_path.is_absolute():
+        study_dir = Path(config["study_dir"]).resolve()
+        file_part = str(gen_path.resolve().relative_to(study_dir))
+    else:
+        file_part = str(gen_path)
+
+    entrypoint = f"{file_part}:{attr}"
+    config["evaluator_entrypoint"] = entrypoint
+    config["evaluator_output_names"] = output_names
+    config["evaluator_lookup"] = None  # entrypoint takes precedence
+
+    tmp = run_config_path.with_suffix(".json.tmp")
+    tmp.write_text(_json.dumps(config, indent=2), encoding="utf-8")
+    _os.replace(tmp, run_config_path)
+    return entrypoint
+
+
 def _ingest_precomputed_pool(
     store_dir: Path,
     study_dir: Path,

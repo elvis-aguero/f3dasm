@@ -1061,3 +1061,48 @@ def test_runtime_imports_all_new_constants():
         assert name in source, (
             f"agent_runtime.py does not reference '{name}'"
         )
+
+
+# ---------------------------------------------------------------------------
+# Single canonical evaluator handle (both backends) — no raw-import bypass
+# ---------------------------------------------------------------------------
+
+def _impl_prompts():
+    from f3dasm._src.agentic.agent_prompts import (
+        IMPLEMENTER_SYSTEM_PROMPT,
+        IMPLEMENTER_SYSTEM_PROMPT_OLLAMA,
+    )
+    return {
+        "IMPLEMENTER_SYSTEM_PROMPT": IMPLEMENTER_SYSTEM_PROMPT,
+        "IMPLEMENTER_SYSTEM_PROMPT_OLLAMA": IMPLEMENTER_SYSTEM_PROMPT_OLLAMA,
+    }
+
+
+def test_implementer_prompts_single_get_evaluator_path():
+    for name, prompt in _impl_prompts().items():
+        assert "get_evaluator()" in prompt, (
+            f"{name} missing the single get_evaluator() handle"
+        )
+
+
+def test_implementer_prompts_have_no_raw_import_bypass():
+    """The bypass the wet run exhibited was a prompted pattern — these must
+    never reappear: raw evaluator import, sys.path hacks, or inner= wrapping
+    that teaches reaching the oracle off the canonical handle."""
+    for name, prompt in _impl_prompts().items():
+        assert "sys.path.insert" not in prompt, f"{name} teaches sys.path hack"
+        assert "get_evaluator(inner=" not in prompt, f"{name} uses inner="
+        assert "from D001" not in prompt and "from D###" not in prompt, (
+            f"{name} teaches a raw delegation-folder import"
+        )
+        assert "from evaluator import" not in prompt, (
+            f"{name} teaches a raw evaluator import"
+        )
+
+
+def test_implementer_prompts_state_metering_scope():
+    for name, prompt in _impl_prompts().items():
+        low = prompt.lower()
+        assert "metered" in low, f"{name} missing metering-scope statement"
+        # surrogates/optimizers are free, not metered
+        assert "surrogate" in low, f"{name} missing free-surrogate guidance"

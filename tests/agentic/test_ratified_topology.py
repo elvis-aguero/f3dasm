@@ -372,3 +372,43 @@ def test_non_entry_node_delegate_omits_hypothesis_check():
     assert "node._ledger is not None" in src, (
         "Delegate must guard h_ids check on node._ledger is not None"
     )
+
+
+# ---------------------------------------------------------------------------
+# 8. DataGenerator as the universal oracle standardizer
+# ---------------------------------------------------------------------------
+
+def test_datagenerator_role_attr():
+    from f3dasm._src.agentic.agents.datagenerator import DataGeneratorAgent
+    assert DataGeneratorAgent.role == "datagenerator"
+
+
+def test_datagenerator_prompt_is_universal_standardizer():
+    from f3dasm._src.agentic.agents.datagenerator import (
+        DATA_GENERATOR_SYSTEM_PROMPT,
+    )
+    p = DATA_GENERATOR_SYSTEM_PROMPT.lower()
+    # Mandate spans any source, not just live physics simulations.
+    for token in ("binary", "solver", "dataset", "plain-language",
+                  "validated on", "standardizer"):
+        assert token in p, f"datagenerator prompt missing {token!r}"
+
+
+def test_datagenerator_prompt_documents_registration_manifest():
+    from f3dasm._src.agentic.agents.datagenerator import (
+        DATA_GENERATOR_SYSTEM_PROMPT,
+    )
+    p = DATA_GENERATOR_SYSTEM_PROMPT
+    assert "registration.json" in p
+    # The manifest fields the runtime hook consumes must be documented.
+    for field in ("generator_file", "attr", "output_names"):
+        assert field in p, f"manifest field {field!r} not documented"
+
+
+def test_datagenerator_no_lookup_exclusion_absolute_claim():
+    """The old 'NOT for lookup-pool studies' absolute is gone — the agent is
+    now a general standardizer (it can also conform a dataset source)."""
+    from f3dasm._src.agentic.agents.datagenerator import DataGeneratorAgent
+    assert "NOT for lookup-pool studies" not in (
+        DataGeneratorAgent.__doc__ or ""
+    )

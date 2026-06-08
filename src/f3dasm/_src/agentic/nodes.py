@@ -734,6 +734,53 @@ class StrategizerNode(AgentNode):
                                 )
                             except Exception:  # noqa: BLE001
                                 pass
+
+                    # Registration handoff: when a datagenerator delegation
+                    # authors an oracle, it drops a registration.json manifest
+                    # in its workspace. Point the canonical entrypoint at it so
+                    # the next get_evaluator() (re-reads config each call)
+                    # resolves it — no manual config edit. Best-effort: never
+                    # fail a delegation over registration.
+                    try:
+                        _tgt = node._spec.nodes.get(target)
+                        if (
+                            _notes is not None
+                            and getattr(_tgt, "role", None) == "datagenerator"
+                        ):
+                            _run_dir = _notes.parent.parent
+                            _ws = (
+                                _run_dir / "debug" / "delegations"
+                                / delegation_id / "generators"
+                            )
+                            _manifest = _ws / "registration.json"
+                            if _manifest.exists():
+                                import json as _json
+                                from .agent_runtime import (
+                                    register_evaluator_entrypoint,
+                                )
+                                _m = _json.loads(_manifest.read_text())
+                                _gf = _m["generator_file"]
+                                _gf_path = Path(_gf)
+                                if not _gf_path.is_absolute():
+                                    # Resolve against the manifest dir, then
+                                    # the run dir; take the first that exists.
+                                    for _base in (_ws, _run_dir):
+                                        _cand = (_base / _gf).resolve()
+                                        if _cand.exists():
+                                            _gf_path = _cand
+                                            break
+                                _ep = register_evaluator_entrypoint(
+                                    _run_dir / "debug" / "run_config.json",
+                                    _gf_path,
+                                    _m["attr"],
+                                    output_names=_m.get("output_names"),
+                                )
+                                with node._notifications_lock:
+                                    node._notifications.append(
+                                        f"[Evaluator registered: {_ep}]"
+                                    )
+                    except Exception:  # noqa: BLE001
+                        pass
                 except Exception:  # noqa: BLE001
                     tb = traceback.format_exc()
                     _usage = getattr(worker, "last_usage", {}) or {}

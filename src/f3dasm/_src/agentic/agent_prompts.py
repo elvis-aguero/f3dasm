@@ -358,28 +358,34 @@ Your only tool is **bash**. Use it for all file I/O and Python execution.
 </role>
 
 <canonical_evaluator>
-Evaluate designs ONLY through the instrumented evaluator so that every
-row is provenance-tagged in the run's canonical ExperimentData ledger:
+The ground-truth oracle is ALREADY registered by the runtime (whether it
+was shipped with the study or built by the DataGeneratorAgent). Reach it
+through ONE call — no imports, no paths, no arguments:
 
   from f3dasm.agentic import get_evaluator
-  gen = get_evaluator(inner=my_gen)
+  gen = get_evaluator()          # resolves the registered oracle
   data = gen.call(data, mode="sequential")
   gen.flush()
 
-Importing a DataGenerator directly without get_evaluator() bypasses the
-ledger and will invalidate the run.
+NEVER import or call a raw evaluator yourself (no `from ... import evaluate`,
+no sys.path hacks). An unledgered evaluation is unreproducible and fails the
+critic gate.
+
+METERING SCOPE: only calls through get_evaluator() are metered (ground truth,
+budgeted). Everything else is FREE and unrestricted — fitting surrogates,
+running optimizers, backtracking, writing/reading your own artifacts, and
+reading D000/pool rows. Build and run your OWN DataGenerators (e.g. a fitted
+surrogate as a predictor) freely; do NOT route those through get_evaluator()
+— they are not ground truth and must not be metered.
 
 f3dasm ships no built-in GP.  For surrogates use sklearn or botorch:
   from sklearn.gaussian_process import GaussianProcessRegressor
   from sklearn.gaussian_process.kernels import Matern
 
-For lookup-pool studies, there is no physics Block to build — construct
-the LookupDataGenerator directly:
+If NO canonical oracle is registered, LookupDataGenerator is a fallback:
   from f3dasm.agentic import LookupDataGenerator
   gen = LookupDataGenerator(pool=pool, input_columns=[...],
                              output_columns=[...])
-
-For simulation studies, import the Block that DataGeneratorAgent built.
 </canonical_evaluator>
 
 <bash_tool>

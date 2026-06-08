@@ -6,15 +6,23 @@ from ..backends.base import Agent
 
 DATA_GENERATOR_SYSTEM_PROMPT = """\
 <role>
-You are the DataGenerator Builder in the agentic-f3dasm research system.
-Your output is a Python file containing a ready-to-use f3dasm DataGenerator
-that other agents can import and embed directly in a pipeline:
+You are the Oracle Standardizer in the agentic-f3dasm research system.
+Your single job: produce a faithful, f3dasm-normalized DataGenerator from
+WHATEVER the problem provides — a compiled binary, an external solver
+(FEM/CFD/Abaqus/Julia), a dataset with a quirky column convention, raw
+physics equations, or just a plain-language description of how to evaluate
+a design. You are the universal adapter: the rest of the system speaks one
+interface (f3dasm DataGenerator), and you conform any source to it.
 
-    from {delegation_id}.my_generator import my_gen  # replace {delegation_id} with actual D### folder
-    result = (sampler >> my_gen).loop(50).call(data)
+The user (often an engineer, not a coder) supplies the source artifact plus
+a plain description of how to call it and what it returns. You turn that into
+a validated DataGenerator. You do NOT run large-scale experiments, choose
+samplers, or optimize — you deliver one validated, ready-to-run generator.
 
-You do NOT run large-scale experiments yourself.  You write, validate on a
-single sample, and deliver the artifact.
+Once you deliver it, the runtime registers it as the canonical evaluator and
+the implementer reaches it through get_evaluator() — so it is automatically
+metered into the ground-truth ledger. You do not wire that up; you just
+produce the artifact and its registration manifest (see OUTPUT CONTRACT).
 
 Your workspace is the debug/delegations/{delegation_id}/ folder assigned for this delegation.
 </role>
@@ -69,10 +77,20 @@ Only delegate if a literature_reviewer is listed in your available targets:
   assert not test_result.to_pandas()["y"].isna().any(), "output is NaN"
 
 ─── OUTPUT CONTRACT ─────────────────────────────────────────────────────────
-  # Save to your D### subfolder so other agents can import it:
-  # {delegation_id}/generators/{name}.py    ← the DataGenerator definition
-  # {delegation_id}/generators/validate_{name}.json  ← single-sample validation result
-  # Document: input columns, output columns, dependencies, call modes supported
+  # Save THREE files to your generators subfolder:
+  # {delegation_id}/generators/{name}.py             ← DataGenerator definition
+  # {delegation_id}/generators/validate_{name}.json  ← validation result
+  # {delegation_id}/generators/registration.json     ← REQUIRED handoff manifest
+  #
+  # registration.json tells the runtime how to register your generator as the
+  # canonical oracle. It MUST contain exactly:
+  #   {
+  #     "generator_file": "{name}.py",       # filename, relative to this folder
+  #     "attr": "{name}",                    # the callable or class name
+  #     "output_names": ["sigma_crit", ...]  # output cols (required for callables)
+  #   }
+  # Without this manifest the implementer cannot reach your generator through
+  # get_evaluator(), so writing it is mandatory.
 </f3dasm_datagenerator_api>
 
 <operating_principles>
@@ -106,6 +124,7 @@ Only delegate if a literature_reviewer is listed in your available targets:
 ### Files touched
 - {delegation_id}/generators/{name}.py     ← DataGenerator definition
 - {delegation_id}/generators/validate_{name}.json  ← validation record
+- {delegation_id}/generators/registration.json     ← handoff manifest
 
 ### Conclusions
 <What the generator produces, validated on one sample.  Include the input
@@ -128,22 +147,17 @@ You may append additional free-form content after these sections.
 
 
 class DataGeneratorAgent(Agent):
-    """Produces validated f3dasm DataGenerator objects ready for pipeline use.
+    """The universal oracle standardizer.
 
-    Writes a Python DataGenerator (subclass or @datagenerator-decorated
-    function) that wraps a live simulation (FEM, CFD, compiled solver),
-    validates it on a single sample, and delivers the artifact to the
-    delegation workspace folder.
+    Conforms ANY evaluation source — a compiled binary, an external solver
+    (FEM/CFD/Abaqus/Julia), a dataset with a quirky convention, raw physics,
+    or a plain-language spec — into one validated f3dasm DataGenerator, and
+    writes a registration manifest so the runtime can register it as the
+    canonical oracle (reached by the implementer through get_evaluator()).
 
-    Other agents import the artifact directly (replace D### with actual ID):
-        from D001.generators.my_gen import my_gen
-        result = (sampler >> my_gen).loop(50).call(data)
-
-    Has an outgoing edge to LiteratureReviewAgent to consult simulation
-    methodology (formulations, BCs, mesh strategy) before implementation.
-
-    NOT for lookup-pool studies — no live simulation means no DataGenerator.
-    NOT for running large-scale experiments — use F3dasmImplementerAgent for that.
+    Validates on exactly one sample; does NOT run large-scale experiments,
+    choose samplers, or optimize. Consults the literature reviewer for
+    methodology on novel physics before implementing.
     """
 
     system_prompt = DATA_GENERATOR_SYSTEM_PROMPT
@@ -151,12 +165,14 @@ class DataGeneratorAgent(Agent):
         "Bash", "Edit", "Read", "Write", "Glob", "Grep", "ReportEvals"
     })
     reset_on_checkpoint = True
+    role = "datagenerator"
     description = (
-        "Produces a validated f3dasm DataGenerator artifact (Python file) "
-        "ready to embed in a pipeline. Use when the study requires a custom "
-        "simulation wrapper (FEM, CFD, compiled solver). Consults the "
-        "literature reviewer for methodology before implementing. "
-        "Output is a .py file other agents can import directly."
+        "The universal oracle standardizer: conforms ANY evaluation source "
+        "— compiled binary, external solver (FEM/CFD), a dataset with an odd "
+        "convention, raw physics, or a plain-language spec — into one "
+        "validated f3dasm DataGenerator, plus a registration manifest so the "
+        "runtime registers it as the canonical oracle. Validates on one "
+        "sample; does not run experiments or optimize."
     )
     report_sections = (
         "### Actions taken",

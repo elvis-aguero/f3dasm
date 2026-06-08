@@ -785,3 +785,42 @@ class TestScienceMonitorStoreDirWiring:
         assert node._science_monitor is not None
         assert node._science_monitor.store_dir is not None
         assert isinstance(node._science_monitor.store_dir, Path)
+
+
+# ===========================================================================
+# Narrow-metering invariant: surrogates/agent-built generators are NOT metered
+# ===========================================================================
+
+
+def test_surrogate_generator_not_metered(tmp_path):
+    """A plain DataGenerator (surrogate stand-in) run WITHOUT get_evaluator
+    writes nothing to the canonical store — only InstrumentedDataGenerator
+    stamps _delegation_id rows. Documents the identity-metering invariant
+    that keeps exploration free."""
+    from f3dasm import datagenerator
+    from f3dasm._src.agentic.instrumented import RunStateSummary
+
+    store_dir = tmp_path / "store"
+    _build_store(store_dir, [(0.1, 1.0, "D001"), (0.2, 2.0, "D001")])
+    before = dict(RunStateSummary.from_store(store_dir).n_per_delegation)
+
+    @datagenerator(output_names=["y"])
+    def surrogate(x0: float) -> float:  # agent's OWN model, not the oracle
+        return x0 * 10.0
+
+    d = Domain()
+    d.add_float("x0", 0.0, 1.0)
+    d.add_output("y", exist_ok=True)
+    own_samples = {
+        i: ExperimentSample(
+            _input_data={"x0": 0.1 * i},
+            _output_data={},
+            job_status=JobStatus.OPEN,
+        )
+        for i in range(5)
+    }
+    own = ExperimentData.from_data(data=own_samples, domain=d)
+    surrogate.call(own, mode="sequential")  # free; not via get_evaluator()
+
+    after = dict(RunStateSummary.from_store(store_dir).n_per_delegation)
+    assert after == before  # canonical store untouched by the surrogate

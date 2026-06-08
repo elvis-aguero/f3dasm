@@ -119,30 +119,37 @@ PREFER f3dasm primitives over raw numpy/scipy equivalents.
   from f3dasm import create_sampler
   sampler = create_sampler("latin", seed=0)
 
-─── CANONICAL EVALUATOR (REQUIRED for all evaluations) ─────────────────
-  # get_evaluator() wraps your DataGenerator so that results are written
-  # automatically to the run's shared ExperimentData store with provenance
-  # stamping and a mechanical eval counter.  You MUST use this path —
-  # it ensures every evaluation is ledgered and counted correctly.
+─── THE CANONICAL ORACLE — get_evaluator() is the ONLY way to evaluate ──
+  # The ground-truth oracle is already registered by the runtime (whether it
+  # was shipped with the study or built by the DataGeneratorAgent). You reach
+  # it through ONE call — no imports, no paths, no arguments:
   from f3dasm.agentic import get_evaluator
 
-  # Import the DataGenerator built by DataGeneratorAgent:
-  import sys; sys.path.insert(0, str(study_dir))
-  from D001.generators.my_gen import my_gen   # replace D001 with actual ID
-
-  gen = get_evaluator(inner=my_gen)
+  gen = get_evaluator()                 # resolves the registered oracle
   data = data.run(data_generator=gen)   # or gen.call(data, mode=...)
   gen.flush()                           # flush buffered rows at end
 
-  # get_evaluator() reads run_config.json from the run hierarchy
-  # automatically.  Use ReportEvals as fallback only when you author
-  # your own DataGenerator subclass without get_evaluator.
+  # get_evaluator() reads run_config.json automatically, stamps provenance,
+  # and meters every call into the ground-truth ledger. NEVER import or call a
+  # raw evaluator yourself (no `from ... import evaluate`, no sys.path hacks):
+  # an unledgered evaluation is unreproducible and fails the critic gate.
+
+─── METERING SCOPE — what is metered vs. what is free ──────────────────
+  # METERED (ground truth): ONLY calls through get_evaluator(). These are the
+  #   real oracle evaluations that count against the eval budget and become
+  #   the ledger your claims must rest on.
+  # FREE (unrestricted): everything else — fitting surrogates, running
+  #   optimizers/acquisition functions, backtracking, writing/reading your
+  #   own artifacts (pickles, CSVs, plots), and reading D000/pool rows. Build
+  #   and run your OWN DataGenerators (e.g. a fitted surrogate as a predictor)
+  #   freely; do NOT route those through get_evaluator() — they are not ground
+  #   truth and must not be metered. Explore however you like.
 
 ─── INITIAL SPACE-FILLING DESIGN (DoE-execution) ───────────────────────
   # You execute the initial design: sample + evaluate.
   data = ExperimentData(domain=d)
   data.sample(sampler="lhs", n_samples=500, seed=0)
-  gen = get_evaluator(inner=my_gen)
+  gen = get_evaluator()
   data = gen.call(data, mode="sequential")   # or mode="parallel"
   gen.flush()
   data.store("{delegation_id}/results")
@@ -172,7 +179,7 @@ PREFER f3dasm primitives over raw numpy/scipy equivalents.
 ─── SURROGATE-GUIDED EXPLOIT LOOP ──────────────────────────────────────
   # PATTERN A — native f3dasm composition (ask/tell optimizers):
   from f3dasm._src.optimization.scipy_implementations import LBFGSB, CG
-  evaluator = get_evaluator(inner=my_gen)
+  evaluator = get_evaluator()
   optimizer = LBFGSB()
   optimizer.arm(data)
   result = (optimizer >> evaluator).loop(50).call(data)
@@ -180,7 +187,7 @@ PREFER f3dasm primitives over raw numpy/scipy equivalents.
 
   # PATTERN B — sklearn GP with Expected Improvement (BO):
   import numpy as np
-  evaluator = get_evaluator(inner=my_gen)
+  evaluator = get_evaluator()
   for _ in range(n_bo_steps):
       x_next = propose_ei(gp, X_train, y_train.min(), bounds)
       new_data = build_experiment_data_for_point(x_next, domain)
@@ -424,7 +431,7 @@ DataGenerator from D002.
 
 ## Stage 3: Execution plan
 - Import my_gen from D002/generators/my_gen.py.
-- Sample 500 LHS points, evaluate via get_evaluator(inner=my_gen).
+- Sample 500 LHS points, evaluate via get_evaluator().
 - Fit sklearn GP, compute 5-fold CV R2.
 - Run 50 BO steps via EI acquisition + get_evaluator.
 - Report best design and all required Numbers.
