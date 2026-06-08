@@ -135,19 +135,46 @@ def test_update_requires_posterior_in_bounds(tmp_path):
         assert r.startswith("ERROR:"), bad
 
 
-def test_update_rejects_noop_same_status_no_new_evidence(tmp_path):
+def test_update_identical_resubmit_is_settled_not_loop(tmp_path):
+    """A LITERALLY identical re-submit (same status, delegation, numbers,
+    posterior) is 'settled — move on', not a retryable ERROR. This is what
+    breaks the no-op loop the wet runs hit."""
     ledger = fresh_ledger(tmp_path)
     h = propose_ok(ledger)
     ledger.update(h, "SUPPORTED", "first", evidence=EVIDENCE,
                   posterior=0.8, triggered_by="D001")
-    # same status, same evidence delegation → no-op
     r = ledger.update(h, "SUPPORTED", "again", evidence=EVIDENCE,
-                      posterior=0.85, triggered_by="D001")
-    assert r.startswith("ERROR:")
-    # same status, NEW evidence delegation → allowed
+                      posterior=0.8, triggered_by="D001")
+    assert "SETTLED" in r and not r.startswith("ERROR:")
+
+
+def test_update_allows_corrected_numbers_on_settled_hypothesis(tmp_path):
+    """Correcting the cited numbers IS a real update (resolves the
+    NUMBERS_MATCH vs no-op deadlock) — must be allowed, not refused."""
+    ledger = fresh_ledger(tmp_path)
+    h = propose_ok(ledger)
+    ledger.update(h, "SUPPORTED", "first", evidence=EVIDENCE,
+                  posterior=0.8, triggered_by="D001")
+    r = ledger.update(
+        h, "SUPPORTED", "corrected number",
+        evidence={"delegation": "D001", "numbers": {"best_y": 1.62}},
+        posterior=0.8, triggered_by="D001")
+    assert "SETTLED" not in r and not r.startswith("ERROR:")
+
+
+def test_update_allows_posterior_move_and_new_delegation(tmp_path):
+    ledger = fresh_ledger(tmp_path)
+    h = propose_ok(ledger)
+    ledger.update(h, "SUPPORTED", "first", evidence=EVIDENCE,
+                  posterior=0.8, triggered_by="D001")
+    # belief moved with same evidence → real update, allowed
+    r = ledger.update(h, "SUPPORTED", "more confident", evidence=EVIDENCE,
+                      posterior=0.9, triggered_by="D001")
+    assert "SETTLED" not in r and not r.startswith("ERROR:")
+    # new delegation → allowed
     r = ledger.update(h, "SUPPORTED", "more evidence",
                       evidence={"delegation": "D002"},
-                      posterior=0.9, triggered_by="D002")
+                      posterior=0.92, triggered_by="D002")
     assert not r.startswith("ERROR:")
 
 

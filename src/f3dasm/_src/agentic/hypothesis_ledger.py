@@ -266,14 +266,28 @@ class HypothesisLedger:
                 if e.get("evidence")
             }
             new_d = (evidence or {}).get("delegation")
-            if status == current and (
-                new_d is None or new_d in cited
-            ):
+            # A no-op is when LITERALLY nothing changes — same status, no new
+            # delegation, AND the same numbers/posterior as the latest entry.
+            # Correcting the cited numbers or moving the posterior IS a real
+            # update (it is exactly what a NUMBERS_MATCH nudge asks for), so it
+            # must be allowed — otherwise the agent is trapped between "correct
+            # the evidence" and "you may not update", and loops.
+            last = log[-1] if log else {}
+            last_numbers = (last.get("evidence") or {}).get("numbers") or {}
+            new_numbers = (evidence or {}).get("numbers") or {}
+            nothing_changed = (
+                status == current
+                and (new_d is None or new_d in cited)
+                and new_numbers == last_numbers
+                and post_f == last.get("posterior")
+            )
+            if nothing_changed:
                 return (
-                    f"ERROR: no-op update — {h_id} is already "
-                    f"{current} and the evidence delegation is not "
-                    "new. Update only when the status changes or "
-                    "new evidence arrives."
+                    f"{h_id} is already {current} with this exact evidence — "
+                    "it is SETTLED. Do not re-submit it. Move on to your next "
+                    "step: run a new test, open a new hypothesis, or call "
+                    "Done(). Re-update only on a status change, a new "
+                    "delegation, or corrected numbers/posterior."
                 )
             if (
                 status == "OPEN"
