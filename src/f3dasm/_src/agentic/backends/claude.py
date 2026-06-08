@@ -282,7 +282,11 @@ class ClaudeAdapter:
         """Synchronous wrapper around :meth:`ainvoke`.
 
         Acquires _lock to serialize concurrent callers (e.g. parallel
-        delegations to the same shared worker adapter).
+        delegations to the same shared worker adapter). Transient API/network
+        failures are retried with exponential backoff (see retry_on_transient).
         """
+        from .base import retry_on_transient
         with self._lock:
-            return _run_async_safe(self.ainvoke(messages))
+            return retry_on_transient(
+                lambda: _run_async_safe(self.ainvoke(messages))
+            )

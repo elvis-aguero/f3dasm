@@ -429,10 +429,12 @@ class OllamaAdapter:
         """Run one full agent turn; return final assistant text.
 
         Acquires _lock to serialize concurrent callers (e.g. parallel
-        delegations to the same shared worker adapter).
+        delegations to the same shared worker adapter). Transient API/network
+        failures are retried with exponential backoff (see retry_on_transient).
         """
+        from .base import retry_on_transient
         with self._lock:
-            return self._invoke_once(messages)
+            return retry_on_transient(lambda: self._invoke_once(messages))
 
     def _invoke_once(self, messages: list[dict]) -> str:
         """Core invoke logic — build agent if needed, run, return text."""

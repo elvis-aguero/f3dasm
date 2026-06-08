@@ -271,3 +271,65 @@ class Graph:
                 lines.append(f"  {name}{tag}  (leaf)")
         return "\n".join(lines)
 
+
+# ---------------------------------------------------------------------------
+# Transient-error retry (shared by all backend adapters)
+# ---------------------------------------------------------------------------
+
+import os
+import random
+import time
+
+# Substrings (case-insensitive) marking a retryable transient failure. The
+# Claude path runs through claude-agent-sdk (not the anthropic SDK) and the
+# Ollama path through langchain/httpx, so there is no shared exception class to
+# catch — we classify heuristically on the message plus a few stdlib types.
+_TRANSIENT_SUBSTRINGS = (
+    "overloaded", "rate limit", "ratelimit", "429", "502", "503",
+    "timeout", "timed out", "temporarily unavailable", "service unavailable",
+    "connection error", "connection reset", "connection aborted",
+    "remote disconnected", "econnreset",
+)
+_TRANSIENT_TYPES = (TimeoutError, ConnectionError)
+
+
+def is_transient_error(exc: BaseException) -> bool:
+    """True if *exc* looks like a retryable transient API/network failure.
+
+    Conservative: anything not recognised as transient (auth, 400, tool/logic
+    errors) returns False so we never silently retry a real bug.
+    """
+    if isinstance(exc, _TRANSIENT_TYPES):
+        return True
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(s in text for s in _TRANSIENT_SUBSTRINGS)
+
+
+def retry_on_transient(
+    fn,
+    *,
+    max_attempts: int | None = None,
+    base_delay: float | None = None,
+    max_delay: float = 60.0,
+):
+    """Call ``fn()`` retrying transient failures with exponential backoff + jitter.
+
+    Non-transient exceptions propagate immediately. Defaults come from
+    ``F3DASM_LLM_RETRY_MAX`` (default 5) and ``F3DASM_LLM_RETRY_BASE`` (2.0s).
+    """
+    if max_attempts is None:
+        max_attempts = int(os.environ.get("F3DASM_LLM_RETRY_MAX", "5"))
+    if base_delay is None:
+        base_delay = float(os.environ.get("F3DASM_LLM_RETRY_BASE", "2.0"))
+    attempt = 0
+    while True:
+        try:
+            return fn()
+        except BaseException as exc:  # noqa: BLE001 — re-raised unless transient
+            attempt += 1
+            if attempt >= max_attempts or not is_transient_error(exc):
+                raise
+            delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
+            delay += random.uniform(0, delay * 0.5)
+            time.sleep(delay)
+

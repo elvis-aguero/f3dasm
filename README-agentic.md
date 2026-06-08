@@ -80,7 +80,8 @@ literature section).
 
 For the **Claude** backend you need the `claude` CLI on `PATH` with an active
 session (run `claude` once interactively to authenticate). For **Ollama** you
-need a local Ollama server.
+need a running Ollama server — see [Backends](#backends) for the serve-and-pull
+steps and how model selection works.
 
 ## Run a study
 
@@ -431,6 +432,45 @@ model: qwen2.5:7b      # any tool-calling Ollama model
 
 Per-node override: set `backend = "ollama"` on one `Agent` subclass to mix
 backends within a graph.
+
+### Serving Ollama
+
+You run **one** Ollama server; it hosts **every** model you have pulled. The
+server (a `base_url`) and the model (a per-request name) are independent — the
+run chooses the model, the server is never "locked" to one.
+
+```bash
+# 1. Start the server (leave it running; default http://localhost:11434).
+ollama serve
+
+# 2. Pull each model the run will name — once, ahead of time.
+ollama pull qwen2.5:7b
+ollama pull llama3.1:70b
+ollama list                 # confirm what's available
+```
+
+**Model selection is the run's job, not the server's.** The runtime resolves
+`agent.model or run.model` and sends it as the per-request model name
+(`agent_runtime.py` → `OllamaAdapter` → `ChatOpenAI(model=…)`). So a single
+server at `localhost:11434` can simultaneously back a `qwen2.5:7b` strategizer
+and a `llama3.1:70b` implementer in the same graph — no second server, no
+restart. The **only** prerequisite is that the named model was pulled first; a
+request for an un-pulled model errors.
+
+> **Common misconception:** "one server = one model." Wrong. `ollama serve`
+> exposes all pulled models and loads/unloads weights on demand per request.
+> You never restart the server to switch models — you just name a different one.
+
+**Pointing at a non-default server.** Set `OLLAMA_BASE_URL` (defaults to
+`http://localhost:11434/v1`) to use a remote GPU box or a non-standard port:
+
+```bash
+export OLLAMA_BASE_URL=http://gpu-box.local:11434/v1
+```
+
+For **containerized** runs the server stays on the host (heavy weights + GPU
+live outside the container); the container reaches it automatically at
+`http://host.docker.internal:11434/v1`. See [Containerized runs](#containerized-runs).
 
 ---
 
