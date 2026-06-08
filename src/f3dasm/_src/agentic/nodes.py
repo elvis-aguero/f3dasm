@@ -524,6 +524,20 @@ class StrategizerNode(AgentNode):
             if preamble:
                 task_msg = preamble + "\n\n" + task_msg
 
+            # Prepend time-budget banner so every worker starts
+            # time-aware.  GetStatus handles mid-run updates.
+            _b = node._budget_seconds
+            _rs = node._run_start
+            if _b is not None and _rs is not None:
+                _el = time.time() - _rs
+                _pct = (_el / _b) * 100
+                _banner = (
+                    f"[Time budget: {_el:.0f}s / {_b:.0f}s used"
+                    f" ({_pct:.0f}%). Work efficiently and"
+                    f" return a report promptly.]\n\n"
+                )
+                task_msg = _banner + task_msg
+
             # Inject PROBLEM_STATEMENT for agents that request it
             _target_agent = node._spec.nodes.get(target) if node._spec else None
             if getattr(_target_agent, "inject_problem_statement", False) and node._study_dir:
@@ -1837,33 +1851,31 @@ class StrategizerNode(AgentNode):
                     if isinstance(_m, AIMessage):
                         _prior_text = str(_m.content)
                         break
-                _budget_report = (
-                    "## ⚠ RUN BACKSTOP\n\n"
-                    "Run aborted by the cost backstop at "
-                    f"{int(RUN_BACKSTOP_MULTIPLE)}x the time budget "
-                    f"({_elapsed_now:.0f}s elapsed / {budget:.0f}s "
-                    "budget). The budget is advisory; this guard only "
-                    "bounds runaway cost."
-                )
-                if _abandoned:
-                    _budget_report += (
-                        f"\nAbandoned delegations: {_abandoned}."
-                    )
-                _budget_report += (
-                    "\nTreat all conclusions below as unaudited.\n\n"
-                    "---\n\n" + (_prior_text or "(no prior report)")
-                )
+                # Log the backstop event to diagnostics.jsonl so it
+                # is traceable, but do NOT stamp the banner into
+                # solution.md — the deliverable carries the conclusion.
+                self._record_science_drift({
+                    "error_type": "RUN_BACKSTOP",
+                    "elapsed": _elapsed_now,
+                    "budget": budget,
+                    "multiple": RUN_BACKSTOP_MULTIPLE,
+                    "abandoned": _abandoned,
+                })
                 return Command(
                     goto=END,
                     update={
                         "messages": [],
                         "done": True,
-                        "last_report": _budget_report,
+                        "last_report": (
+                            _prior_text or "(no prior report)"
+                        ),
                         "total_delegations": (
-                            state["total_delegations"] + _total_new_budget
+                            state["total_delegations"]
+                            + _total_new_budget
                         ),
                         "evals_used": (
-                            state.get("evals_used", 0) + _evals_new_budget
+                            state.get("evals_used", 0)
+                            + _evals_new_budget
                         ),
                         "token_totals": dict(self._token_totals),
                         "error_counts": dict(self._error_counts),

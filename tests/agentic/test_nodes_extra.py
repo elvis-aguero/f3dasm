@@ -406,3 +406,140 @@ def test_getstatus_unknown_id_returns_error():
     node(_make_state())
 
     assert results and "ERROR" in results[0]
+
+
+# ---------------------------------------------------------------------------
+# Change 2a: time-budget banner injected into every worker task message
+# ---------------------------------------------------------------------------
+
+
+def test_delegate_task_msg_includes_budget_banner():
+    """When _budget_seconds and _run_start are set, the task message
+    passed to the worker begins with a time-budget banner.
+    """
+    import time as _time
+
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    captured_msgs: list[list[dict]] = []
+
+    class CapturingWorkerAdapter:
+        """Captures the messages list passed to invoke()."""
+        closure_tools: dict = {}
+        last_usage: dict = {}
+
+        def copy(self):
+            a = CapturingWorkerAdapter()
+            a.closure_tools = dict(self.closure_tools)
+            return a
+
+        def invoke(self, messages):
+            captured_msgs.append(list(messages))
+            # Minimal valid report.
+            return (
+                "## Report\n\n"
+                "### Actions taken\n- did\n\n"
+                "### Files touched\n- none\n\n"
+                "### Conclusions\nok\n\n"
+                "### Numbers\nbest: 1\n"
+            )
+
+    class DelegatingAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["Delegate"](
+                target="implementer",
+                intent="run something",
+                expected_report="a result",
+                hypothesis_ids=None,
+                wait=True,
+            )
+            self.closure_tools["Done"](summary="done")
+            self.closure_tools["Done"](summary="done")
+            return "done"
+
+    worker_adapter = CapturingWorkerAdapter()
+    main_adapter = DelegatingAdapter()
+    spec = _minimal_spec()
+
+    node = StrategizerNode(
+        adapter=main_adapter,
+        name="strategizer",
+        outgoing=["implementer"],
+        spec=spec,
+        worker_adapters={"implementer": worker_adapter},
+    )
+    # Pass budget via state so __call__ sets _budget_seconds/_run_start.
+    _start = _time.time() - 60.0  # 60s elapsed
+    node(_make_state(
+        budget_seconds=600.0,
+        start_time=_start,
+    ))
+
+    assert captured_msgs, "Worker was never invoked"
+    first_msg_content = captured_msgs[0][0]["content"]
+    assert "Time budget" in first_msg_content, (
+        f"Expected 'Time budget' in first worker message; "
+        f"got: {first_msg_content[:200]!r}"
+    )
+
+
+def test_delegate_no_budget_banner_when_budget_unset():
+    """When _budget_seconds is None, no time-budget banner is prepended."""
+    import time as _time
+
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    captured_msgs: list[list[dict]] = []
+
+    class CapturingWorkerAdapter:
+        closure_tools: dict = {}
+        last_usage: dict = {}
+
+        def copy(self):
+            a = CapturingWorkerAdapter()
+            a.closure_tools = dict(self.closure_tools)
+            return a
+
+        def invoke(self, messages):
+            captured_msgs.append(list(messages))
+            return (
+                "## Report\n\n"
+                "### Actions taken\n- did\n\n"
+                "### Files touched\n- none\n\n"
+                "### Conclusions\nok\n\n"
+                "### Numbers\nbest: 1\n"
+            )
+
+    class DelegatingAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["Delegate"](
+                target="implementer",
+                intent="run something",
+                expected_report="a result",
+                hypothesis_ids=None,
+                wait=True,
+            )
+            self.closure_tools["Done"](summary="done")
+            self.closure_tools["Done"](summary="done")
+            return "done"
+
+    worker_adapter = CapturingWorkerAdapter()
+    main_adapter = DelegatingAdapter()
+    spec = _minimal_spec()
+
+    node = StrategizerNode(
+        adapter=main_adapter,
+        name="strategizer",
+        outgoing=["implementer"],
+        spec=spec,
+        worker_adapters={"implementer": worker_adapter},
+    )
+    # No budget in state — banner must be absent.
+    node(_make_state())
+
+    assert captured_msgs, "Worker was never invoked"
+    first_msg_content = captured_msgs[0][0]["content"]
+    assert "Time budget" not in first_msg_content, (
+        f"Unexpected 'Time budget' in worker message with no budget: "
+        f"{first_msg_content[:200]!r}"
+    )

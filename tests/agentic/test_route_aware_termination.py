@@ -188,7 +188,8 @@ def test_accepted_done_no_banner():
 
 
 def test_run_backstop_aborts_past_multiple():
-    """Past RUN_BACKSTOP_MULTIPLE x budget, invoke is skipped; RUN BACKSTOP."""
+    """Past RUN_BACKSTOP_MULTIPLE x budget: invoke skipped, run terminates,
+    last_report carries the conclusion (NOT the RUN BACKSTOP banner)."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
     study_dir = Path(tempfile.mkdtemp(prefix="f3dasm_rat_"))
@@ -212,7 +213,10 @@ def test_run_backstop_aborts_past_multiple():
     )
     assert cmd.goto == END
     assert cmd.update.get("done") is True
-    assert "RUN BACKSTOP" in cmd.update.get("last_report", "")
+    # Deliverable must NOT contain the cost-guard banner.
+    assert "RUN BACKSTOP" not in cmd.update.get("last_report", ""), (
+        "solution.md must carry the conclusion, not the backstop banner"
+    )
 
 
 def test_soft_budget_does_not_terminate_below_backstop():

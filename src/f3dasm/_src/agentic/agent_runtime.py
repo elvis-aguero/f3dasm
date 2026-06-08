@@ -111,6 +111,107 @@ def _init_canonical_store(
     return config
 
 
+def _ingest_precomputed_pool(
+    store_dir: Path,
+    study_dir: Path,
+    lookup_cfg: dict,
+) -> int:
+    """Ingest a precomputed pool into the canonical store as D000 rows.
+
+    Loads the pool ExperimentData from
+    ``study_dir / lookup_cfg["pool"]`` and writes its rows into
+    *store_dir* with provenance stamped as
+    ``_delegation_id='D000'``, ``source='precomputed_pool'``.
+
+    D000 rows are ground-truth data — they are *never* counted as
+    evaluations.  ``_resolve_delegation_evals`` is called only for
+    real delegation IDs (D001+) so D000 will never be counted.
+
+    Parameters
+    ----------
+    store_dir : Path
+        The run-level canonical store directory
+        (``run_dir/experiment_data``).
+    study_dir : Path
+        Study root; pool path is resolved relative to this.
+    lookup_cfg : dict
+        The ``evaluator.lookup`` block from config.yaml.  Must have
+        a ``"pool"`` key.
+
+    Returns
+    -------
+    int
+        Number of rows ingested.
+    """
+    from datetime import datetime, timezone
+
+    from filelock import FileLock
+
+    from ..design.domain import Domain
+    from ..errors import EmptyFileError, ReachMaximumTriesError
+    from ..experimentdata import ExperimentData
+    from ..experimentsample import ExperimentSample, JobStatus
+
+    pool_project = study_dir / lookup_cfg["pool"]
+    pool = ExperimentData.from_file(project_dir=pool_project)
+
+    ts = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
+    n_rows = len(pool)
+
+    df_in, df_out = pool.to_pandas()
+
+    # Stamp provenance onto every output row.
+    batch_samples: dict = {}
+    for i in range(n_rows):
+        row_in = (
+            {} if df_in is None
+            else {k: df_in.iloc[i][k] for k in df_in.columns}
+        )
+        row_out = (
+            {} if df_out is None
+            else {k: df_out.iloc[i][k] for k in df_out.columns}
+        )
+        row_out["_delegation_id"] = "D000"
+        row_out["source"] = "precomputed_pool"
+        row_out["_ts"] = ts
+        batch_samples[i] = ExperimentSample(
+            _input_data=row_in,
+            _output_data=row_out,
+            job_status=JobStatus.FINISHED,
+        )
+
+    # Build batch domain: copy pool domain + provenance outputs.
+    batch_domain = Domain()
+    all_out_keys: set[str] = set()
+    for s in batch_samples.values():
+        all_out_keys.update(s._output_data.keys())
+    for key in sorted(all_out_keys):
+        batch_domain.add_output(key, exist_ok=True)
+
+    batch = ExperimentData.from_data(
+        data=batch_samples, domain=batch_domain
+    )
+
+    lock_path = store_dir / "experiment_data" / ".lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with FileLock(str(lock_path)):
+        try:
+            canon = ExperimentData.from_file(project_dir=store_dir)
+        except (
+            FileNotFoundError,
+            EmptyFileError,
+            ReachMaximumTriesError,
+        ):
+            canon = ExperimentData(domain=batch_domain)
+        for col in ("_delegation_id", "source", "_ts"):
+            canon._domain.add_output(col, exist_ok=True)
+        merged = canon + batch
+        merged.store(project_dir=store_dir)
+
+    return n_rows
+
+
 def _parse_budget_str(value) -> float | None:
     """Parse budget: float seconds passthrough, or 'HH:MM:SS' string."""
     if value is None:
@@ -226,6 +327,25 @@ class AgenticRun:
             run_dir, self.study_dir, evaluator_config=_eval_cfg
         )
 
+        # Ingest precomputed pool as D000 ground-truth rows when the
+        # study declares an evaluator.lookup block.  D000 rows are
+        # never counted as evaluations (_resolve_delegation_evals only
+        # runs per real delegation id D001+).
+        _lookup_cfg = (_eval_cfg or {}).get("lookup")
+        if _lookup_cfg:
+            _store_dir = Path(canonical_cfg["store_dir"])
+            try:
+                _n_ingested = _ingest_precomputed_pool(
+                    _store_dir, self.study_dir, _lookup_cfg
+                )
+                log_ingested = _n_ingested  # captured for log below
+            except Exception as _exc:  # noqa: BLE001
+                log_ingested = None
+                _exc_msg = str(_exc)
+        else:
+            log_ingested = None
+            _exc_msg = None
+
         # Set up run.log
         log = logging.getLogger(f"f3dasm.agentic.{ts}")
         log.setLevel(logging.INFO)
@@ -238,6 +358,13 @@ class AgenticRun:
         )
         log.addHandler(handler)
         log.info(f"Run starting: model={self._model}, study={self.study_dir}")
+        if log_ingested is not None:
+            log.info(
+                f"D000: ingested {log_ingested} precomputed pool rows"
+                f" from {_lookup_cfg.get('pool', '?')}"
+            )
+        elif _exc_msg is not None:
+            log.warning(f"D000 pool ingest failed: {_exc_msg}")
 
         start_time = time.time()
 

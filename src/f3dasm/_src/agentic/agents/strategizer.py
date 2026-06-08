@@ -100,6 +100,13 @@ Canonical evaluation ledger (read-only):
 The canonical ExperimentData ledger (via RecallStore/QueryStore) is the
 GROUND TRUTH for numerical evidence — prefer it over numbers quoted in
 prose Reports.
+
+For lookup / precomputed studies: the runtime ingests the full pool
+at run-init as D000 rows (source='precomputed_pool').  D000 is the
+complete ground-truth dataset.  Instruct the Implementer to QUERY D000
+(nearest-neighbour / filtering via QueryStore or ExperimentData) rather
+than constructing a LookupDataGenerator off the raw pool CSV.
+LookupDataGenerator is only a fallback when D000 does not exist.
 </role>
 
 <f3dasm_architecture>
