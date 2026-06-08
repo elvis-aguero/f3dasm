@@ -89,6 +89,42 @@ def test_evidence_numbers_match(tmp_path):
     assert not mon._numbers_match({"x": 9.99}, REPORT)
 
 
+def test_evidence_self_heals_after_correct_citation(tmp_path):
+    """A superseded early bad citation must NOT nag forever: once a later
+    entry cites a real delegation, EVIDENCE_DELEGATION_EXISTS clears."""
+    ledger, dlog, mon, _ = make_world(tmp_path)
+    h_id = propose(ledger)
+    # First (bad) citation: D999 does not exist → would fire.
+    ledger.update(
+        h_id, "INCONCLUSIVE", "premature",
+        evidence={"delegation": "D999", "numbers": {}},
+        posterior=0.5, triggered_by=None)
+    assert "EVIDENCE_DELEGATION_EXISTS" in {v.rule for v in mon.evaluate()}
+    # Later correct citation: D001 exists. Latest entry is valid → clears.
+    record_done(dlog, "D001", [h_id], REPORT, falsify=True)
+    ledger.update(
+        h_id, "FALSIFIED", "corrected",
+        evidence={"delegation": "D001", "numbers": {"best_y": 1.47}},
+        posterior=0.05, triggered_by=None)
+    assert "EVIDENCE_DELEGATION_EXISTS" not in {v.rule for v in mon.evaluate()}
+
+
+def test_d000_is_valid_evidence_anchor(tmp_path):
+    """D000 (the precomputed ground-truth pool) is a legitimate evidence
+    anchor in lookup studies — citing it must not fire DELEGATION_EXISTS,
+    and its numbers (from the store, not a delegation report) are not
+    checked against a delegation deliverable."""
+    ledger, dlog, mon, _ = make_world(tmp_path)
+    h_id = propose(ledger)
+    ledger.update(
+        h_id, "FALSIFIED", "falsified by exhaustive pool search",
+        evidence={"delegation": "D000", "numbers": {"best_y": 0.07}},
+        posterior=0.02, triggered_by=None)
+    rules = {v.rule for v in mon.evaluate()}
+    assert "EVIDENCE_DELEGATION_EXISTS" not in rules
+    assert "EVIDENCE_NUMBERS_MATCH" not in rules
+
+
 # ---------------------------------------------------------------------------
 # Test 3: string fallback — value in prose without ### Numbers section
 # ---------------------------------------------------------------------------

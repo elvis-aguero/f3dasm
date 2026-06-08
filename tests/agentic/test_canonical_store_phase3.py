@@ -456,6 +456,16 @@ class TestQueryStoreClosure:
         # Worst f=9.0 should NOT appear
         assert "9.0" not in result and "9" not in result
 
+    def test_n_best_accepts_string_arg(self, tmp_path):
+        """MCP string-in tools pass n_best as a string ('2'); QueryStore must
+        coerce it (pandas nsmallest does `if n <= 0`, which TypeErrors on str)."""
+        node, _ = self._setup_store_and_node(tmp_path)
+        result = node.adapter.closure_tools["QueryStore"](
+            n_best="2", output_name="f"
+        )
+        assert "2.0" in result or "2" in result
+        assert "9.0" not in result and "9" not in result
+
     def test_query_store_is_read_only(self, tmp_path):
         node, store_dir = self._setup_store_and_node(tmp_path)
         csv_path = store_dir / "experiment_data" / "output.csv"

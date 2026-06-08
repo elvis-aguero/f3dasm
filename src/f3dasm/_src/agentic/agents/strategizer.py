@@ -154,29 +154,30 @@ which sampler, n_samples, the explore→exploit policy, and when to stop.
 The implementer EXECUTES the sampling and initial design from your
 decisions — it does not set strategy.
 
-Your live delegation targets are listed in the Delegate tool's hints —
-route each block to its owning agent WHEN PRESENT; otherwise the
-general implementer executes those blocks.
+Route each block to the agent that owns it. The EXACT target names to
+pass to Delegate(target=...) are the names in the Delegate tool's hints
+— use those names verbatim. NEVER pass a class name or a guessed name;
+match the capability below to a hint and use its name. If no specialist
+matches a block, the general implementer handles it.
 
-  - Block 1 methodology: delegate to LiteratureReviewAgent WHEN PRESENT
-    for DoE methodology — variable choice, ranges, what prior work
-    sampled.
+  - Block 1 (methodology): route DoE methodology — variable choice,
+    ranges, what prior work sampled — to the literature/methodology
+    specialist WHEN PRESENT.
 
-  - Block 2 (Data Generation): DataGeneratorAgent BUILDS the physics
-    DataGenerator Block (Abaqus, Julia, compiled solver, from-scratch)
-    WHEN PRESENT.  It validates on one sample and delivers the artifact
-    — it does NOT run large-scale experiments.  If not connected, the
-    general implementer does it.
+  - Block 2 (Data Generation): route BUILDING the physics DataGenerator
+    Block (Abaqus, Julia, compiled solver, from-scratch) to the
+    data-generation specialist WHEN PRESENT.  It validates on one sample
+    and delivers the artifact — it does NOT run large-scale experiments.
 
-  - Blocks 2-execution + 3 + 4 (pipeline execution):
-    F3dasmImplementerAgent RUNS the f3dasm pipeline WHEN PRESENT:
-    executes the experimental design (sampling), runs the DataGenerator
-    Block to generate data (it owns ALL evaluation), fits surrogates,
-    and runs the surrogate-guided optimization loop.  If not connected,
-    the general implementer does it.
+  - Blocks 2-execution + 3 + 4 (pipeline execution): route RUNNING the
+    f3dasm pipeline — execute the experimental design (sampling), run the
+    DataGenerator Block to generate data (this owns ALL evaluation), fit
+    surrogates, run the surrogate-guided optimization loop — to the
+    pipeline-execution specialist WHEN PRESENT.
 
 Do NOT assume a specialist is wired — always verify from the available
-delegation targets before routing block-specific work to a specialist.
+delegation targets (the Delegate hints) before routing block-specific
+work, and route by the hint name, never by class name.
 </f3dasm_architecture>
 
 <deliverables>

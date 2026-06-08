@@ -255,14 +255,22 @@ def test_strategizer_no_two_agent_framing():
     assert "two-agent research system" not in STRATEGIZER_SYSTEM_PROMPT
 
 
-def test_strategizer_names_data_generator_agent_builds():
+def test_strategizer_describes_data_generation_build():
     from f3dasm._src.agentic.agents.strategizer import STRATEGIZER_SYSTEM_PROMPT
-    assert "DataGeneratorAgent" in STRATEGIZER_SYSTEM_PROMPT
+    # Build capability described by role, not by a hardcoded class name.
+    assert "DataGenerator Block" in STRATEGIZER_SYSTEM_PROMPT
+    assert "data-generation specialist" in STRATEGIZER_SYSTEM_PROMPT
 
 
-def test_strategizer_names_f3dasm_implementer_agent_runs():
+def test_strategizer_routes_by_hint_not_class_name():
+    """Forward-compatible routing: the strategizer must route by the Delegate
+    hint NAMES, never by hardcoded agent class names. Hardcoding a class name
+    broke when the class was renamed — the agent passed
+    'F3dasmImplementerAgent' as a target and every delegation was rejected."""
     from f3dasm._src.agentic.agents.strategizer import STRATEGIZER_SYSTEM_PROMPT
-    assert "F3dasmImplementerAgent" in STRATEGIZER_SYSTEM_PROMPT
+    assert "F3dasmImplementerAgent" not in STRATEGIZER_SYSTEM_PROMPT
+    assert "DataGeneratorAgent" not in STRATEGIZER_SYSTEM_PROMPT
+    assert "verbatim" in STRATEGIZER_SYSTEM_PROMPT
 
 
 def test_strategizer_no_optimization_agent_reference():
@@ -277,9 +285,9 @@ def test_strategizer_delegate_tool_hints_line():
 
 def test_strategizer_build_run_split_described():
     from f3dasm._src.agentic.agents.strategizer import STRATEGIZER_SYSTEM_PROMPT
-    # Must state DataGeneratorAgent BUILDS and F3dasmImplementerAgent RUNS
-    assert "BUILDS" in STRATEGIZER_SYSTEM_PROMPT
-    assert "RUNS" in STRATEGIZER_SYSTEM_PROMPT
+    # Build/run split described by capability (BUILDING vs RUNNING), no names.
+    assert "BUILD" in STRATEGIZER_SYSTEM_PROMPT
+    assert "RUN" in STRATEGIZER_SYSTEM_PROMPT
 
 
 def test_strategizer_implementer_owns_all_evaluation():

@@ -1277,7 +1277,18 @@ class StrategizerNode(AgentNode):
             if filtered.empty:
                 return "No rows match the given filters."
 
-            # n_best: return the n rows with smallest output_name value
+            # n_best: return the n rows with smallest output_name value.
+            # MCP string-in tools may pass n_best as a string ("5") — coerce
+            # to int (pandas nsmallest does `if n <= 0`, which TypeErrors on
+            # a str). Same string-arg-decoding discipline as delegation_ids.
+            if n_best is not None:
+                try:
+                    n_best = int(n_best)
+                except (TypeError, ValueError):
+                    return (
+                        f"ERROR: n_best must be an integer, got "
+                        f"{n_best!r}."
+                    )
             if n_best is not None and output_name is not None:
                 if output_name not in filtered.columns:
                     return (

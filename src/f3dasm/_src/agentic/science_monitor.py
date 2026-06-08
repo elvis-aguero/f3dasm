@@ -98,28 +98,37 @@ class ScienceMonitor:
         out = []
         log = h.get("status_log", [])
         current = log[-1]["status"] if log else "OPEN"
-        # walk entries with evidence
-        for entry in log:
+        # Judge ONLY the latest evidence-bearing entry — a superseded early
+        # citation must not nag forever (self-healing, matching
+        # _check_unanchored). "D000" is the precomputed ground-truth pool: a
+        # legitimate evidence anchor in lookup studies, not a delegation, so
+        # its numbers come from the canonical store (authoritative), not a
+        # delegation report.
+        latest_ev = None
+        for entry in reversed(log):
             ev = entry.get("evidence") or {}
-            d_id = ev.get("delegation")
-            if d_id is None:
-                continue
-            if d_id not in by_id:
+            if ev.get("delegation") is not None:
+                latest_ev = ev
+                break
+        if latest_ev is not None:
+            d_id = latest_ev.get("delegation")
+            if d_id != "D000" and d_id not in by_id:
                 out.append(Violation(
                     "EVIDENCE_DELEGATION_EXISTS", "error", h_id,
                     f"{h_id} cites evidence from {d_id!r}, which is "
                     "not a completed delegation. Cite a real D-id "
-                    "from the delegation log or correct the update."))
-                continue
-            numbers = ev.get("numbers") or {}
-            if numbers and not self._numbers_match(
-                    numbers, by_id[d_id].get("deliverable", "")):
-                out.append(Violation(
-                    "EVIDENCE_NUMBERS_MATCH", "error", h_id,
-                    f"{h_id} cites numbers {numbers} from {d_id}, "
-                    "but they do not appear in that delegation's "
-                    "report. Re-check the report and correct the "
-                    "evidence."))
+                    "from the delegation log (or D000 for the "
+                    "ground-truth pool), or correct the update."))
+            elif d_id != "D000":
+                numbers = latest_ev.get("numbers") or {}
+                if numbers and not self._numbers_match(
+                        numbers, by_id[d_id].get("deliverable", "")):
+                    out.append(Violation(
+                        "EVIDENCE_NUMBERS_MATCH", "error", h_id,
+                        f"{h_id} cites numbers {numbers} from {d_id}, "
+                        "but they do not appear in that delegation's "
+                        "report. Re-check the report and correct the "
+                        "evidence."))
         if current == "SUPPORTED":
             attacked = any(
                 r.get("is_falsification_attempt")
