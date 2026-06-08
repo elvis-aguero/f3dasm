@@ -395,21 +395,30 @@ class AgenticRun:
         self._run_dir = run_dir
 
         # Canonical store: experiment_data/ + run_config.json
-        _eval_cfg = _load_study_config(self.study_dir).get("evaluator")
+        _full_cfg = _load_study_config(self.study_dir)
+        _eval_cfg = _full_cfg.get("evaluator")
         canonical_cfg = _init_canonical_store(
             run_dir, self.study_dir, evaluator_config=_eval_cfg
         )
 
-        # Ingest precomputed pool as D000 ground-truth rows when the
-        # study declares an evaluator.lookup block.  D000 rows are
-        # never counted as evaluations (_resolve_delegation_evals only
-        # runs per real delegation id D001+).
+        # Ingest a precomputed pool as D000 ground-truth rows. Two sources,
+        # one ingestion path — D000 rows are never counted as evaluations
+        # (_resolve_delegation_evals runs only for real delegations D001+):
+        #   evaluator.lookup.pool  → pool IS the oracle (queried via
+        #                            LookupDataGenerator) AND training data.
+        #   training_data          → pool is ONLY training data; there is NO
+        #                            live oracle (e.g. surrogate-only studies
+        #                            where new evaluations cannot be run).
         _lookup_cfg = (_eval_cfg or {}).get("lookup")
-        if _lookup_cfg:
+        _training_data = _full_cfg.get("training_data")
+        _pool_cfg = _lookup_cfg or (
+            {"pool": _training_data} if _training_data else None
+        )
+        if _pool_cfg:
             _store_dir = Path(canonical_cfg["store_dir"])
             try:
                 _n_ingested = _ingest_precomputed_pool(
-                    _store_dir, self.study_dir, _lookup_cfg
+                    _store_dir, self.study_dir, _pool_cfg
                 )
                 log_ingested = _n_ingested  # captured for log below
             except Exception as _exc:  # noqa: BLE001
@@ -434,7 +443,7 @@ class AgenticRun:
         if log_ingested is not None:
             log.info(
                 f"D000: ingested {log_ingested} precomputed pool rows"
-                f" from {_lookup_cfg.get('pool', '?')}"
+                f" from {_pool_cfg.get('pool', '?')}"
             )
         elif _exc_msg is not None:
             log.warning(f"D000 pool ingest failed: {_exc_msg}")

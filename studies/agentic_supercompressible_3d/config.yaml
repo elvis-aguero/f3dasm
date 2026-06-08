@@ -3,8 +3,10 @@ backend: claude
 budget: "03:00:00"
 checkpoint_every: 30
 
-evaluator:
-  lookup:
-    pool: "experiment_data"
-    input_columns: [ratio_d, ratio_pitch, ratio_top_diameter]
-    output_columns: [coilable, sigma_crit, energy]
+# No live oracle: new finite-element simulations cannot be run. The 1000
+# pre-computed designs are TRAINING DATA, ingested as D000 ground truth. The
+# task is to train a surrogate and optimise it to a design anywhere in the
+# continuous domain (possibly outside the dataset); the headline is a
+# surrogate prediction requiring validation. There is NO lookup oracle —
+# get_evaluator() correctly resolves nothing.
+training_data: experiment_data

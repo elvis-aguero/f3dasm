@@ -209,30 +209,25 @@ PREFER f3dasm primitives over raw numpy/scipy equivalents.
   # evaluate → refit → repeat).  Never hand back after a single
   # iteration and ask to be re-delegated.
 
-─── CANONICAL D000 GROUND-TRUTH (lookup / precomputed studies) ─────────
-  # For lookup/precomputed studies the runtime ingests the full pool
-  # at run-init as D000 rows (source='precomputed_pool') in the
-  # canonical ledger.  Query it via the Strategizer's
-  # QueryStore/RecallStore, or load directly:
+─── D000 GROUND TRUTH (pre-computed pool / training data) ──────────────
+  # The runtime ingests any pre-computed pool at run-init as D000 rows
+  # (source='precomputed_pool') in the canonical ledger. Read it freely —
+  # reading D000 is NOT an evaluation:
   #
   #   from f3dasm import ExperimentData
-  #   data = ExperimentData.from_file(
-  #       project_dir=r"<experiment_data_dir>"
-  #   )
-  #   # filter to D000 ground-truth
+  #   data = ExperimentData.from_file(project_dir=r"<experiment_data_dir>")
   #   df_in, df_out = data.to_pandas()
-  #   mask = df_out["_delegation_id"] == "D000"
+  #   d000 = df_out[df_out["_delegation_id"] == "D000"]   # ground truth
   #
-  # Do NOT re-read the raw pool CSV.  The canonical ledger is the
-  # single source of truth for all evaluations (including D000).
-  #
-  # LookupDataGenerator is a fallback for when NO canonical D000 exists:
-  pool = ExperimentData(input_data=pool_df, domain=d)
-  gen  = LookupDataGenerator(pool=pool,
-                              input_columns=["x1","x2"],
-                              output_columns=["y"])
-  result = gen.call(sampled, mode="sequential")
-  gen.consume_repeats()
+  # Do NOT re-read the raw pool CSV — the ledger is the single source.
+
+─── NO LIVE ORACLE → SURROGATE STUDY (get_evaluator() resolves nothing) ─
+  # Some studies have NO live oracle (new evaluations can't be run). There
+  # get_evaluator() raises — and that is correct. The D000 pool is your
+  # TRAINING DATA: fit a surrogate on it, then optimise the surrogate to a
+  # design ANYWHERE in the domain (possibly outside the pool). Your headline
+  # is a surrogate PREDICTION, reported with its uncertainty and explicitly
+  # flagged as requiring validation. None of this is metered (no oracle calls).
 
 ─── BLOCK CHAINING (>> and .loop()) ────────────────────────────────────
   result = (Latin(seed=0) >> my_gen).call(data)

@@ -529,3 +529,72 @@ def test_execute_with_lookup_config_ingests_d000(tmp_path):
     assert summary.n_per_delegation.get("D000", 0) == 4, (
         f"Expected D000=4, got {summary.n_per_delegation}"
     )
+
+
+def test_execute_with_training_data_ingests_d000_no_oracle(tmp_path):
+    """A top-level `training_data` pool is ingested as D000 WITHOUT declaring
+    any evaluator — get_evaluator() then resolves nothing (surrogate-only
+    study). This separates 'training data' from 'lookup oracle'."""
+    import json as _json
+
+    import yaml as _yaml
+    from langgraph.checkpoint.memory import MemorySaver
+
+    from f3dasm._src.agentic.agent_runtime import (
+        DEFAULT_MODEL,
+        AgenticRun,
+        _default_graph,
+    )
+    from f3dasm._src.agentic.graph_builder import build_graph
+    from f3dasm._src.agentic.instrumented import RunStateSummary
+
+    pool_dir = tmp_path / "pool"
+    pool_dir.mkdir()
+    _make_pool(pool_dir, n=4)
+
+    (tmp_path / "PROBLEM_STATEMENT.md").write_text("Surrogate study")
+    (tmp_path / "replicate.py").write_text("# test\n")
+    (tmp_path / "config.yaml").write_text(
+        _yaml.dump({"training_data": "pool"})
+    )
+
+    class CapturingStratAdapter:
+        closure_tools: dict = {}
+
+        def invoke(self, messages):
+            self.closure_tools["Done"](summary="Done.")
+            self.closure_tools["Done"](summary="Done.")
+            return "Done."
+
+    class StubImplAdapter:
+        closure_tools: dict = {}
+
+        def invoke(self, messages):
+            return "## Report\nDone."
+
+    graph_spec = _default_graph()
+    compiled = build_graph(
+        graph_spec,
+        lambda n, a: (
+            CapturingStratAdapter()
+            if n == "strategizer"
+            else StubImplAdapter()
+        ),
+        MemorySaver(),
+        study_dir=tmp_path,
+    )
+    run = AgenticRun.__new__(AgenticRun)
+    run.study_dir = tmp_path
+    run._model = DEFAULT_MODEL
+    run._budget = None
+    run._graph_spec = graph_spec
+    run._graph = compiled
+    run.execute()
+
+    run_dir = run._run_dir
+    summary = RunStateSummary.from_store(run_dir / "experiment_data")
+    assert summary is not None and summary.n_per_delegation.get("D000", 0) == 4
+    # No oracle declared → run_config carries no entrypoint/lookup.
+    cfg = _json.loads((run_dir / "debug" / "run_config.json").read_text())
+    assert cfg["evaluator_entrypoint"] is None
+    assert cfg["evaluator_lookup"] is None
