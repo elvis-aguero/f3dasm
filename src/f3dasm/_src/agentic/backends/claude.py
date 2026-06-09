@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import inspect as _inspect
+import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -92,6 +93,48 @@ def _format_messages_as_prompt(messages: list[dict]) -> str:
             continue  # skip system messages — passed via system_prompt
         parts.append(f"{prefix}: {content}")
     return "\n\n".join(parts)
+
+
+_STREAM_DONE = object()
+
+
+async def _anext_or_done(ait: Any) -> Any:
+    """Return the next item, or the _STREAM_DONE sentinel when exhausted.
+
+    Catches StopAsyncIteration INSIDE the coroutine so it never escapes into an
+    asyncio Task (which would surface as a RuntimeError under wait_for).
+    """
+    try:
+        return await ait.__anext__()
+    except StopAsyncIteration:
+        return _STREAM_DONE
+
+
+async def _stream_with_idle_timeout(gen: Any, idle_timeout: float):
+    """Yield messages from an SDK async stream, raising TimeoutError if the
+    stream goes idle (no message) for longer than ``idle_timeout`` seconds.
+
+    This catches a *stalled* API response — an ESTABLISHED-but-silent
+    connection that streams nothing and never errors — and turns it into a
+    transient TimeoutError that ``retry_on_transient`` (wrapping ``invoke``)
+    retries with backoff. It is an IDLE timeout (reset on every message), NOT a
+    total cap, so a legitimately long call that keeps streaming tokens is never
+    cut; only a true stall is.
+    """
+    ait = gen.__aiter__()
+    while True:
+        try:
+            msg = await asyncio.wait_for(
+                _anext_or_done(ait), timeout=idle_timeout
+            )
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError(
+                f"Anthropic stream stalled: no message for "
+                f"{idle_timeout:.0f}s (transient; will retry)"
+            ) from exc
+        if msg is _STREAM_DONE:
+            return
+        yield msg
 
 
 class ClaudeAdapter:
@@ -278,8 +321,19 @@ class ClaudeAdapter:
         last_assistant = None
         last_result: Any = None
         gen = query(prompt=prompt_str, options=options)
+        # Idle-stream timeout (CONSERVATIVE to avoid false positives). The SDK
+        # yields whole messages, so a long single generation can legitimately
+        # stream nothing for minutes; the default 600s is far above any
+        # plausible generation gap but still catches an indefinite stall (a
+        # silent ESTABLISHED connection). On trip, raises TimeoutError →
+        # retry_on_transient (wrapping invoke) retries. Tune via
+        # F3DASM_LLM_STREAM_IDLE_TIMEOUT; 0 disables.
+        _idle = float(os.environ.get("F3DASM_LLM_STREAM_IDLE_TIMEOUT", "600"))
         try:
-            async for msg in gen:
+            _stream = (
+                _stream_with_idle_timeout(gen, _idle) if _idle > 0 else gen
+            )
+            async for msg in _stream:
                 if isinstance(msg, AssistantMessage):
                     last_assistant = msg
                     if self.route_watcher and self.route_watcher():
