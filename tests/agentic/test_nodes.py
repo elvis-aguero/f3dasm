@@ -2079,6 +2079,44 @@ def test_done_second_call_with_critic_revise():
     assert not node._done_warned, "_done_warned should reset to False after REVISE"
 
 
+def test_done_closes_gracefully_ungated_after_three_revisions():
+    """Bounded escape: after 3 unsatisfiable REVISE verdicts the gate closes
+    UNGATED (records objections) instead of looping forever."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    results: list[str] = []
+
+    class PersistentReviseAdapter(StubAdapter):
+        def invoke(self, messages):
+            # Call Done() until it actually closes (or a safety cap).
+            for _ in range(20):
+                r = self.closure_tools["Done"](summary="please close")
+                results.append(r)
+                if "Run complete" in r:
+                    break
+            return "Done."
+
+    node = StrategizerNode(
+        PersistentReviseAdapter(), name="strategizer",
+        outgoing=["implementer", "critic"],
+        spec=_spec_with_critic(),
+        worker_adapters={
+            "implementer": StubAdapter(),
+            "critic": MockCriticAdapter(verdict="REVISE"),
+        },
+    )
+    node(make_state())
+
+    closed = [r for r in results if "Run complete" in r]
+    assert closed, "run never closed — escape did not fire"
+    assert "UNGATED" in closed[0], (
+        f"expected a graceful UNGATED close, got: {closed[0]!r}")
+    # Two "revision N/3" prompts (1/3, 2/3), then the 3rd verdict escapes.
+    revise_msgs = [r for r in results if "Critic verdict:" in r]
+    assert len(revise_msgs) == 2, (
+        f"expected 2 revision prompts before close, got {len(revise_msgs)}")
+
+
 # ---------------------------------------------------------------------------
 # WriteDeliverable closure tests
 # ---------------------------------------------------------------------------

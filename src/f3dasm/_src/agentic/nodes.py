@@ -129,6 +129,31 @@ _CAPABILITY_PHRASES = [
     "unable to", "not able to", "i am unable",
 ]
 
+_VALID_VERDICTS = {"PASS", "REVISE", "REJECT", "ACCEPT", "FAIL"}
+
+
+def _parse_verdict(text: str) -> str:
+    """Extract the critic's GATE verdict (PASS/REVISE/REJECT/…) from its text.
+
+    Tolerant of markdown emphasis and punctuation around the token — critics
+    write ``### Verdict\\n\\n**PASS**`` — so the leading ``**`` no longer makes
+    a bare ``(\\w+)`` capture the asterisk and fall through to UNKNOWN (the bug
+    that turned an earned PASS into an infinite revise loop). Falls back to a
+    ``verdict: X`` line (e.g. in a ### Numbers block). Returns the UPPER token
+    or ``"UNKNOWN"``.
+    """
+    import re as _re
+    m = _re.search(
+        r"###\s*Verdict\b[\s:>*_`\"'\-]*([A-Za-z]+)", text, _re.IGNORECASE)
+    if m and m.group(1).upper() in _VALID_VERDICTS:
+        return m.group(1).upper()
+    for mm in _re.finditer(
+        r"verdict\s*[:=]\s*[*_`\"']*([A-Za-z]+)", text, _re.IGNORECASE
+    ):
+        if mm.group(1).upper() in _VALID_VERDICTS:
+            return mm.group(1).upper()
+    return "UNKNOWN"
+
 
 def _to_adapter_messages(lc_messages: list) -> list[dict]:
     """Convert LangChain message objects to adapter-format dicts."""
@@ -323,6 +348,11 @@ class StrategizerNode(AgentNode):
         # conclusion so the recorded summary is the science, not the interview.
         self._awaiting_retro: bool = False
         self._final_summary: str | None = None
+        # Consecutive non-PASS critic verdicts; after 3, the gate closes
+        # gracefully UNGATED (bounded escape) instead of looping forever.
+        self._revise_count: int = 0
+        # Eval budget for this run (stashed each turn from state).
+        self._eval_budget: int | None = None
         # Cumulative cap on the "no canonical source registered" nudge (soft).
         self._no_source_nudges: int = 0
         # Bounded re-prompt counter: incremented each time the node loops back
@@ -1330,50 +1360,86 @@ class StrategizerNode(AgentNode):
                         f"{r.get('is_falsification_attempt', False)}"
                         for r in node._delegation_log.query_all()
                     ]
+                # Budget-aware framing: tell the critic what was actually
+                # spent so it judges the BEST HONEST conclusion reachable
+                # within budget, rather than demanding falsification work the
+                # budget no longer allows (which strands the close).
+                _spent = 0
+                if node._delegation_log is not None:
+                    _spent = sum(
+                        (r.get("evals") or 0)
+                        for r in node._delegation_log.query_all()
+                    )
+                _bud = getattr(node, "_eval_budget", None)
+                _exhausted = _bud is not None and _spent >= _bud
                 task_msg += (
                     "\n\n<hypothesis_ledger>\n" + ledger_dump
                     + "\n</hypothesis_ledger>\n\n"
                     "<delegation_flags>\n"
                     + "\n".join(attempts)
                     + "\n</delegation_flags>\n\n"
+                    "<budget>\n"
+                    f"Evaluation budget: {_bud if _bud else 'unspecified'}; "
+                    f"ledgered evaluations spent: {_spent}"
+                    + (" (EXHAUSTED)." if _exhausted else ".") + "\n"
+                    "If the budget is exhausted, judge the BEST HONEST "
+                    "conclusion reachable within the evals actually spent: an "
+                    "honest INCONCLUSIVE/negative result whose falsification "
+                    "attempts were adequate FOR THE REMAINING BUDGET can PASS. "
+                    "Do NOT REVISE solely to demand evaluations the budget no "
+                    "longer allows — note them as future work instead.\n"
+                    "</budget>\n\n"
                     "For each hypothesis, judge whether its stated "
                     "falsification_criterion was actually tested by "
                     "a delegation flagged is_falsification_attempt "
-                    "— adequacy of the test, not mere presence of "
-                    "the flag."
+                    "— adequacy of the test (given the budget), not mere "
+                    "presence of the flag."
                 )
                 critique_text = node._invoke_critic(task_msg)
+                verdict = _parse_verdict(critique_text)
 
-                # Parse verdict from critique text
-                import re as _re
-                _verdict_match = _re.search(
-                    r"###\s*Verdict\s*\n\s*(\w+)",
-                    critique_text,
-                    _re.IGNORECASE,
-                )
-                verdict = (
-                    _verdict_match.group(1).upper()
-                    if _verdict_match else "UNKNOWN"
-                )
-
-                if verdict == "PASS":
+                if verdict in ("PASS", "ACCEPT"):
                     # Conclusion accepted + recorded. Now — and only now —
                     # ask the exit interview as a separate turn.
                     node._done_warned = False
+                    node._revise_count = 0
                     node._awaiting_retro = True
                     node._final_summary = summary
                     return prefix + _EXIT_INTERVIEW
-                else:
-                    # Critic found issues — reset warning so next
-                    # Done() warns again
-                    node._done_warned = False
-                    return (
-                        prefix +
-                        f"Critic verdict: {verdict}.  Review the "
-                        "findings and revise before calling "
-                        f"Done() again.\n\n"
-                        f"{critique_text}"
+
+                # Non-PASS: reset the two-shot and count the revision. After
+                # 3 unsatisfiable verdicts, close GRACEFULLY UNGATED rather
+                # than looping to recursion-limit — record the objections so
+                # the run terminates honestly. (Bounded escape, N=3.)
+                node._done_warned = False
+                node._revise_count = getattr(node, "_revise_count", 0) + 1
+                if node._revise_count >= 3:
+                    banner = (
+                        "## ⚠ UNGATED RUN\n\n"
+                        "This run is NOT validated: the conclusion did not "
+                        f"earn a critic PASS after {node._revise_count} "
+                        "revision attempts. Closing honestly with the critic's "
+                        "outstanding objections recorded below rather than "
+                        "looping.\n\n### Last critic findings\n"
+                        + critique_text.strip() + "\n\n---\n\n"
                     )
+                    node._revise_count = 0
+                    route["kind"] = "done"
+                    route["summary"] = banner + summary
+                    return prefix + (
+                        f"Run complete (UNGATED — closed after "
+                        f"3 unsatisfiable critic revisions; objections "
+                        "recorded in solution.md)."
+                    )
+                return (
+                    prefix +
+                    f"Critic verdict: {verdict} "
+                    f"(revision {node._revise_count}/3). Review the findings "
+                    "and revise before calling Done() again. If you cannot "
+                    "satisfy this within the remaining budget, call Done() "
+                    "again anyway — after 3 attempts the run closes with the "
+                    f"objections recorded.\n\n{critique_text}"
+                )
 
             # No critic — no review stage, so no exit interview; close
             # directly (the interview is "your work was reviewed, now a
@@ -2154,6 +2220,10 @@ class StrategizerNode(AgentNode):
                     self._current_notes_dir.parent.parent
                     / "experiment_data"
                 )
+
+        # Eval budget → available to the Done() critic gate for budget-aware
+        # framing (judge the best honest conclusion within evals spent).
+        self._eval_budget = state.get("eval_budget")
 
         # Capture total_delegations so Delegate() can seed the counter.
         self._state_total_delegations = state.get("total_delegations", 0)
