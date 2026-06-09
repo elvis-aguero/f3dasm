@@ -772,6 +772,8 @@ class StrategizerNode(AgentNode):
                             UNLEDGERED_EVALS_RETRY_PROMPT,
                         )
                         _bounces = 0
+                        _stamped_before = _stamped_eval_count(
+                            _bounce_store, delegation_id)
                         while (
                             _bounces < 3
                             and evals_box["count"] > 0
@@ -786,6 +788,36 @@ class StrategizerNode(AgentNode):
                                     + f"\n\n(notice {_bounces}/3)"
                                 )},
                             ])
+                        if _bounces > 0:
+                            # Direct evidence of whether the bounce worked:
+                            # stamped rows before vs after the re-runs.
+                            _stamped_after = _stamped_eval_count(
+                                _bounce_store, delegation_id)
+                            node._record_intervention(
+                                "UNLEDGERED_BOUNCE", target,
+                                f"{delegation_id} reported "
+                                f"{evals_box['count']} evals off-ledger; "
+                                f"bounced to re-run via get_evaluator().",
+                                bounces=_bounces,
+                                stamped_before=_stamped_before,
+                                stamped_after=_stamped_after,
+                                corrected=bool(_stamped_after > 0),
+                            )
+
+                    # Direct evidence: log any raw-oracle nudge firings from
+                    # this delegation (drained from the adapter's budget).
+                    _onb = getattr(worker, "_oracle_nudge", None)
+                    _evs = list(getattr(_onb, "events", []) or [])
+                    for _ev in _evs:
+                        node._record_intervention(
+                            "RAW_ORACLE_NUDGE", target,
+                            f"{delegation_id}: a {_ev.get('tool')} call "
+                            "reached the oracle directly; nudged toward "
+                            "get_evaluator().",
+                            snippet=_ev.get("snip", ""),
+                        )
+                    if _onb is not None:
+                        _onb.events = []
 
                     # Accumulate token usage from this worker invocation.
                     _usage = getattr(worker, "last_usage", {}) or {}
@@ -1769,6 +1801,39 @@ class StrategizerNode(AgentNode):
         except Exception:  # noqa: BLE001
             pass
 
+    def _record_intervention(
+        self, kind: str, target: str, message: str, **extra
+    ) -> None:
+        """Log a scientific-correction event (a nudge/bounce firing) to
+        diagnostics.jsonl — direct evidence the self-healing layer acted,
+        and, when ``extra`` carries before/after state, whether it worked.
+
+        Neutral classification: fault='nudge' — a nudge is a correction, not
+        an agent error, so this must NOT bump the error/escalation counters
+        (unlike _record_tool_error). Best-effort; never raises.
+        """
+        notes = self._current_notes_dir
+        if notes is None:
+            return
+        import json as _json
+        debug_dir = Path(notes).parent
+        record: dict = {
+            "ts": datetime.now(tz=timezone.utc).isoformat(
+                timespec="seconds"),
+            "node": target,
+            "tool": kind,
+            "error_type": kind,
+            "fault": "nudge",
+            "message": message,
+        }
+        record.update(extra)
+        try:
+            with (debug_dir / "diagnostics.jsonl").open(
+                    "a", encoding="utf-8") as f:
+                f.write(_json.dumps(record) + "\n")
+        except Exception:  # noqa: BLE001
+            pass
+
     def _record_science_drift(self, payload: dict) -> None:
         """Append a SCIENCE_DRIFT record to diagnostics.jsonl."""
         import json as _json
@@ -2199,6 +2264,12 @@ class StrategizerNode(AgentNode):
                     f"(notice {self._no_source_nudges}/3)"
                 ),
             })
+            self._record_intervention(
+                "NO_SOURCE_NUDGE", self._name,
+                "No canonical source registered; recommended delegating to "
+                f"'{_dg}'.",
+                notice=self._no_source_nudges, cap=3,
+            )
 
         messages = (
             _to_adapter_messages(state["messages"])

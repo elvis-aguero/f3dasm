@@ -235,6 +235,9 @@ class ClaudeAdapter:
 
             from .base import OracleNudgeBudget
             _nudge = OracleNudgeBudget()
+            # Expose on the adapter so the runtime can drain + log its
+            # firings as direct evidence (see _record_intervention).
+            self._oracle_nudge = _nudge
 
             async def _oracle_hook(input_data, tool_use_id, context):
                 msg = _nudge.check(

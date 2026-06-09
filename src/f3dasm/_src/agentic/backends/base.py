@@ -403,9 +403,13 @@ class OracleNudgeBudget:
     def __init__(self, cap: int = ORACLE_NUDGE_CAP) -> None:
         self.cap = cap
         self.used = 0
+        # Firings since the last reset, so the runtime can LOG them as direct
+        # evidence the nudge acted (not just infer it). Each: {"tool", "snip"}.
+        self.events: list[dict] = []
 
     def reset(self) -> None:
         self.used = 0
+        self.events = []
 
     def check(self, tool_name: str, tool_input: dict) -> str | None:
         if self.used >= self.cap:
@@ -414,5 +418,12 @@ class OracleNudgeBudget:
         if msg is None:
             return None
         self.used += 1
+        _snip = ""
+        if isinstance(tool_input, dict):
+            for _k in ("command", "content", "file_text", "new_string"):
+                if isinstance(tool_input.get(_k), str):
+                    _snip = tool_input[_k][:120]
+                    break
+        self.events.append({"tool": tool_name, "snip": _snip})
         return msg
 

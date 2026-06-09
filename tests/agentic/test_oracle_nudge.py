@@ -130,3 +130,26 @@ class TestOllamaWiring:
         tool = _make_bash_tool(None)  # nudge defaults to None
         out = tool.func(command=": # from evaluator import evaluate")
         assert "ORACLE ACCESS" not in out
+
+
+class TestNudgeFiringsAreLogged:
+    """Direct evidence: a fired nudge leaves a trace (events) so the runtime
+    can log it — no more inferring whether a nudge acted."""
+
+    def test_budget_records_firing_events(self):
+        b = OracleNudgeBudget()
+        assert b.events == []
+        b.check("Bash", {"command": "from evaluator import evaluate"})
+        assert len(b.events) == 1
+        assert b.events[0]["tool"] == "Bash"
+        assert "evaluator" in b.events[0]["snip"]
+        # A clean call adds no event.
+        b.check("Bash", {"command": "ls"})
+        assert len(b.events) == 1
+
+    def test_reset_clears_events(self):
+        b = OracleNudgeBudget()
+        b.check("Write", {"content": "import evaluator"})
+        assert b.events
+        b.reset()
+        assert b.events == []
