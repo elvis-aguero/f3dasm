@@ -75,6 +75,7 @@ __all__ = [
     "RUN_PATHS_PREAMBLE_TEMPLATE",
     "WORKSPACE_PREAMBLE_TEMPLATE",
     "IMPLEMENTER_REPORT_RETRY_PROMPT",
+    "UNLEDGERED_EVALS_RETRY_PROMPT",
     "REFLECT_DIAGNOSIS_SHORT",
     "REFLECT_DIAGNOSIS_CAPABILITY_LIMIT",
     "REFLECT_DIAGNOSIS_MISSING_SUBSECTIONS_TEMPLATE",
@@ -247,6 +248,29 @@ Injected by ``AgenticRun._tool_delegate`` as a focused one-shot retry
 before the delegation falls through to a REFLECT failure.  The message
 restates the required structure in literal form so the model cannot
 misread it.  No placeholders; pure static text.
+"""
+
+# =============================================================================
+
+UNLEDGERED_EVALS_RETRY_PROMPT = (
+    "Your evaluations did not reach the canonical ExperimentData store. "
+    "Ground-truth evaluations must go through get_evaluator() so they are "
+    "written to the canonical store with provenance (a delegation_id stamp) "
+    "— otherwise the numbers cannot anchor a headline and the result is not "
+    "reproducible from the store. Re-run the ground-truth evaluations via:\n"
+    "    from f3dasm.agentic import get_evaluator\n"
+    "    gen = get_evaluator()\n"
+    "    data = data.run(data_generator=gen)\n"
+    "    gen.flush()\n"
+    "Surrogates, samplers, acquisition models, and analysis you build "
+    "yourself stay off-ledger and that is fine — only the true-oracle calls "
+    "must go through get_evaluator(). Then re-issue your report."
+)
+"""Correction sent to a worker whose delegation reported evaluations but
+wrote no provenance-stamped rows to the canonical store (it bypassed
+get_evaluator()).  Soft: the runtime re-issues it at most three times, then
+accepts the delegation anyway.  Wording is kept consistent with the
+implementer prompt's get_evaluator() guidance and the raw-oracle nudge.
 """
 
 # =============================================================================

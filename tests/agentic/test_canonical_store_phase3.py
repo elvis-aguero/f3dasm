@@ -824,3 +824,36 @@ def test_surrogate_generator_not_metered(tmp_path):
 
     after = dict(RunStateSummary.from_store(store_dir).n_per_delegation)
     assert after == before  # canonical store untouched by the surrogate
+
+
+# ---------------------------------------------------------------------------
+# _stamped_eval_count + unledgered-evals bounce retry prompt
+# ---------------------------------------------------------------------------
+
+def test_stamped_eval_count_counts_only_provenance_rows(tmp_path):
+    """_stamped_eval_count reports ONLY provenance-stamped rows, so a
+    delegation that evaluated off-ledger reads as 0 (triggers the bounce)."""
+    from f3dasm._src.agentic.nodes import _stamped_eval_count
+    _build_store(tmp_path, [
+        (1.0, 0.5, "D001"),
+        (2.0, 0.6, "D001"),
+        (3.0, 0.7, "D002"),
+    ])
+    assert _stamped_eval_count(tmp_path, "D001") == 2
+    assert _stamped_eval_count(tmp_path, "D002") == 1
+    # A delegation that wrote no stamped rows → 0 (would be bounced).
+    assert _stamped_eval_count(tmp_path, "D003") == 0
+    # No store at all → 0, never raises.
+    assert _stamped_eval_count(None, "D001") == 0
+
+
+def test_unledgered_retry_prompt_is_corpus_consistent():
+    """The bounce prompt must use the same canonical wording as the rest of
+    the corpus (get_evaluator, canonical store, surrogates stay off-ledger)."""
+    from f3dasm._src.agentic.agent_prompts import UNLEDGERED_EVALS_RETRY_PROMPT
+    p = UNLEDGERED_EVALS_RETRY_PROMPT
+    assert "get_evaluator()" in p
+    assert "canonical ExperimentData store" in p
+    assert "provenance" in p
+    # Reassures the worker that non-oracle work is legitimately off-ledger.
+    assert "stay off-ledger and that is fine" in p

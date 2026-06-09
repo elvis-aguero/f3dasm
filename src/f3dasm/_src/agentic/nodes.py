@@ -66,6 +66,25 @@ def _resolve_delegation_evals(
         pass
     return reported
 
+
+def _stamped_eval_count(store_dir: "Path | None", delegation_id: str) -> int:
+    """Rows in the canonical store stamped with this delegation_id (0 if none).
+
+    Unlike _resolve_delegation_evals (which falls back to the honour-system
+    count), this reports ONLY provenance-stamped rows — so a caller can detect
+    a delegation that evaluated but bypassed get_evaluator().
+    """
+    if store_dir is None:
+        return 0
+    try:
+        from .instrumented import RunStateSummary
+        summary = RunStateSummary.from_store(store_dir)
+        if summary is not None:
+            return int(summary.n_per_delegation.get(delegation_id, 0))
+    except Exception:  # noqa: BLE001
+        pass
+    return 0
+
 # Time budget is a SOFT constraint (warnings only). This multiple is the
 # run-level cost backstop: a run is aborted once it exceeds
 # RUN_BACKSTOP_MULTIPLE x the time budget, to bound runaway cost.
@@ -732,6 +751,41 @@ class StrategizerNode(AgentNode):
                             },
                         ]
                         text = worker.invoke(retry_messages)
+
+                    # ── Unledgered-evals bounce (soft, ≤3×) ──────────────
+                    # The worker reported evaluations but wrote no
+                    # provenance-stamped rows to the canonical store — it
+                    # bypassed get_evaluator(), so its numbers can't anchor a
+                    # headline. Bounce it back to re-run through get_evaluator,
+                    # in-place, instead of making the strategizer spend a whole
+                    # new delegation re-ledgering. ONLY when a canonical source
+                    # is registered (else get_evaluator can't work and the fix
+                    # is upstream — the strategizer source nudge handles that).
+                    # Soft: after 3 tries, accept anyway.
+                    _bounce_store = (
+                        node._current_notes_dir.parent.parent
+                        / "experiment_data"
+                        if node._current_notes_dir is not None else None
+                    )
+                    if node._canonical_source_registered():
+                        from .agent_prompts import (
+                            UNLEDGERED_EVALS_RETRY_PROMPT,
+                        )
+                        _bounces = 0
+                        while (
+                            _bounces < 3
+                            and evals_box["count"] > 0
+                            and _stamped_eval_count(
+                                _bounce_store, delegation_id) == 0
+                        ):
+                            _bounces += 1
+                            text = worker.invoke(messages + [
+                                {"role": "ai", "content": text},
+                                {"role": "user", "content": (
+                                    UNLEDGERED_EVALS_RETRY_PROMPT
+                                    + f"\n\n(notice {_bounces}/3)"
+                                )},
+                            ])
 
                     # Accumulate token usage from this worker invocation.
                     _usage = getattr(worker, "last_usage", {}) or {}
