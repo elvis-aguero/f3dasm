@@ -110,9 +110,16 @@ async def _anext_or_done(ait: Any) -> Any:
         return _STREAM_DONE
 
 
-async def _stream_with_idle_timeout(gen: Any, idle_timeout: float):
+async def _stream_with_idle_timeout(
+    gen: Any,
+    idle_timeout: float,
+    *,
+    tool_timeout: float = 0.0,
+    classify: Any = None,
+):
     """Yield messages from an SDK async stream, raising TimeoutError if the
-    stream goes idle (no message) for longer than ``idle_timeout`` seconds.
+    stream goes idle while AWAITING MODEL GENERATION for longer than
+    ``idle_timeout`` seconds.
 
     This catches a *stalled* API response — an ESTABLISHED-but-silent
     connection that streams nothing and never errors — and turns it into a
@@ -120,20 +127,43 @@ async def _stream_with_idle_timeout(gen: Any, idle_timeout: float):
     retries with backoff. It is an IDLE timeout (reset on every message), NOT a
     total cap, so a legitimately long call that keeps streaming tokens is never
     cut; only a true stall is.
+
+    The window is scoped to *model generation*. While a TOOL is executing — a
+    worker running a multi-minute Bash compute job emits no stream messages —
+    the tight window stands down, because that silence is the tool working, not
+    the API stalling. Penalising it false-fires and (via the retry) re-runs the
+    whole, non-idempotent worker. ``classify(msg)`` reports the phase:
+    ``True`` a tool is now executing (suspend the tight window), ``False``
+    generation/tool-result (re-arm it), ``None`` leave the phase unchanged.
+    While a tool is pending the next message is awaited with ``tool_timeout``
+    (``<= 0`` means no cap — a runaway tool is the delegation watchdog's job,
+    not this stream timeout's). With ``classify=None`` the tight window applies
+    always (backward-compatible).
     """
     ait = gen.__aiter__()
+    tool_pending = False
     while True:
+        if tool_pending:
+            _wait = tool_timeout if tool_timeout and tool_timeout > 0 else None
+        else:
+            _wait = idle_timeout
         try:
-            msg = await asyncio.wait_for(
-                _anext_or_done(ait), timeout=idle_timeout
-            )
+            msg = await asyncio.wait_for(_anext_or_done(ait), timeout=_wait)
         except asyncio.TimeoutError as exc:
+            # Only generation silence reaches here; while a tool is pending
+            # _wait is None (uncapped) so this never trips on tool execution.
             raise TimeoutError(
-                f"Anthropic stream stalled: no message for "
+                f"Anthropic stream stalled: no model output for "
                 f"{idle_timeout:.0f}s (transient; will retry)"
             ) from exc
         if msg is _STREAM_DONE:
             return
+        if classify is not None:
+            phase = classify(msg)
+            if phase is True:
+                tool_pending = True
+            elif phase is False:
+                tool_pending = False
         yield msg
 
 
@@ -207,7 +237,10 @@ class ClaudeAdapter:
             ClaudeAgentOptions,
             ResultMessage,
             SdkMcpTool,
+            StreamEvent,
             TextBlock,
+            ToolUseBlock,
+            UserMessage,
             create_sdk_mcp_server,
             query,
         )
@@ -335,10 +368,36 @@ class ClaudeAdapter:
         # 60s; if that ever trips, retry_on_transient simply retries). On trip,
         # raises TimeoutError → retry_on_transient (wrapping invoke) retries.
         # Tune via F3DASM_LLM_STREAM_IDLE_TIMEOUT; 0 disables.
+        # The window is scoped to model generation: while a tool runs (a worker
+        # executing a multi-minute Bash job emits no stream), the tight window
+        # stands down — see _phase below — so legitimate long tool execution is
+        # never mistaken for a stalled stream. F3DASM_LLM_TOOL_IDLE_TIMEOUT
+        # caps tool execution (0 = uncapped; a runaway tool is the delegation
+        # watchdog's concern, not this timeout's).
         _idle = float(os.environ.get("F3DASM_LLM_STREAM_IDLE_TIMEOUT", "60"))
+        _tool_idle = float(
+            os.environ.get("F3DASM_LLM_TOOL_IDLE_TIMEOUT", "0")
+        )
+
+        def _phase(msg: Any):
+            # True: a tool is now executing → suspend the tight idle window.
+            # False: generation active / tool result returned → tight window.
+            # None: leave phase unchanged.
+            if isinstance(msg, AssistantMessage):
+                return any(
+                    isinstance(b, ToolUseBlock) for b in msg.content
+                )
+            if isinstance(msg, (StreamEvent, UserMessage)):
+                return False
+            return None
+
         try:
             _stream = (
-                _stream_with_idle_timeout(gen, _idle) if _idle > 0 else gen
+                _stream_with_idle_timeout(
+                    gen, _idle,
+                    tool_timeout=_tool_idle, classify=_phase,
+                )
+                if _idle > 0 else gen
             )
             async for msg in _stream:
                 if isinstance(msg, AssistantMessage):

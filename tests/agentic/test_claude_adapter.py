@@ -22,6 +22,19 @@ class _ResultMessage:
     total_cost_usd = None
 
 
+class _StreamEvent:
+    pass
+
+
+class _UserMessage:
+    def __init__(self, blocks=None) -> None:
+        self.content = blocks or []
+
+
+class _ToolUseBlockType:
+    pass
+
+
 def make_async_gen_with_messages(*text_contents):
     """Yield AssistantMessage-like events with TextBlock content, then ResultMessage."""
     async def _gen(prompt, options):
@@ -41,6 +54,9 @@ def _install_fake_sdk(**extra):
     mod.ResultMessage = _ResultMessage
     mod.TextBlock = _TextBlock
     mod.SdkMcpTool = object  # not used in these tests
+    mod.StreamEvent = _StreamEvent
+    mod.UserMessage = _UserMessage
+    mod.ToolUseBlock = _ToolUseBlockType
     mod.ClaudeAgentOptions = lambda **kw: kw
     mod.create_sdk_mcp_server = lambda name=None, tools=None: {"name": name}
 

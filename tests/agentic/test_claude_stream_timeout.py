@@ -78,3 +78,95 @@ def test_anext_or_done_sentinel_on_exhaustion():
     async def run():
         return await _anext_or_done(_CleanGen(0))
     assert asyncio.run(run()) is _STREAM_DONE
+
+
+# --- Model-generation scoping ------------------------------------------------
+# The tight idle window must measure silence ONLY while awaiting model tokens.
+# While a TOOL is executing (a worker running a multi-minute Bash script), the
+# stream is legitimately silent — that silence must NOT trip the timeout, or it
+# false-fires and (via retry) re-runs the whole worker. classify(msg) reports:
+#   True  -> a tool is now executing (suspend the tight window)
+#   False -> generation/tool-result (re-arm the tight window)
+#   None  -> leave the phase unchanged.
+
+def _phase_by_marker(msg):
+    if msg == "tool_use":
+        return True
+    if msg in ("tool_result", "stream"):
+        return False
+    return None
+
+
+class _ToolThenSilentGen:
+    """Emits a tool_use, then goes silent far past idle_timeout (tool running),
+    then finishes. Mimics a worker stuck in a long Bash compute job."""
+
+    def __init__(self, silence: float) -> None:
+        self._step, self._silence = 0, silence
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        self._step += 1
+        if self._step == 1:
+            return "tool_use"
+        if self._step == 2:
+            await asyncio.sleep(self._silence)  # tool executing — legit silence
+            return "tool_result"
+        raise StopAsyncIteration
+
+
+class _ToolReturnsThenStallsGen:
+    """tool_use -> tool_result -> then GENERATION goes silent forever.
+    Post-tool generation silence must still trip (a real stall)."""
+
+    def __init__(self) -> None:
+        self._step = 0
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        self._step += 1
+        if self._step == 1:
+            return "tool_use"
+        if self._step == 2:
+            return "tool_result"
+        await asyncio.sleep(3600)  # stalled API stream during generation
+
+
+def test_tool_execution_silence_does_not_trip():
+    # idle window 0.1s, but the tool is "running" for 0.3s — must NOT raise
+    # because tool_timeout is uncapped (0) while a tool is pending.
+    async def run():
+        return [
+            m async for m in _stream_with_idle_timeout(
+                _ToolThenSilentGen(0.3), 0.1,
+                tool_timeout=0.0, classify=_phase_by_marker,
+            )
+        ]
+    assert asyncio.run(run()) == ["tool_use", "tool_result"]
+
+
+def test_generation_stall_after_tool_returns_still_trips():
+    async def run():
+        got = []
+        with pytest.raises(TimeoutError):
+            async for m in _stream_with_idle_timeout(
+                _ToolReturnsThenStallsGen(), 0.2,
+                tool_timeout=0.0, classify=_phase_by_marker,
+            ):
+                got.append(m)
+        return got
+    # tool_use + tool_result delivered; the post-tool generation silence trips.
+    assert asyncio.run(run()) == ["tool_use", "tool_result"]
+
+
+def test_no_classify_keeps_tight_window_always():
+    # Backward compatible: without classify, any silence trips (old behavior).
+    async def run():
+        with pytest.raises(TimeoutError):
+            async for _ in _stream_with_idle_timeout(_StallGen(), 0.2):
+                pass
+    asyncio.run(run())
