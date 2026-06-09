@@ -26,6 +26,7 @@ by the agents and recorded as ground-truth data, not prose.
 - [Run outputs: what lands on disk](#run-outputs-what-lands-on-disk)
 - [Backends](#backends)
 - [Containerized runs](#containerized-runs)
+- [Running on an HPC cluster](#running-on-an-hpc-cluster)
 - [Literature tooling & external-API guardrails](#literature-tooling--external-api-guardrails)
 - [Extending the system](#extending-the-system)
 - [Testing](#testing)
@@ -126,6 +127,21 @@ ever lost**. A delegation that was *mid-flight* at crash time is not restored;
 the strategizer re-issues it. Long runs are not capped at the LangGraph default
 of 25 super-steps — `recursion_limit` is raised (override with
 `F3DASM_RECURSION_LIMIT`).
+
+**Wall-clock backstop (soft budget vs. hard cap).** The `budget` in
+`config.yaml` is a *soft* time budget — it only injects "wind down" warnings.
+A separate hard cap terminates a run once elapsed wall-clock exceeds
+`RUN_BACKSTOP_MULTIPLE` × budget (default 2.0), to bound runaway cost on
+cheap-evaluation studies. **Wall-clock is a poor cost proxy when a single
+oracle evaluation can take hours-to-days** (the HPC/SOTA problems), so the cap
+is configurable and can be turned off entirely:
+
+```bash
+export F3DASM_RUN_BACKSTOP_MULTIPLE=0   # disable the hard wall-clock cap
+```
+
+For those problems, budget in **evaluations** (`eval_budget` in `config.yaml`),
+not seconds — the agent's reasoning time is negligible next to the simulations.
 
 ## config.yaml reference
 
@@ -391,6 +407,7 @@ delegation's `debug/delegations/D###/` folder.
 | `GetStatus` / `Reply` | orchestrating node (poll / answer a worker FollowUp) |
 | `HypothesisPropose` / `Update` / `List` / `Get` | entry node with a ledger |
 | `RecallHistory(n)` | any node (demand-driven episodic memory from the delegation log) |
+| `ConsultHandbook(query)` | any node (on-demand lookup of conventions/idioms/gotchas from the curated handbook in `knowledge/`; the always-needed core f3dasm idioms are already injected into worker prompts) |
 | `RecallStore()` | strategizer (derived summary of the canonical ledger) |
 | `QueryStore(delegation_ids, source, n_best, output_name)` | strategizer (read-only filtered view) |
 | `AskForFeedback(hypothesis_ids)` | entry node when a critic is connected |
@@ -512,6 +529,120 @@ useful for untrusted implementer code and pinned reproducibility.
 AgenticRun(study_dir="studies/x", container=True,
            container_image="f3dasm-agentic:latest").execute()
 ```
+
+> The built-in `ContainerRunner` targets **Docker / Colima** (dev + macOS). HPC
+> clusters usually forbid the Docker daemon and provide **Apptainer/Singularity**
+> instead — see [Running on an HPC cluster](#running-on-an-hpc-cluster).
+
+---
+
+## Running on an HPC cluster
+
+The single most important idea: **the orchestrator is lightweight; the heavy
+resources are not, and they must live outside it.** The `AgenticRun` process
+itself just makes LLM API calls and does bookkeeping (the canonical ledger,
+hypothesis ledger, checkpoints) — it is cheap and mostly I/O-bound. Two things
+are heavy, and each belongs on its **own** node, never inside the orchestrator:
+
+1. **LLM inference** → one Ollama server on a **GPU node**.
+2. **The oracle simulations** (ABAQUS / Basilisk / Julia FEM/CFD) → the cluster
+   scheduler, one job per evaluation, often hours-to-days each.
+
+### Topology
+
+```
+  ┌─────────────────┐   OLLAMA_BASE_URL    ┌──────────────────────┐
+  │  orchestrator   │ ───────────────────▶ │  Ollama node (1 GPU) │
+  │  (AgenticRun;   │   per-request model   │  serves ALL models   │
+  │   CPU, cheap)   │                       └──────────────────────┘
+  │                 │   submit + poll      ┌──────────────────────┐
+  │                 │ ───────────────────▶ │  scheduler (SLURM):  │
+  └─────────────────┘                       │  oracle sim jobs     │
+                                            └──────────────────────┘
+```
+
+### One Ollama node for the whole job
+
+You launch **one** Ollama server (see [Serving Ollama](#serving-ollama)); it
+hosts every pulled model, and every agent in the graph shares it — the run
+picks the model per request, the server is never locked to one. Put it on a GPU
+node, pull the models once, and point the orchestrator at it:
+
+```bash
+# On the GPU node (e.g. inside its own SLURM allocation):
+ollama serve &                       # binds 0.0.0.0:11434
+ollama pull qwen2.5:7b; ollama pull llama3.1:70b
+
+# Wherever the orchestrator runs:
+export OLLAMA_BASE_URL=http://<gpu-node-hostname>:11434/v1
+```
+
+A single 70B-class model on one node can back the strategizer, implementer,
+critic, datagenerator and literature reviewer simultaneously — no second
+server, no restart. (Use `backend: claude` instead if you call a hosted API;
+then no GPU node is needed at all.)
+
+### The oracle simulations go to the scheduler, not the orchestrator
+
+The study's evaluator (e.g. the `abaqus2py` `f3dasm.Pipeline`) **submits each
+simulation as a scheduler job and waits for the result** — the orchestrator
+dispatches and polls; it never runs the solver in-process. So the expensive
+compute is scheduled and parallelised by SLURM, while the agentic loop stays a
+thin coordinator. Budget these runs in **evaluations** (`eval_budget`), not
+wall-clock.
+
+### Containerization on HPC
+
+Containerize the **orchestrator** for reproducibility/isolation if you like —
+but **never** put the GPU model server or the heavy solvers inside that
+container. Because HPC clusters typically disallow the Docker daemon, the
+built-in (Docker-based) `container=True` path usually does **not** apply; the
+realistic options are:
+
+- **Run the orchestrator directly** in a project venv on a login/compute node
+  (it is lightweight — this is the simplest path), or
+- **Wrap it in your cluster's Apptainer/Singularity** image yourself
+  (`apptainer exec orchestrator.sif python run.py …`).
+
+Either way the Ollama node and the oracle jobs sit outside, reached over the
+network (`OLLAMA_BASE_URL`) and the scheduler respectively.
+
+### Surviving long runs, walltime limits, and preemption
+
+SOTA campaigns span days and multiple allocations. Configure for that:
+
+```bash
+export F3DASM_RUN_BACKSTOP_MULTIPLE=0   # off: wall-clock is a bad cost proxy here
+export F3DASM_RECURSION_LIMIT=2000      # allow many strategizer turns
+export F3DASM_LLM_RETRY_MAX=8           # ride out transient API/inference blips
+```
+
+When an allocation hits its walltime (or is preempted), **resume** in the next
+job — checkpoints + append-only artifacts mean no completed evaluation is lost:
+
+```python
+AgenticRun(study_dir="studies/x",
+           resume_from="studies/x/runs/<ts>").execute()
+```
+
+See [Resilience: retry & resume](#resilience-retry--resume) for the guarantees.
+
+### Minimal SLURM sketch (single allocation, Ollama + orchestrator)
+
+```bash
+#!/bin/bash
+#SBATCH --gres=gpu:1 --cpus-per-task=8 --time=24:00:00
+module load apptainer            # or your site's container/runtime modules
+ollama serve & sleep 5           # one server, all models
+ollama pull qwen2.5:7b
+export OLLAMA_BASE_URL=http://localhost:11434/v1
+export F3DASM_RUN_BACKSTOP_MULTIPLE=0 F3DASM_RECURSION_LIMIT=2000
+python run.py                    # orchestrator; oracle sims submit their own jobs
+```
+
+(Split Ollama and the orchestrator into separate `sbatch` jobs if you want the
+GPU and CPU accounting separated; just point `OLLAMA_BASE_URL` at the GPU job's
+node.)
 
 ---
 
