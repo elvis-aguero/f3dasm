@@ -88,7 +88,15 @@ def _stamped_eval_count(store_dir: "Path | None", delegation_id: str) -> int:
 # Time budget is a SOFT constraint (warnings only). This multiple is the
 # run-level cost backstop: a run is aborted once it exceeds
 # RUN_BACKSTOP_MULTIPLE x the time budget, to bound runaway cost.
-RUN_BACKSTOP_MULTIPLE = 2.0
+# Wall-clock is a poor proxy for cost when a single oracle eval can take days
+# (the SOTA problems), so the cap is configurable and can be DISABLED: set
+# F3DASM_RUN_BACKSTOP_MULTIPLE <= 0 to turn the hard cap off entirely.
+import os as _os  # noqa: E402
+
+RUN_BACKSTOP_MULTIPLE = float(
+    _os.environ.get("F3DASM_RUN_BACKSTOP_MULTIPLE", "2.0")
+)
+_BACKSTOP_ENABLED = RUN_BACKSTOP_MULTIPLE > 0
 
 _REQUIRED_SUBSECTIONS = [
     "### Actions taken",
@@ -1142,7 +1150,10 @@ class StrategizerNode(AgentNode):
                         already_sent = node._budget_notified_pcts
                         if threshold not in already_sent:
                             already_sent.add(threshold)
-                            _over = pct >= RUN_BACKSTOP_MULTIPLE * 100
+                            _over = (
+                                _BACKSTOP_ENABLED
+                                and pct >= RUN_BACKSTOP_MULTIPLE * 100
+                            )
                             msg = (
                                 f"BACKSTOP IMMINENT: {pct:.0f}% of time "
                                 "budget — past the "
@@ -2193,7 +2204,7 @@ class StrategizerNode(AgentNode):
         # budget it is aborted to bound runaway cost — a backstop, not the
         # budget being a hard constraint. Checked between turns; a turn stuck
         # polling is nudged toward Done() via GetStatus (see budget broadcast).
-        if budget is not None and start is not None:
+        if _BACKSTOP_ENABLED and budget is not None and start is not None:
             _elapsed_now = time.time() - start
             if _elapsed_now > budget * RUN_BACKSTOP_MULTIPLE:
                 # Collect any abandoned delegations for reporting
