@@ -313,6 +313,12 @@ class ClaudeAdapter:
             disallowed_tools=_effective_disallowed,
             permission_mode="bypassPermissions",
             strict_mcp_config=bool(mcp_servers) or bool(self.extra_mcp_servers),
+            # Partial streaming → a fine-grained heartbeat: the stream emits a
+            # StreamEvent sub-second while genuinely generating, so total
+            # silence becomes a reliable, near-instant stall signal and the
+            # idle timeout can be tight (60s) without false-positiving a
+            # slow-but-working generation.
+            include_partial_messages=True,
             **({"hooks": _hooks} if _hooks else {}),
         )
 
@@ -321,14 +327,15 @@ class ClaudeAdapter:
         last_assistant = None
         last_result: Any = None
         gen = query(prompt=prompt_str, options=options)
-        # Idle-stream timeout (CONSERVATIVE to avoid false positives). The SDK
-        # yields whole messages, so a long single generation can legitimately
-        # stream nothing for minutes; the default 600s is far above any
-        # plausible generation gap but still catches an indefinite stall (a
-        # silent ESTABLISHED connection). On trip, raises TimeoutError →
-        # retry_on_transient (wrapping invoke) retries. Tune via
-        # F3DASM_LLM_STREAM_IDLE_TIMEOUT; 0 disables.
-        _idle = float(os.environ.get("F3DASM_LLM_STREAM_IDLE_TIMEOUT", "600"))
+        # Idle-stream timeout. With include_partial_messages on, the stream
+        # emits a StreamEvent continuously (sub-second) during real generation,
+        # so this idle window measures TRUE silence: 60s of no event at all
+        # means a stalled connection, caught in ~1 min — not a slow-but-working
+        # call (whose only legit silence is time-to-first-token, well under
+        # 60s; if that ever trips, retry_on_transient simply retries). On trip,
+        # raises TimeoutError → retry_on_transient (wrapping invoke) retries.
+        # Tune via F3DASM_LLM_STREAM_IDLE_TIMEOUT; 0 disables.
+        _idle = float(os.environ.get("F3DASM_LLM_STREAM_IDLE_TIMEOUT", "60"))
         try:
             _stream = (
                 _stream_with_idle_timeout(gen, _idle) if _idle > 0 else gen
