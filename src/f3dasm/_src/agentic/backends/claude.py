@@ -391,6 +391,41 @@ class ClaudeAdapter:
                 return False
             return None
 
+        from .base import append_transcript, debug_enabled
+
+        def _record(msg: Any):
+            # Full reasoning + tool-calls + tool-results; StreamEvent partials
+            # are skipped (the assembled AssistantMessage carries the text).
+            if isinstance(msg, AssistantMessage):
+                texts, tools, thinking = [], [], []
+                for b in msg.content:
+                    if isinstance(b, TextBlock):
+                        texts.append(b.text)
+                    elif isinstance(b, ToolUseBlock):
+                        tools.append({"name": b.name, "input": b.input})
+                    else:
+                        t = (getattr(b, "thinking", None)
+                             or getattr(b, "text", None))
+                        if t:
+                            thinking.append(t)
+                return {"type": "assistant", "text": "".join(texts),
+                        "tools": tools, "thinking": thinking}
+            if isinstance(msg, UserMessage):
+                results = []
+                for b in (getattr(msg, "content", None) or []):
+                    results.append({
+                        "tool_use_id": getattr(b, "tool_use_id", None),
+                        "content": getattr(b, "content", b),
+                    })
+                return {"type": "tool_result", "results": results}
+            if isinstance(msg, ResultMessage):
+                return {"type": "result",
+                        "usage": getattr(msg, "usage", None),
+                        "cost_usd": getattr(msg, "total_cost_usd", None)}
+            return None
+
+        _capture = debug_enabled()
+
         try:
             _stream = (
                 _stream_with_idle_timeout(
@@ -400,6 +435,10 @@ class ClaudeAdapter:
                 if _idle > 0 else gen
             )
             async for msg in _stream:
+                if _capture:
+                    _rec = _record(msg)
+                    if _rec is not None:
+                        append_transcript(_rec)
                 if isinstance(msg, AssistantMessage):
                     last_assistant = msg
                     if self.route_watcher and self.route_watcher():

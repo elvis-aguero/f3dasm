@@ -5,11 +5,63 @@
 
 from __future__ import annotations
 
+import json
 import os
 import random
 import re
+import threading
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass
+
+# ---------------------------------------------------------------------------
+# Debug / transcript capture — master switch F3DASM_DEBUG, OFF by default.
+# When on, agents stream their full reasoning + tool-calls + tool-results to
+# per-delegation / per-strategizer-turn JSONL transcripts so we can see what
+# the workers are actually thinking. Capture is thread-local: each worker
+# delegation runs in its own thread and sets its own sink.
+# ---------------------------------------------------------------------------
+
+_DEBUG_TRUE = {"1", "true", "yes", "on"}
+_transcript_tls = threading.local()
+
+
+def debug_enabled() -> bool:
+    """Master debug switch. Off unless F3DASM_DEBUG is truthy."""
+    return os.environ.get("F3DASM_DEBUG", "").strip().lower() in _DEBUG_TRUE
+
+
+def set_transcript_sink(path: "str | None") -> None:
+    """Point this thread's transcript at *path* (None clears it)."""
+    _transcript_tls.path = str(path) if path else None
+
+
+def get_transcript_sink() -> "str | None":
+    return getattr(_transcript_tls, "path", None)
+
+
+def append_transcript(record: dict) -> None:
+    """Best-effort append one JSON record to the active transcript.
+
+    No-op unless F3DASM_DEBUG is on and a sink is set on this thread.
+    Never raises into the agent loop.
+    """
+    if not debug_enabled():
+        return
+    path = get_transcript_sink()
+    if not path:
+        return
+    try:
+        stamped = {
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            **record,
+        }
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(stamped, default=str) + "\n")
+    except Exception:  # noqa: BLE001 — debug capture must never break a run
+        pass
+
 
 # ---------------------------------------------------------------------------
 # Agent base class

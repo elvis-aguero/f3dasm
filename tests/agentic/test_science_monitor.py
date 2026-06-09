@@ -69,7 +69,8 @@ def test_evidence_delegation_exists(tmp_path):
 # Test 2: EVIDENCE_NUMBERS_MATCH — cited numbers not in report
 # ---------------------------------------------------------------------------
 
-def test_evidence_numbers_match(tmp_path):
+def test_evidence_numbers_match(tmp_path, monkeypatch):
+    import f3dasm._src.agentic.science_monitor as sm
     ledger, dlog, mon, _ = make_world(tmp_path)
     h_id = propose(ledger)
     record_done(dlog, "D001", [h_id], REPORT)
@@ -78,14 +79,22 @@ def test_evidence_numbers_match(tmp_path):
         h_id, "SUPPORTED", "found it",
         evidence={"delegation": "D001", "numbers": {"best_y": 9.99}},
         posterior=0.9, triggered_by=None)
-    violations = mon.evaluate()
-    rules = {v.rule for v in violations}
-    assert "EVIDENCE_NUMBERS_MATCH" in rules, (
-        f"Expected EVIDENCE_NUMBERS_MATCH, got: {rules}")
 
-    # Tolerance check: 1.4700000001 should match 1.47
+    # DEFAULT: the rule is OFF — a mismatch must NOT fire (the critic
+    # catches fabricated numbers; the verbatim match stalled wrap-up).
+    monkeypatch.setattr(sm, "EVIDENCE_NUMBERS_MATCH_ENABLED", False)
+    rules = {v.rule for v in mon.evaluate()}
+    assert "EVIDENCE_NUMBERS_MATCH" not in rules, (
+        f"rule is disabled by default; got: {rules}")
+
+    # When explicitly re-enabled, it still fires on a true mismatch.
+    monkeypatch.setattr(sm, "EVIDENCE_NUMBERS_MATCH_ENABLED", True)
+    rules = {v.rule for v in mon.evaluate()}
+    assert "EVIDENCE_NUMBERS_MATCH" in rules, (
+        f"Expected EVIDENCE_NUMBERS_MATCH when enabled, got: {rules}")
+
+    # The dormant matcher itself is unchanged.
     assert mon._numbers_match({"best_y": 1.4700000001}, REPORT)
-    # Mismatch check: 9.99 is not in REPORT
     assert not mon._numbers_match({"x": 9.99}, REPORT)
 
 

@@ -8,12 +8,23 @@ calls; backend-neutral.
 
 from __future__ import annotations
 
+import os
 import re
 import threading
 from dataclasses import dataclass
 from typing import Callable
 
 __all__ = ["ScienceMonitor", "Violation"]
+
+# EVIDENCE_NUMBERS_MATCH (the anchored-evidence rule) is OFF by default: its
+# verbatim/tight-tolerance match rejected legitimately-grounded-but-rounded
+# citations (e.g. -0.040279 vs the report's -0.040278683…), stalling wrap-up.
+# Fabricated/mis-cited numbers are now caught by the adversarial critic gate.
+# Re-enable with F3DASM_EVIDENCE_NUMBERS_MATCH=1.
+EVIDENCE_NUMBERS_MATCH_ENABLED = (
+    os.environ.get("F3DASM_EVIDENCE_NUMBERS_MATCH", "").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
 
 STALE_K = 3
 POSTERIOR_EPSILON = 0.05
@@ -119,7 +130,7 @@ class ScienceMonitor:
                     "not a completed delegation. Cite a real D-id "
                     "from the delegation log (or D000 for the "
                     "ground-truth pool), or correct the update."))
-            elif d_id != "D000":
+            elif d_id != "D000" and EVIDENCE_NUMBERS_MATCH_ENABLED:
                 numbers = latest_ev.get("numbers") or {}
                 if numbers and not self._numbers_match(
                         numbers, by_id[d_id].get("deliverable", "")):

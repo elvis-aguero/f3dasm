@@ -464,6 +464,16 @@ class OllamaAdapter:
         )
         last = result["messages"][-1]
 
+        # DEBUG: capture full reasoning + tool-calls (parity with Claude).
+        from .base import append_transcript, debug_enabled
+        if debug_enabled():
+            for _m in result.get("messages", []):
+                append_transcript({
+                    "type": _m.__class__.__name__,
+                    "text": str(getattr(_m, "content", "")),
+                    "tools": getattr(_m, "tool_calls", None) or [],
+                })
+
         # Extract token usage from LangChain response metadata.
         meta = getattr(last, "usage_metadata", None) or {}
         self.last_usage = {

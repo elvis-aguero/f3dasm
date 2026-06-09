@@ -86,6 +86,40 @@ def test_single_text_block():
     assert result == "hello world"
 
 
+def test_transcript_captured_when_debug_on(tmp_path, monkeypatch):
+    """With F3DASM_DEBUG on and a sink set, ainvoke streams assistant text +
+    result records to the transcript JSONL."""
+    import json
+    from f3dasm._src.agentic.backends.base import set_transcript_sink
+    monkeypatch.setenv("F3DASM_DEBUG", "1")
+    _install_fake_sdk(query=make_async_gen_with_messages("reasoning here"))
+    ClaudeAdapter = _get_adapter()
+    adapter = ClaudeAdapter("claude-3", "sys", None, [])
+    sink = tmp_path / "D001.jsonl"
+    set_transcript_sink(str(sink))
+    adapter.invoke([{"role": "user", "content": "hi"}])
+    set_transcript_sink(None)
+
+    recs = [json.loads(x) for x in sink.read_text().strip().splitlines()]
+    types = [r["type"] for r in recs]
+    assert "assistant" in types
+    asst = next(r for r in recs if r["type"] == "assistant")
+    assert asst["text"] == "reasoning here"
+
+
+def test_no_transcript_when_debug_off(tmp_path, monkeypatch):
+    from f3dasm._src.agentic.backends.base import set_transcript_sink
+    monkeypatch.delenv("F3DASM_DEBUG", raising=False)
+    _install_fake_sdk(query=make_async_gen_with_messages("x"))
+    ClaudeAdapter = _get_adapter()
+    adapter = ClaudeAdapter("claude-3", "sys", None, [])
+    sink = tmp_path / "D001.jsonl"
+    set_transcript_sink(str(sink))
+    adapter.invoke([{"role": "user", "content": "hi"}])
+    set_transcript_sink(None)
+    assert not sink.exists()
+
+
 def test_multiple_text_blocks_concatenated():
     """Multiple TextBlocks in one AssistantMessage → concatenated."""
     _install_fake_sdk(query=make_async_gen_with_messages("foo", "bar", "baz"))

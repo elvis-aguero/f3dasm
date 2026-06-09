@@ -765,6 +765,18 @@ class StrategizerNode(AgentNode):
                 worker.closure_tools["ConsultHandbook"] = _consult_handbook
                 try:
                     from .agent_prompts import IMPLEMENTER_REPORT_RETRY_PROMPT
+                    from .backends.base import (
+                        debug_enabled as _dbg,
+                        set_transcript_sink as _set_sink,
+                    )
+
+                    # DEBUG: stream this worker's full reasoning + tool-calls
+                    # to debug/transcripts/{delegation_id}.jsonl (thread-local;
+                    # this _run is the worker's own thread).
+                    if _dbg() and node._current_notes_dir is not None:
+                        _set_sink(str(
+                            node._current_notes_dir.parent / "transcripts"
+                            / f"{delegation_id}.jsonl"))
 
                     messages = [{"role": "user", "content": task_msg}]
                     text = worker.invoke(messages)
@@ -2311,6 +2323,17 @@ class StrategizerNode(AgentNode):
             _to_adapter_messages(state["messages"])
             + budget_warnings + registration_nudge
         )
+        # DEBUG: stream this strategizer turn's full reasoning + tool-calls
+        # to debug/transcripts/strategizer/turn_NNN.jsonl.
+        from .backends.base import (
+            debug_enabled as _dbg,
+            set_transcript_sink as _set_sink,
+        )
+        self._turn_count = getattr(self, "_turn_count", 0) + 1
+        if _dbg() and self._current_notes_dir is not None:
+            _set_sink(str(
+                self._current_notes_dir.parent / "transcripts"
+                / "strategizer" / f"turn_{self._turn_count:03d}.jsonl"))
         text = self.adapter.invoke(messages)
         # Accumulate strategizer's own token usage.
         self._accumulate_usage(getattr(self.adapter, "last_usage", {}) or {})
