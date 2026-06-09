@@ -86,6 +86,7 @@ __all__ = [
 
 # Re-export agent system prompts from their canonical locations so that
 # existing code importing from agent_prompts continues to work.
+from .knowledge.idioms import F3DASM_CORE_IDIOMS  # noqa: E402
 from .agents.strategizer import STRATEGIZER_SYSTEM_PROMPT  # noqa: E402
 from .agents.implementer import IMPLEMENTER_SYSTEM_PROMPT  # noqa: E402
 from .agents.debugger import DEBUGGER_SYSTEM_PROMPT  # noqa: E402
@@ -395,6 +396,7 @@ NEVER import or call a raw evaluator yourself (no `from ... import evaluate`,
 no sys.path hacks). An unledgered evaluation is unreproducible and fails the
 critic gate.
 
+""" + F3DASM_CORE_IDIOMS + """
 METERING SCOPE: only calls through get_evaluator() are metered (ground truth,
 budgeted). Everything else is FREE and unrestricted — fitting surrogates,
 running optimizers, backtracking, writing/reading your own artifacts, and

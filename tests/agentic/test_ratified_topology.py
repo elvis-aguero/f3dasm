@@ -302,7 +302,11 @@ def test_strategizer_implementer_owns_all_evaluation():
 
 def test_implementer_prompt_covers_sampling():
     from f3dasm._src.agentic.agents.implementer import IMPLEMENTER_SYSTEM_PROMPT
-    for token in ("Latin", "Sobol", "lhs", "n_samples"):
+    # Verified sampling API (create_sampler -> Block.call), injected via
+    # F3DASM_CORE_IDIOMS. The old data.sample(...)/Latin()/Sobol() tokens were
+    # removed because they do not exist on the installed f3dasm.
+    for token in ("create_sampler", "latin_sampler", "sampler.call",
+                  "n_samples"):
         assert token in IMPLEMENTER_SYSTEM_PROMPT, (
             f"IMPLEMENTER_SYSTEM_PROMPT missing sampling token: {token!r}"
         )

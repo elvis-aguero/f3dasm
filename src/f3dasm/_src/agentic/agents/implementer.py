@@ -9,6 +9,7 @@ agent that evaluates designs.
 from __future__ import annotations
 
 from ..backends.base import Agent
+from ..knowledge.idioms import F3DASM_CORE_IDIOMS
 
 IMPLEMENTER_SYSTEM_PROMPT = """\
 <role>
@@ -91,40 +92,13 @@ PREFER f3dasm primitives over raw numpy/scipy equivalents.
   domain.store(path)
   d = Domain.from_file(path)
 
-  # N-D continuous shortcut:
-  from f3dasm._src.design.domain import make_nd_continuous_domain
-  d = make_nd_continuous_domain(
-      bounds=[(-5,5)]*8, names=[f"x{i}" for i in range(8)]
-  )
-  d.add_output("y")
-
-─── EXPERIMENTDATA ──────────────────────────────────────────────────────
-  data = ExperimentData(domain=d)
-  data = ExperimentData.from_file(path)    # loads input/output/domain/jobs
+""" + F3DASM_CORE_IDIOMS + """
+─── EXPERIMENTDATA — other verified reads ──────────────────────────────
+  data = ExperimentData.from_file(project_dir=path)  # load input/output/domain
   data.store(path)
-  data.sample(sampler="lhs", n_samples=500, seed=0)
-  data.sample(sampler="sobol", n_samples=256, seed=0)
-  data.sample(sampler="random", n_samples=100, seed=0)
-  arr  = data.to_numpy("input")
-  arr  = data.to_numpy("output")
-  df   = data.to_pandas()
-  best = data.get_n_best_output("y", n=5)
-  data.add_output_numpy(arr, names=["y"])
-  data.sort("y", ascending=False)
+  df_in, df_out = data.to_pandas()        # to_pandas() also returns a tuple
   len(data)
   merged = data + data2
-
-─── SAMPLERS ────────────────────────────────────────────────────────────
-  # In-place (preferred):
-  data.sample(sampler="lhs", n_samples=500, seed=0)
-  data.sample(sampler="sobol", n_samples=256, seed=0)
-
-  # Block API (for chaining):
-  sampled = Latin(seed=0).call(data, n_samples=500)
-  sampled = Sobol(seed=0).call(data, n_samples=256)
-
-  from f3dasm import create_sampler
-  sampler = create_sampler("latin", seed=0)
 
 ─── THE CANONICAL ORACLE — get_evaluator() is the ONLY way to evaluate ──
   # The ground-truth oracle is already registered by the runtime (whether it
@@ -153,9 +127,11 @@ PREFER f3dasm primitives over raw numpy/scipy equivalents.
   #   truth and must not be metered. Explore however you like.
 
 ─── INITIAL SPACE-FILLING DESIGN (DoE-execution) ───────────────────────
-  # You execute the initial design: sample + evaluate.
+  # You execute the initial design: sample + evaluate (see core idioms above
+  # for the verified create_sampler/sampler.call form).
   data = ExperimentData(domain=d)
-  data.sample(sampler="lhs", n_samples=500, seed=0)
+  sampler = create_sampler("latin_sampler", seed=0)
+  data = sampler.call(data=data, n_samples=500)
   gen = get_evaluator()
   data = gen.call(data, mode="sequential")   # or mode="parallel"
   gen.flush()
@@ -169,8 +145,8 @@ PREFER f3dasm primitives over raw numpy/scipy equivalents.
   from sklearn.model_selection import cross_val_score
 
   data = ExperimentData.from_file(project_dir=experiment_data_dir)
-  X_train = data.to_numpy("input")
-  y_train = data.to_numpy("output").ravel()
+  X_train, y_train = data.to_numpy()       # tuple (X, y); NO string arg
+  y_train = y_train.ravel()
 
   gp = GaussianProcessRegressor(
       kernel=Matern(nu=2.5), normalize_y=True
@@ -184,23 +160,23 @@ PREFER f3dasm primitives over raw numpy/scipy equivalents.
   # more exploration before trusting the optimum.
 
 ─── SURROGATE-GUIDED EXPLOIT LOOP ──────────────────────────────────────
-  # PATTERN A — native f3dasm composition (ask/tell optimizers):
-  from f3dasm._src.optimization.scipy_implementations import LBFGSB, CG
-  evaluator = get_evaluator()
-  optimizer = LBFGSB()
-  optimizer.arm(data)
-  result = (optimizer >> evaluator).loop(50).call(data)
-  evaluator.flush()
+  # (f3dasm also ships native ask/tell optimizers via
+  #  f3dasm.create_optimizer(name, data_generator=get_evaluator(),
+  #  output_name=..., input_name=...) — confirm its signature before use.)
 
   # PATTERN B — sklearn GP with Expected Improvement (BO):
   import numpy as np
   evaluator = get_evaluator()
   for _ in range(n_bo_steps):
-      x_next = propose_ei(gp, X_train, y_train.min(), bounds)
-      new_data = build_experiment_data_for_point(x_next, domain)
+      x_next = propose_ei(gp, X_train, y_train.min(), bounds)  # shape (d,)
+      # Wrap the proposed point as ExperimentData (verified idiom above):
+      samp = {0: ExperimentSample(_input_data={
+          n: float(x_next[j]) for j, n in enumerate(d.input_names)})}
+      new_data = ExperimentData.from_data(data=samp, domain=d)
       new_data = evaluator.call(new_data, mode="sequential")
-      X_train = np.vstack([X_train, new_data.to_numpy("input")])
-      y_train = np.append(y_train, new_data.to_numpy("output").ravel())
+      Xn, yn = new_data.to_numpy()
+      X_train = np.vstack([X_train, Xn])
+      y_train = np.append(y_train, yn.ravel())
       gp.fit(X_train, y_train)
   evaluator.flush()
 
