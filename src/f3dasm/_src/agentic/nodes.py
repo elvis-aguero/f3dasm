@@ -275,6 +275,8 @@ class StrategizerNode(AgentNode):
         # conclusion so the recorded summary is the science, not the interview.
         self._awaiting_retro: bool = False
         self._final_summary: str | None = None
+        # Cumulative cap on the "no canonical source registered" nudge (soft).
+        self._no_source_nudges: int = 0
         # Bounded re-prompt counter: incremented each time the node loops back
         # due to an unaccepted termination (no Done or refused Done).  NOT reset
         # in the A1/A2 per-turn block — it persists across loopbacks within one
@@ -308,6 +310,46 @@ class StrategizerNode(AgentNode):
             ):
                 return target
         return None
+
+    def _find_datagenerator_name(self) -> str | None:
+        """Name of the first connected datagenerator worker, or None.
+
+        Its presence means a canonical ground-truth source CAN be authored
+        and registered for this study.
+        """
+        spec = self._spec
+        if spec is None or not hasattr(spec, "nodes"):
+            return None
+        for target in self._outgoing:
+            agent = spec.nodes.get(target)
+            if (
+                agent is not None
+                and getattr(agent, "role", None) == "datagenerator"
+                and target in self._worker_adapters
+            ):
+                return target
+        return None
+
+    def _canonical_source_registered(self) -> bool:
+        """True if a canonical ground-truth source is resolvable.
+
+        Reads run_config.json: an evaluator entrypoint OR a lookup pool counts
+        as a registered source. Best-effort — on any read failure, assume not
+        registered (the nudge is soft, so a false 'no' just costs one notice).
+        """
+        notes = self._current_notes_dir
+        if notes is None:
+            return False
+        try:
+            import json as _json
+            cfg = _json.loads(
+                (Path(notes).parent / "run_config.json").read_text())
+            return bool(
+                cfg.get("evaluator_entrypoint")
+                or cfg.get("evaluator_lookup")
+            )
+        except Exception:  # noqa: BLE001
+            return False
 
     def _invoke_critic(self, task_msg: str) -> str:
         """Synchronously invoke the connected critic; returns its
@@ -2072,7 +2114,39 @@ class StrategizerNode(AgentNode):
         with self._notifications_lock:
             self._notifications.clear()
 
-        messages = _to_adapter_messages(state["messages"]) + budget_warnings
+        # ── No-canonical-source nudge (soft, ≤3×) ─────────────────────────
+        # If this graph has a datagenerator (so a canonical ground-truth
+        # source CAN be authored) but none is registered, recommend
+        # delegating to it. Without a registered source every evaluation
+        # lands off-ledger and nothing is reproducible from the canonical
+        # store. Soft and capped — never blocks; the strategizer may ignore
+        # it for a genuinely source-free study.
+        registration_nudge: list[dict] = []
+        if (
+            self._no_source_nudges < 3
+            and self._find_datagenerator_name() is not None
+            and not self._canonical_source_registered()
+        ):
+            self._no_source_nudges += 1
+            _dg = self._find_datagenerator_name()
+            registration_nudge.append({
+                "role": "user",
+                "content": (
+                    "[SETUP] No canonical ground-truth source is registered "
+                    "for this study (no evaluator entrypoint or lookup pool). "
+                    f"A '{_dg}' agent is available — delegate to it to author "
+                    "and register the source, so evaluations flow through "
+                    "get_evaluator(), land in the canonical store, and the "
+                    "result is reproducible. If this is intentionally a "
+                    "source-free (surrogate-only) study, disregard this. "
+                    f"(notice {self._no_source_nudges}/3)"
+                ),
+            })
+
+        messages = (
+            _to_adapter_messages(state["messages"])
+            + budget_warnings + registration_nudge
+        )
         text = self.adapter.invoke(messages)
         # Accumulate strategizer's own token usage.
         self._accumulate_usage(getattr(self.adapter, "last_usage", {}) or {})

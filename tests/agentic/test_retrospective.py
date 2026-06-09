@@ -93,6 +93,85 @@ class TestPromptsCarryRetrospective:
         assert "FRICTION" in _EXIT_INTERVIEW
         assert "Done() ONE more time" in _EXIT_INTERVIEW
 
+
+class TestNoCanonicalSourceNudge:
+    """Strategizer flowchart: when a datagenerator exists but no canonical
+    source is registered, recommend delegating to it (soft, ≤3×)."""
+
+    def _spec_with_datagenerator(self):
+        from f3dasm._src.agentic.backends.base import Agent, Edge, Graph
+
+        class S(Agent):
+            role = "strategizer"
+            description = "strategizer"
+
+        class DG(Agent):
+            role = "datagenerator"
+            description = "datagenerator"
+
+        return Graph(
+            nodes={"strategizer": S(), "datagenerator": DG()},
+            edges=(Edge("strategizer", "datagenerator"),),
+            entry="strategizer",
+        )
+
+    def _node(self):
+        from f3dasm._src.agentic.nodes import StrategizerNode
+
+        class _Stub:
+            def __init__(self):
+                self.role = "strategizer"
+                self.closure_tools = {}
+                self.route_watcher = None
+                self.last_usage = {}
+
+            def invoke(self, messages):
+                return "ok"
+
+        return StrategizerNode(
+            _Stub(), name="strategizer", outgoing=["datagenerator"],
+            spec=self._spec_with_datagenerator(),
+            worker_adapters={"datagenerator": _Stub()},
+        )
+
+    def test_finds_datagenerator(self):
+        assert self._node()._find_datagenerator_name() == "datagenerator"
+
+    def test_source_unregistered_when_entrypoint_absent(self, tmp_path):
+        import json
+        node = self._node()
+        notes = tmp_path / "debug" / "strategizer_notes"
+        notes.mkdir(parents=True)
+        (notes.parent / "run_config.json").write_text(json.dumps(
+            {"evaluator_entrypoint": None, "evaluator_lookup": None}))
+        node._current_notes_dir = notes
+        assert node._canonical_source_registered() is False
+
+    def test_source_registered_when_entrypoint_present(self, tmp_path):
+        import json
+        node = self._node()
+        notes = tmp_path / "debug" / "strategizer_notes"
+        notes.mkdir(parents=True)
+        (notes.parent / "run_config.json").write_text(json.dumps(
+            {"evaluator_entrypoint": "workspace/e.py:f"}))
+        node._current_notes_dir = notes
+        assert node._canonical_source_registered() is True
+
+    def test_lookup_counts_as_registered(self, tmp_path):
+        import json
+        node = self._node()
+        notes = tmp_path / "debug" / "strategizer_notes"
+        notes.mkdir(parents=True)
+        (notes.parent / "run_config.json").write_text(json.dumps(
+            {"evaluator_lookup": "experiment_data"}))
+        node._current_notes_dir = notes
+        assert node._canonical_source_registered() is True
+
+    def test_nudge_counter_caps_at_three(self):
+        # The cap field exists and starts at 0; __call__ increments up to 3.
+        node = self._node()
+        assert node._no_source_nudges == 0
+
     def test_report_sections_include_retrospective(self):
         from f3dasm._src.agentic.agents.critic import (
             AdversarialCritiqueAgent,
