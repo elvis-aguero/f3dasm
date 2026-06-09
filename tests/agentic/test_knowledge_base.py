@@ -74,3 +74,21 @@ class TestParser:
         out = kb.entries[0].render()
         assert out.startswith("## ")
         assert "[tags:" in out
+
+
+class TestConsultHandbookTool:
+    def test_returns_relevant_entry(self):
+        from f3dasm._src.agentic.nodes import _consult_handbook
+        out = _consult_handbook("how do I make my evaluations count in the ledger")
+        assert "get_evaluator" in out
+
+    def test_no_match_is_graceful(self):
+        from f3dasm._src.agentic.nodes import _consult_handbook
+        out = _consult_handbook("zzzznonsenseqqq")
+        assert "No handbook entry matched" in out
+
+    def test_never_raises(self):
+        from f3dasm._src.agentic.nodes import _consult_handbook
+        # odd inputs must not raise into the agent loop
+        for q in ("", "   ", 123):
+            assert isinstance(_consult_handbook(q), str)

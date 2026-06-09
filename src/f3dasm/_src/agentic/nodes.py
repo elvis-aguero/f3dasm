@@ -202,6 +202,27 @@ def _extract_report_section(text: str, name: str) -> str:
     return m.group(1).strip() if m else ""
 
 
+def _consult_handbook(query: str) -> str:
+    """ConsultHandbook tool: look up a project convention / idiom / gotcha
+    from the curated handbook (the agentic knowledge base), on demand.
+
+    The always-needed core (e.g. the verified f3dasm idioms) is already in the
+    prompt; this is for the long tail. Read-only and best-effort — never raises
+    into the agent loop.
+    """
+    try:
+        from .knowledge import KnowledgeBase
+        hits = KnowledgeBase.load().search(str(query), k=3)
+    except Exception as exc:  # noqa: BLE001
+        return f"(handbook unavailable: {exc})"
+    if not hits:
+        return (
+            "No handbook entry matched that query. Proceed with best "
+            "judgment — the core f3dasm idioms are already in your prompt."
+        )
+    return "\n\n---\n\n".join(e.render() for e in hits)
+
+
 class AgentNode:
     """Base class for ADAS-inspectable LangGraph nodes.
 
@@ -732,6 +753,8 @@ class StrategizerNode(AgentNode):
 
                 worker.closure_tools["ReportEvals"] = ReportEvals  # not wrapped: never errors
                 worker.closure_tools["FollowUp"] = node._wrap_closure(FollowUp, target)
+                # On-demand handbook lookup, available to every worker.
+                worker.closure_tools["ConsultHandbook"] = _consult_handbook
                 try:
                     from .agent_prompts import IMPLEMENTER_REPORT_RETRY_PROMPT
 
@@ -1638,6 +1661,8 @@ class StrategizerNode(AgentNode):
             closures["ReadNote"] = ReadNote
         if "WriteDeliverable" in _agent_tools:
             closures["WriteDeliverable"] = WriteDeliverable
+        # On-demand handbook lookup, available to the strategizer too.
+        closures["ConsultHandbook"] = _consult_handbook
 
         # Hypothesis closures: always built but functionally inert without a
         # ledger (notes_dir only provided to the entry node).

@@ -54,6 +54,9 @@ Available tools (Claude Agent SDK built-ins, restricted to study dir):
                        task is critically ambiguous. The answer is injected
                        into your context; if none arrives within ~5 minutes,
                        proceed with best judgment. One FollowUp per task.
+  ConsultHandbook(query) — look up a project convention/idiom/gotcha beyond
+                       the core idioms below (e.g. a less-common f3dasm
+                       pattern). On-demand; use only when genuinely unsure.
 
 Note: get_evaluator is NOT a tool — it is imported from f3dasm.agentic.
 </role>
