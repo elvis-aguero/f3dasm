@@ -425,6 +425,27 @@ class ClaudeAdapter:
             return None
 
         _capture = debug_enabled()
+        # Partial-stream checkpointing: an agent that never completes a message
+        # (infinite thinking / an unresolved turn) emits only StreamEvents and
+        # would otherwise disclose nothing. Buffer the deltas and flush a
+        # "partial" record every N events (and on any stream teardown) so the
+        # transcript reveals what a stuck turn is doing in near-real-time.
+        _PARTIAL_FLUSH_EVERY = 25
+        _pbuf: list[str] = []
+        _pcount = [0]
+
+        def _extract_delta(ev: Any) -> str:
+            if not isinstance(ev, dict):
+                return ""
+            d = ev.get("delta") or {}
+            return (d.get("text") or d.get("thinking")
+                    or d.get("partial_json") or "")
+
+        def _flush_partial() -> None:
+            if _pbuf:
+                append_transcript({"type": "partial", "text": "".join(_pbuf),
+                                   "events": _pcount[0]})
+                _pbuf.clear()
 
         try:
             _stream = (
@@ -436,9 +457,20 @@ class ClaudeAdapter:
             )
             async for msg in _stream:
                 if _capture:
-                    _rec = _record(msg)
-                    if _rec is not None:
-                        append_transcript(_rec)
+                    if isinstance(msg, StreamEvent):
+                        _pcount[0] += 1
+                        _d = _extract_delta(getattr(msg, "event", {}) or {})
+                        if _d:
+                            _pbuf.append(_d)
+                        if _pcount[0] % _PARTIAL_FLUSH_EVERY == 0:
+                            _flush_partial()
+                    else:
+                        # A complete message: flush any buffered partial first,
+                        # then the structured record.
+                        _flush_partial()
+                        _rec = _record(msg)
+                        if _rec is not None:
+                            append_transcript(_rec)
                 if isinstance(msg, AssistantMessage):
                     last_assistant = msg
                     if self.route_watcher and self.route_watcher():
@@ -447,6 +479,8 @@ class ClaudeAdapter:
                     last_result = msg
                     break
         finally:
+            if _capture:
+                _flush_partial()  # disclose a stuck/torn-down turn's tail
             aclose = getattr(gen, "aclose", None)
             if aclose:
                 try:

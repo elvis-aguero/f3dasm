@@ -107,6 +107,42 @@ def test_transcript_captured_when_debug_on(tmp_path, monkeypatch):
     assert asst["text"] == "reasoning here"
 
 
+def test_partials_flushed_for_incomplete_turn(tmp_path, monkeypatch):
+    """An agent that never completes a message (infinite thinking) emits only
+    StreamEvents — the transcript must STILL disclose its partial output via
+    periodic flushes, not stay empty."""
+    import json
+
+    from f3dasm._src.agentic.backends.base import set_transcript_sink
+
+    class _StreamEv:
+        def __init__(self, text):
+            self.event = {"delta": {"type": "text_delta", "text": text}}
+
+    def _gen_never_completes(prompt, options):
+        async def _g(prompt, options):
+            # 60 stream events, NO AssistantMessage, NO ResultMessage.
+            for i in range(60):
+                yield _StreamEv(f"tok{i} ")
+        return _g
+
+    monkeypatch.setenv("F3DASM_DEBUG", "1")
+    mod = _install_fake_sdk(query=_gen_never_completes(None, None))
+    mod.StreamEvent = _StreamEv  # adapter isinstance-checks this
+    ClaudeAdapter = _get_adapter()
+    adapter = ClaudeAdapter("claude-3", "sys", None, [])
+    sink = tmp_path / "D001.jsonl"
+    set_transcript_sink(str(sink))
+    adapter.invoke([{"role": "user", "content": "hi"}])
+    set_transcript_sink(None)
+
+    recs = [json.loads(x) for x in sink.read_text().strip().splitlines()]
+    partials = [r for r in recs if r["type"] == "partial"]
+    assert partials, "incomplete turn disclosed nothing"
+    # 60 events → flush at 25, 50, plus the teardown flush for the tail.
+    assert any("tok49" in r["text"] for r in partials)
+
+
 def test_no_transcript_when_debug_off(tmp_path, monkeypatch):
     from f3dasm._src.agentic.backends.base import set_transcript_sink
     monkeypatch.delenv("F3DASM_DEBUG", raising=False)
