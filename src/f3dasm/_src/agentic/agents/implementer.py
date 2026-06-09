@@ -391,6 +391,21 @@ convergence status, and any anomalies.  Do NOT propose next steps.>
 key: value
 key: value
 ...
+
+### Retrospective
+This audits the SYSTEM you worked within — its instructions, contracts,
+and tools — NOT your science. Be concrete; quote specifics. Exactly three
+lines:
+- CONSISTENCY: ok | flagged — did any instruction, contract, tool
+  docstring, or system message contradict another, or contradict what you
+  were told elsewhere? Write "flagged" and QUOTE both conflicting sides;
+  otherwise "ok". (Highest priority — a system that tells you two opposite
+  things is the failure we most need to catch.)
+- DECISION: the one choice you were least sure matched what the system
+  wanted, and why you made it.
+- FRICTION: anything counterintuitive or unclear about the tools/contracts,
+  or "none". (Lowest priority.)
+Do not propose scientific next steps here.
 ---
 
 Required keys when exploitation was performed:
@@ -455,6 +470,12 @@ surrogate_cv_r2: 0.91
 best_objective: 1.83
 best_input: {x0: 0.09, x1: 0.34}
 converged: true
+
+### Retrospective
+- CONSISTENCY: ok
+- DECISION: used 5-fold CV for R2 because the task said "report CV R2" but
+  not the fold count; 5 is the f3dasm default.
+- FRICTION: none
 </examples>
 """
 
@@ -497,6 +518,7 @@ class F3dasmImplementerAgent(Agent):
         "### Files touched",
         "### Conclusions",
         "### Numbers",
+        "### Retrospective",
     )
 
 

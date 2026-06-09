@@ -94,7 +94,7 @@ def _make_glob_tool(cwd: Path | None) -> Any:
     return StructuredTool.from_function(glob_files, name="Glob")
 
 
-def _make_bash_tool(cwd: Path | None) -> Any:
+def _make_bash_tool(cwd: Path | None, nudge: Any = None) -> Any:
     import subprocess
 
     from langchain_core.tools import StructuredTool
@@ -108,7 +108,12 @@ def _make_bash_tool(cwd: Path | None) -> Any:
             timeout=120, cwd=work_dir,
         )
         out = result.stdout + result.stderr
-        return out if out else "(no output)"
+        out = out if out else "(no output)"
+        if nudge is not None:
+            msg = nudge("Bash", {"command": command})
+            if msg:
+                out = f"{out}\n\n{msg}"
+        return out
 
     return StructuredTool.from_function(bash, name="Bash")
 
@@ -129,7 +134,7 @@ def _make_read_tool(cwd: Path | None) -> Any:
     return StructuredTool.from_function(read_file, name="Read")
 
 
-def _make_write_tool(cwd: Path | None) -> Any:
+def _make_write_tool(cwd: Path | None, nudge: Any = None) -> Any:
     from langchain_core.tools import StructuredTool
 
     def write_file(path: str, content: str) -> str:
@@ -140,16 +145,21 @@ def _make_write_tool(cwd: Path | None) -> Any:
         )
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
-        return f"Written: {p}"
+        out = f"Written: {p}"
+        if nudge is not None:
+            msg = nudge("Write", {"file_path": path, "content": content})
+            if msg:
+                out = f"{out}\n\n{msg}"
+        return out
 
     return StructuredTool.from_function(write_file, name="Write")
 
 
-def _native_tool_map(cwd: Path | None) -> dict[str, Any]:
+def _native_tool_map(cwd: Path | None, nudge: Any = None) -> dict[str, Any]:
     return {
-        "Bash":  _make_bash_tool(cwd),
+        "Bash":  _make_bash_tool(cwd, nudge),
         "Read":  _make_read_tool(cwd),
-        "Write": _make_write_tool(cwd),
+        "Write": _make_write_tool(cwd, nudge),
         "Edit":  _make_edit_tool(cwd),
         "Glob":  _make_glob_tool(cwd),
         "Grep":  _make_grep_tool(),
@@ -381,6 +391,9 @@ class OllamaAdapter:
         # (create_react_agent runs the full tool loop to completion) but must
         # be present so StrategizerNode.__init__ doesn't raise AttributeError.
         self.route_watcher: Any = None
+        # Non-blocking raw-oracle nudge, capped per delegation (= per invoke).
+        from .base import OracleNudgeBudget
+        self._oracle_nudge = OracleNudgeBudget()
         # Populated after each invoke() with token counts for run-level accounting.
         self.last_usage: dict = {}
 
@@ -396,7 +409,7 @@ class OllamaAdapter:
     def _build_tools(self) -> list[Any]:
         from langchain_core.tools import StructuredTool
 
-        native_map = _native_tool_map(self.study_dir)
+        native_map = _native_tool_map(self.study_dir, self._oracle_nudge.check)
         tools: list[Any] = [
             native_map[name]
             for name in self.native_tools
@@ -438,6 +451,9 @@ class OllamaAdapter:
 
     def _invoke_once(self, messages: list[dict]) -> str:
         """Core invoke logic — build agent if needed, run, return text."""
+        # One invoke == one delegation's worker run; reset the per-delegation
+        # nudge cap. The cached agent's tool closures read this live.
+        self._oracle_nudge.reset()
         if self._agent is None:
             self._agent = self._build_agent()
 

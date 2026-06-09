@@ -89,6 +89,32 @@ def test_evidence_numbers_match(tmp_path):
     assert not mon._numbers_match({"x": 9.99}, REPORT)
 
 
+def test_evidence_anchored_tolerates_derived_numbers(tmp_path):
+    """The fix: an update whose RAW measurement traces to the report must
+    NOT flag just because it also cites DERIVED/interpretive quantities the
+    worker never reported (counts, classifications, reformatted coords).
+    Only a fully-ungrounded update (no cited value in the report) flags."""
+    ledger, dlog, mon, _ = make_world(tmp_path)
+    h_id = propose(ledger)
+    record_done(dlog, "D001", [h_id], REPORT)  # REPORT has best_y: 1.47
+    ledger.update(
+        h_id, "SUPPORTED", "anchored + derived",
+        evidence={"delegation": "D001", "numbers": {
+            "best_y": 1.47,           # raw — present in REPORT (anchor)
+            "n_interior_dims": 7,     # derived — absent from REPORT
+            "scattered": "True",      # derived classification
+        }},
+        posterior=0.9, triggered_by=None)
+    rules = {v.rule for v in mon.evaluate()}
+    assert "EVIDENCE_NUMBERS_MATCH" not in rules, (
+        "anchored evidence with derived extras must not flag")
+    # Direct: anchored because best_y matches, despite derived extras.
+    assert mon._numbers_match(
+        {"best_y": 1.47, "n_interior_dims": 7, "scattered": "True"}, REPORT)
+    # Fully ungrounded (no cited value in the report) still flags.
+    assert not mon._numbers_match({"n_interior_dims": 7, "k": 9.99}, REPORT)
+
+
 def test_evidence_self_heals_after_correct_citation(tmp_path):
     """A superseded early bad citation must NOT nag forever: once a later
     entry cites a real delegation, EVIDENCE_DELEGATION_EXISTS clears."""

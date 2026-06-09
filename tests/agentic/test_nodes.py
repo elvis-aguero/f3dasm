@@ -1997,25 +1997,30 @@ def test_ask_for_feedback_respects_explicit_ids(tmp_path):
 
 
 def test_done_second_call_with_critic_pass():
-    """Done() second call with critic: critic returns PASS → run closes (goto=END).
+    """Done() flow with critic PASS, including the post-Done exit interview.
 
-    First Done() must return WARNING (two-shot gate); second Done() runs the
-    critic synchronously.  When the critic returns verdict=PASS the run closes.
-    We also assert first_result starts with WARNING to pin the two-shot contract.
+    First Done() WARNs (two-shot gate). Second Done() runs the critic; on PASS
+    the run does NOT close yet — it returns the exit interview (a question about
+    the system, asked only after the critic accepted). The third Done(),
+    carrying the retrospective, closes the run (goto=END).
     """
     from f3dasm._src.agentic.nodes import StrategizerNode
     from langgraph.graph import END
 
-    first_results: list[str] = []
+    results: list[str] = []
 
-    class TwoDoneCriticPassAdapter(StubAdapter):
+    class ThreeDoneCriticPassAdapter(StubAdapter):
         def invoke(self, messages):
-            r = self.closure_tools["Done"](summary="first – warning")
-            first_results.append(r)
-            self.closure_tools["Done"](summary="second – critic gate")
+            results.append(
+                self.closure_tools["Done"](summary="first – warning"))
+            results.append(
+                self.closure_tools["Done"](summary="second – critic gate"))
+            results.append(self.closure_tools["Done"](
+                summary="### Retrospective\n- CONSISTENCY: ok\n"
+                        "- DECISION: n/a\n- FRICTION: none"))
             return "Done."
 
-    adapter = TwoDoneCriticPassAdapter()
+    adapter = ThreeDoneCriticPassAdapter()
     spec = _spec_with_critic()
     node = StrategizerNode(
         adapter, name="strategizer",
@@ -2028,9 +2033,10 @@ def test_done_second_call_with_critic_pass():
     )
     cmd = node(make_state())
 
-    assert first_results and first_results[0].startswith("WARNING"), (
-        f"Expected first Done() to WARNING, got: {first_results[0]!r}"
-    )
+    assert results[0].startswith("WARNING"), (
+        f"Expected first Done() to WARNING, got: {results[0]!r}")
+    assert "accepted by the critic" in results[1], (
+        f"Expected exit interview after critic PASS, got: {results[1]!r}")
     assert cmd.goto == END
 
 

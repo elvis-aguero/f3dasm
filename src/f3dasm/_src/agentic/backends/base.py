@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import random
+import re
 import time
 from dataclasses import dataclass
 
@@ -331,4 +332,87 @@ def retry_on_transient(
             delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
             delay += random.uniform(0, delay * 0.5)
             time.sleep(delay)
+
+
+# ---------------------------------------------------------------------------
+# Raw-oracle-access nudge (non-blocking, just-in-time)
+# ---------------------------------------------------------------------------
+# When a worker reaches the ground-truth oracle directly (e.g. `from evaluator
+# import evaluate`, or loading evaluator.dylib) instead of via get_evaluator(),
+# its evaluations are NOT stamped into the canonical ExperimentData ledger — so
+# any headline they back cannot be reproduced by replicate.py. This is a
+# best-effort regex NUDGE, not a sandbox: it exists to save a worker from
+# burning a whole phase off-ledger, not to stop a determined bypass (the
+# reproducibility gate in the critic is the real backstop). Deliberately does
+# NOT fire on get_evaluator(), the correct path (which also contains the
+# substring "evaluator").
+
+ORACLE_NUDGE_CAP = 2
+
+_RAW_ORACLE_PATTERNS = (
+    re.compile(r"\bfrom\s+evaluator\s+import\b"),
+    re.compile(r"\bimport\s+evaluator\b"),
+    re.compile(r"\bevaluator\.(?:dylib|so)\b"),
+)
+
+_ORACLE_NUDGE_MESSAGE = (
+    "[ORACLE ACCESS] This reaches the ground-truth evaluator directly. "
+    "Evaluations run this way are NOT written to the canonical ExperimentData "
+    "ledger, so any number they produce cannot anchor the headline — "
+    "replicate.py will fail to reproduce it and the critic will reject the "
+    "run. Reach the true oracle ONLY via:  from f3dasm.agentic import "
+    "get_evaluator; gen = get_evaluator(); data = data.run(data_generator="
+    "gen); gen.flush().  Surrogates/optimisers/acquisition models you build "
+    "yourself stay off-ledger and that is fine — only true-oracle calls must "
+    "go through get_evaluator()."
+)
+
+
+def detect_raw_oracle_access(tool_name: str, tool_input: dict) -> str | None:
+    """Return a nudge string if a Bash/Write call appears to reach the
+    ground-truth oracle directly (bypassing get_evaluator), else None.
+
+    Pure and best-effort. Only inspects Bash commands and Write content.
+    """
+    if tool_name not in ("Bash", "Write"):
+        return None
+    if not isinstance(tool_input, dict):
+        return None
+    parts = [
+        v for k, v in tool_input.items()
+        if k in ("command", "content", "file_text", "new_string")
+        and isinstance(v, str)
+    ]
+    if not parts:
+        return None
+    text = "\n".join(parts)
+    for pat in _RAW_ORACLE_PATTERNS:
+        if pat.search(text):
+            return _ORACLE_NUDGE_MESSAGE
+    return None
+
+
+class OracleNudgeBudget:
+    """Per-delegation, non-blocking cap for the raw-oracle nudge.
+
+    A worker run (one backend invoke) is one delegation; call ``reset`` at the
+    start of each invoke and ``check`` per tool call. Emits the nudge at most
+    ``cap`` times, then stays silent so it never becomes nagging.
+    """
+
+    def __init__(self, cap: int = ORACLE_NUDGE_CAP) -> None:
+        self.cap = cap
+        self.used = 0
+
+    def reset(self) -> None:
+        self.used = 0
+
+    def check(self, tool_name: str, tool_input: dict) -> str | None:
+        if self.used >= self.cap:
+            return None
+        msg = detect_raw_oracle_access(tool_name, tool_input)
+        if msg is None:
+            return None
+        self.used += 1
+        return msg
 

@@ -158,6 +158,18 @@ questions_addressed: N
 papers_consulted: M
 new_papers_added: K
 quotes_used: Q
+
+### Retrospective
+This audits the SYSTEM you worked within — its instructions, contracts, and
+tools — NOT your findings. Be concrete; quote specifics. Exactly:
+- CONSISTENCY: ok | flagged — did any instruction, contract, or message
+  contradict another, or contradict what you were told elsewhere? Write
+  "flagged" and QUOTE both conflicting sides; otherwise "ok". (Highest
+  priority.)
+- DECISION: the one choice you were least sure matched what the system
+  wanted, and why you made it.
+- FRICTION: anything counterintuitive or unclear about the tools/contracts,
+  or "none". (Lowest priority.)
 </output_format>
 """
 
@@ -186,6 +198,7 @@ class LiteratureReviewAgent(Agent):
         "### Key findings",
         "### Conclusions",
         "### Numbers",
+        "### Retrospective",
     )
     mcp_servers = {}
     extra_allowed_tools = frozenset()

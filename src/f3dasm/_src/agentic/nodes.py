@@ -77,6 +77,26 @@ _REQUIRED_SUBSECTIONS = [
     "### Conclusions",
     "### Numbers",
 ]
+
+# Post-Done exit interview for the strategizer. Asked as a SEPARATE turn only
+# after the critic accepted the conclusion — so the strategizer never carries
+# the interview in its working context (no pollution). It answers with one more
+# Done() whose summary is just a ### Retrospective block.
+_EXIT_INTERVIEW = (
+    "Your conclusion has been accepted by the critic and recorded — the run "
+    "is effectively closed. One last thing before we finalise: a quick "
+    "question about the SYSTEM you worked within (its rules, tools, and the "
+    "monitor/critic feedback), NOT the science. Call Done() ONE more time "
+    "with a summary containing only a ### Retrospective block:\n"
+    "- CONSISTENCY: ok | flagged — did any rule, tool, monitor message, or "
+    "critic finding contradict another, or contradict what you were told "
+    "elsewhere (e.g. a rule that rejected evidence you believe was correct)? "
+    "Write 'flagged' and QUOTE both sides; otherwise 'ok'. (Most important.)\n"
+    "- DECISION: the one strategic choice you were least sure the system "
+    "wanted, and why you made it.\n"
+    "- FRICTION: anything counterintuitive about the rules/tools, or 'none'.\n"
+    "This will NOT reopen the run."
+)
 _CAPABILITY_PHRASES = [
     "i cannot", "i can't", "i don't have access",
     "unable to", "not able to", "i am unable",
@@ -145,6 +165,22 @@ def _classify_response(
             missing_subsections=", ".join(f"'{s}'" for s in missing)
         )
     return None
+
+
+def _extract_report_section(text: str, name: str) -> str:
+    """Return the body under a ``### <name>`` report heading, or '' if absent.
+
+    Captures from the heading to the next ``###``/``##`` heading, a
+    horizontal rule, or end of text. Best-effort and tolerant of trailing
+    free-form content.
+    """
+    import re as _re
+    m = _re.search(
+        rf"(?mis)^###\s+{_re.escape(name)}\s*\n(.*?)"
+        r"(?=^\s*###\s|^\s*##\s|^---\s*$|\Z)",
+        text,
+    )
+    return m.group(1).strip() if m else ""
 
 
 class AgentNode:
@@ -234,6 +270,11 @@ class StrategizerNode(AgentNode):
         # Two-shot Done() gate: first call warns, second call closes.
         # Resets to False whenever a new Delegate() fires.
         self._done_warned: bool = False
+        # Post-Done exit interview: set after the critic accepts; the next
+        # Done() carries only the retrospective. _final_summary holds the real
+        # conclusion so the recorded summary is the science, not the interview.
+        self._awaiting_retro: bool = False
+        self._final_summary: str | None = None
         # Bounded re-prompt counter: incremented each time the node loops back
         # due to an unaccepted termination (no Done or refused Done).  NOT reset
         # in the A1/A2 per-turn block — it persists across loopbacks within one
@@ -781,6 +822,14 @@ class StrategizerNode(AgentNode):
                                     )
                     except Exception:  # noqa: BLE001
                         pass
+
+                    # Worker retrospective (every node has a 'job done'
+                    # moment — see _record_retrospective).
+                    _role = (
+                        getattr(node._spec.nodes.get(target), "role", None)
+                        or target
+                    )
+                    node._record_retrospective(_role, delegation_id, text)
                 except Exception:  # noqa: BLE001
                     tb = traceback.format_exc()
                     _usage = getattr(worker, "last_usage", {}) or {}
@@ -1024,6 +1073,18 @@ class StrategizerNode(AgentNode):
                     "before calling Done(). Use Delegate(wait=True) next time "
                     "to avoid this."
                 )
+            # Exit-interview capture (final stage): the conclusion is already
+            # accepted + recorded; this Done() carries ONLY the retrospective.
+            # Capture it, then actually close. The strategizer hears about the
+            # interview ONLY after the critic accepted — never during its
+            # working turns, so its orchestration context stays clean.
+            if node._awaiting_retro:
+                node._awaiting_retro = False
+                node._record_retrospective("strategizer", "DONE", summary)
+                node._done_warned = False
+                route["kind"] = "done"
+                route["summary"] = node._final_summary
+                return prefix + "Run complete."
             # Two-shot gate: first call warns, second call closes.
             if not node._done_warned:
                 node._done_warned = True
@@ -1120,10 +1181,12 @@ class StrategizerNode(AgentNode):
                 )
 
                 if verdict == "PASS":
+                    # Conclusion accepted + recorded. Now — and only now —
+                    # ask the exit interview as a separate turn.
                     node._done_warned = False
-                    route["kind"] = "done"
-                    route["summary"] = summary
-                    return prefix + "Run complete."
+                    node._awaiting_retro = True
+                    node._final_summary = summary
+                    return prefix + _EXIT_INTERVIEW
                 else:
                     # Critic found issues — reset warning so next
                     # Done() warns again
@@ -1136,7 +1199,9 @@ class StrategizerNode(AgentNode):
                         f"{critique_text}"
                     )
 
-            # No critic — close directly.
+            # No critic — no review stage, so no exit interview; close
+            # directly (the interview is "your work was reviewed, now a
+            # question", which only applies when a critic gate ran).
             node._done_warned = False
             route["kind"] = "done"
             route["summary"] = summary
@@ -1554,6 +1619,55 @@ class StrategizerNode(AgentNode):
         try:
             with (debug_dir / "diagnostics.jsonl").open("a", encoding="utf-8") as f:
                 f.write(_json.dumps(record) + "\n")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _record_retrospective(
+        self, role: str, source_id: str, report_text: str
+    ) -> None:
+        """Capture a node's end-of-life ### Retrospective.
+
+        Every node has a 'my job is done' moment — workers at delegation
+        completion, the strategizer (and any future orchestrator) at Done().
+        Parse the section, persist to retrospectives.jsonl, and surface a
+        diagnostic + strategizer notification the instant it flags
+        contradictory system instructions (the cheapest, highest-value
+        failure mode to catch). Best-effort; never raises.
+        """
+        try:
+            retro = _extract_report_section(report_text or "", "Retrospective")
+            if not retro:
+                return
+            notes = self._current_notes_dir
+            if notes is None:
+                return
+            import json as _json
+            import re as _re
+            debug_dir = Path(notes).parent
+            flagged = bool(_re.search(r"CONSISTENCY:\s*flagged", retro, _re.I))
+            now = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
+            rec = {
+                "ts": now, "source_id": source_id, "role": role,
+                "flagged": flagged, "text": retro[:2000],
+            }
+            with (debug_dir / "retrospectives.jsonl").open(
+                    "a", encoding="utf-8") as f:
+                f.write(_json.dumps(rec) + "\n")
+            if flagged:
+                drec = {
+                    "ts": now, "node": role, "tool": "Retrospective",
+                    "error_type": "CONSISTENCY_FLAG", "fault": "system",
+                    "message": retro[:300],
+                }
+                with (debug_dir / "diagnostics.jsonl").open(
+                        "a", encoding="utf-8") as f:
+                    f.write(_json.dumps(drec) + "\n")
+                with self._notifications_lock:
+                    self._notifications.append(
+                        f"[CONSISTENCY FLAG — {role} ({source_id}) reported "
+                        "contradictory system instructions; see "
+                        "debug/retrospectives.jsonl]"
+                    )
         except Exception:  # noqa: BLE001
             pass
 

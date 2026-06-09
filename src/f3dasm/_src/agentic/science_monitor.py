@@ -125,10 +125,12 @@ class ScienceMonitor:
                         numbers, by_id[d_id].get("deliverable", "")):
                     out.append(Violation(
                         "EVIDENCE_NUMBERS_MATCH", "error", h_id,
-                        f"{h_id} cites numbers {numbers} from {d_id}, "
-                        "but they do not appear in that delegation's "
-                        "report. Re-check the report and correct the "
-                        "evidence."))
+                        f"{h_id} cites evidence from {d_id} but NONE of "
+                        f"its numbers appear in that delegation's report — "
+                        f"the claim is ungrounded. Cite at least one "
+                        f"measured value from the report (derived counts or "
+                        f"classifications you computed yourself can stay "
+                        f"alongside it). Numbers cited: {numbers}."))
         if current == "SUPPORTED":
             attacked = any(
                 r.get("is_falsification_attempt")
@@ -260,37 +262,55 @@ class ScienceMonitor:
                 "UNLEDGERED_EVALS", "warn", d_id,
                 f"Delegation {d_id} reported {evals} evaluation(s) but "
                 "wrote none to the canonical ledger — it bypassed "
-                "get_evaluator(). Numbers from it cannot be "
-                "groundtruthed; instruct workers to evaluate via "
+                "get_evaluator(). Fine for throwaway exploration, but any "
+                "number that feeds the HEADLINE must come from ledgered "
+                "rows or replicate.py cannot reproduce it. If this "
+                "delegation's results back a conclusion, re-run them via "
                 "get_evaluator().",
             ))
         return out
 
     def _numbers_match(self, numbers: dict, deliverable: str) -> bool:
-        """True iff every evidence value appears in the deliverable.
+        """True iff the evidence is ANCHORED to the report: at least one
+        cited value appears in the delegation's report.
 
-        Prefers the ### Numbers section (key: value lines); falls back
-        to scanning the full text. Numeric match: rel tol 1e-6.
-        INTENTIONALLY value-only (keys are not bound): the rule guards
-        against fabricated numbers, not mislabelled keys — the critic
-        judges semantics.
+        A hypothesis update legitimately MIXES raw measurements (which must
+        trace to the report) with the strategizer's own DERIVED quantities
+        — counts, classifications, reformatted coordinates — which by
+        definition are absent from the worker's report. Demanding that every
+        value match punishes interpretation; requiring at least one anchors
+        the claim while still catching wholesale fabrication or a citation
+        of the wrong delegation. The critic judges semantics.
+
+        Prefers the ### Numbers section (key: value lines); falls back to
+        the full text. Numeric match: rel tol 1e-6. Value-only (keys are
+        not bound).
         """
         section = _NUMBERS_SECTION_RE.search(deliverable)
         haystack = section.group(1) if section else deliverable
         hay_floats = [float(m) for m in _FLOAT_RE.findall(haystack)]
+        numeric_vals: list[float] = []
+        string_vals: list[str] = []
         for value in numbers.values():
             try:
-                v = float(value)
+                numeric_vals.append(float(value))
             except (TypeError, ValueError):
-                if str(value) not in haystack:
-                    return False
-                continue
-            if not any(
+                string_vals.append(str(value))
+        # Anchored if any cited numeric value appears in the report.
+        for v in numeric_vals:
+            if any(
                 abs(v - hv) <= 1e-6 * max(abs(v), abs(hv), 1e-12)
                 for hv in hay_floats
             ):
-                return False
-        return True
+                return True
+        # No numeric values cited: anchor on any string token instead;
+        # if there is nothing to anchor on at all, do not flag.
+        if not numeric_vals:
+            return (
+                any(s in haystack for s in string_vals)
+                if string_vals else True
+            )
+        return False
 
     def on_hypothesis_update(self, h_id: str) -> list[str]:
         """Hook after a successful ledger update. Returns error-severity

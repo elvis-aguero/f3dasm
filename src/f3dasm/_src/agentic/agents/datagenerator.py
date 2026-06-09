@@ -141,6 +141,18 @@ validation_output: {<dict>}
 single_sample_wall_clock_seconds: <float>
 supported_call_modes: [sequential, parallel]
 
+### Retrospective
+This audits the SYSTEM you worked within — its instructions, contracts,
+and tools — NOT your science. Be concrete; quote specifics. Exactly:
+- CONSISTENCY: ok | flagged — did any instruction, contract, tool
+  docstring, or system message contradict another, or contradict what you
+  were told elsewhere? Write "flagged" and QUOTE both conflicting sides;
+  otherwise "ok". (Highest priority.)
+- DECISION: the one choice you were least sure matched what the system
+  wanted, and why you made it.
+- FRICTION: anything counterintuitive or unclear about the tools/contracts,
+  or "none". (Lowest priority.)
+
 You may append additional free-form content after these sections.
 </output_format>
 """
@@ -179,4 +191,5 @@ class DataGeneratorAgent(Agent):
         "### Files touched",
         "### Conclusions",
         "### Numbers",
+        "### Retrospective",
     )

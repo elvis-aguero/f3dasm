@@ -225,6 +225,35 @@ class ClaudeAdapter:
         _base_disallowed = ["WebSearch", "WebFetch", "Task", "ExitPlanMode", "computer"]
         _effective_disallowed = [t for t in _base_disallowed if t not in self.extra_allowed_tools]
 
+        # Non-blocking raw-oracle nudge: a PostToolUse hook that injects a
+        # reminder (capped per delegation = per ainvoke) when a Bash/Write
+        # call reaches the oracle directly instead of via get_evaluator().
+        # Best-effort — if the SDK hook API is unavailable, run without it.
+        _hooks = None
+        try:
+            from claude_agent_sdk import HookMatcher
+
+            from .base import OracleNudgeBudget
+            _nudge = OracleNudgeBudget()
+
+            async def _oracle_hook(input_data, tool_use_id, context):
+                msg = _nudge.check(
+                    input_data.get("tool_name", ""),
+                    input_data.get("tool_input") or {},
+                )
+                if not msg:
+                    return {}
+                return {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PostToolUse",
+                        "additionalContext": msg,
+                    }
+                }
+
+            _hooks = {"PostToolUse": [HookMatcher(hooks=[_oracle_hook])]}
+        except Exception:  # noqa: BLE001 — nudge is best-effort, never fatal
+            _hooks = None
+
         options = ClaudeAgentOptions(
             system_prompt=self.system_prompt,
             model=self.model,
@@ -238,6 +267,7 @@ class ClaudeAdapter:
             disallowed_tools=_effective_disallowed,
             permission_mode="bypassPermissions",
             strict_mcp_config=bool(mcp_servers) or bool(self.extra_mcp_servers),
+            **({"hooks": _hooks} if _hooks else {}),
         )
 
         prompt_str = _format_messages_as_prompt(messages)

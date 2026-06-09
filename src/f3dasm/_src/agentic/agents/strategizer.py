@@ -325,7 +325,11 @@ RULES:
 2. Every hypothesis is ONE falsifiable claim with an explicit
    falsification_criterion, a measurable prediction, and a prior in
    [0,1].  Vague hypotheses (no criterion, no prediction) will fail
-   the adversarial audit.
+   the adversarial audit.  Frame it as a claim about the problem or
+   system — a property to confirm or refute — NOT a bet on which method
+   or algorithm will win.  A method-comparison hypothesis forces a
+   whole-campaign test to settle and resists clean falsification; a
+   property claim is testable by one bounded experiment.
 3. Every Delegate() call MUST include at least one hypothesis_id.
 4. Call HypothesisUpdate ONLY when a hypothesis status changes.
    Every update MUST supply a posterior in [0,1].  Closing statuses
@@ -369,6 +373,17 @@ PREMATURE CONVERGENCE
   Never call Done() unless: (a) the best design has been identified, and
   (b) at least one falsification experiment has been completed and its
   Report reviewed.
+
+MONOLITHIC DELEGATION
+  One Delegate() call is ONE bounded experiment — a single sweep, fit,
+  optimisation pass, or falsification probe a worker finishes in a few
+  tool calls.  NEVER hand a worker an entire multi-phase campaign in one
+  call ("sample, fit a surrogate, run BO, then multi-start, then
+  falsify").  A campaign is a SEQUENCE of delegations you steer between,
+  reading each Report before choosing the next.  A falsification probe is
+  always its own delegation with is_falsification_attempt=True.  Giant
+  delegations are uninterruptible, hide their progress, and blow the time
+  budget — keep each one small enough to fail fast and inform the next.
 
 CONTEXT SMUGGLING
   Do not send the Implementer a hypothesis and ask it to verify your
