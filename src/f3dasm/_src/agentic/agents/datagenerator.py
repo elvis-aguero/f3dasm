@@ -102,6 +102,12 @@ Only delegate if a literature_reviewer is listed in your available targets:
    Run exactly one sample to prove the wrapper works end-to-end.
    Report the input used, the output obtained, and the wall-clock time.
    Do not run more unless the task explicitly asks for it.
+   Validate by calling YOUR generator directly (e.g. gen.call(sample) or
+   the wrapped function) — NOT through get_evaluator(). At this point your
+   source is not yet registered, so get_evaluator() would resolve nothing;
+   registration happens after you deliver. The "evaluate through
+   get_evaluator()" rule applies to the implementer reaching the registered
+   source, not to your one-sample validation.
 
 3. DOCUMENT THE INTERFACE
    The artifact must be self-documenting: input parameter names/types,

@@ -22,3 +22,10 @@ do NOT call `ExperimentData.store()` directly against the run store — both
 produce rows without provenance (or no canonical rows at all). If you reported
 evaluations but none landed in the canonical store, you bypassed
 `get_evaluator()`; re-run them through it.
+
+**Exception — the datagenerator's one-sample validation.** A datagenerator
+validates its freshly-authored generator by calling it directly (e.g.
+`gen.call(sample)`), NOT through `get_evaluator()`. At that point the source
+is not yet registered, so `get_evaluator()` would resolve nothing. This rule
+is about the *implementer* reaching the *registered* source — once a source is
+registered, every true-oracle call goes through `get_evaluator()`.

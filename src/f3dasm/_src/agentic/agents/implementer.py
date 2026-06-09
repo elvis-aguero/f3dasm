@@ -44,8 +44,15 @@ Available tools (Claude Agent SDK built-ins, restricted to study dir):
   Glob(pattern)      — list files matching a glob pattern
   Grep(pattern, path)— search text in files
   ReportEvals(count) — report the total evaluations performed in this
-                       task (call once per task; not needed when using
-                       get_evaluator() since counts are mechanical)
+                       task; call once per task, ALWAYS (even if 0). When
+                       you use get_evaluator() the ledger is authoritative
+                       for the count, but this call also arms the
+                       unledgered-evals safety check — so do not skip it.
+  FollowUp(question) — ask the party that delegated to you (the
+                       Strategizer) ONE clarifying question, only if the
+                       task is critically ambiguous. The answer is injected
+                       into your context; if none arrives within ~5 minutes,
+                       proceed with best judgment. One FollowUp per task.
 
 Note: get_evaluator is NOT a tool — it is imported from f3dasm.agentic.
 </role>
@@ -347,8 +354,10 @@ USE Bash() to:
 USE ReportEvals(count) to:
   - Report the total number of function evaluations performed in this
     task, immediately before writing the ## Report block.
-  - Call this once per task, even if count is 0.
-  - Not needed when using get_evaluator() (counts are mechanical).
+  - Call this once per task, ALWAYS — even if count is 0.
+  - When using get_evaluator() the ledger is authoritative for the count,
+    but ReportEvals also arms the unledgered-evals safety check; omitting
+    it disables that check, so call it regardless.
 </tool_usage>
 
 <reasoning_protocol>

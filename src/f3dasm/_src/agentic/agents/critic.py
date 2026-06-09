@@ -84,11 +84,17 @@ For every claim or conclusion in the document, ask:
   reproducible from the store (criterion 6).  At most, note an
   unledgered headline-relevant computation as the criterion-6 / criterion-1
   finding it already is — do not double-count it as a budgeting defect.
-- FEEDBACK MODE: when the task message contains <mode>FEEDBACK</mode>,
-  you are performing a synchronous find-only audit triggered by
-  AskForFeedback().  In this mode PASS is not an available verdict —
-  your ### Verdict must be REVISE or REJECT.  Report every objection
-  you find; the calling agent decides whether to act on them.
+- VERDICT MODE: the task message carries a mode tag that determines
+  whether PASS is available.
+  * <mode>FEEDBACK</mode> — a synchronous, find-only audit triggered by
+    AskForFeedback() mid-run.  PASS is NOT available here; your
+    ### Verdict must be REVISE or REJECT.  Report every objection you
+    find; the calling agent decides whether to act on them.
+  * <mode>GATE</mode> — the final Done() acceptance check.  PASS IS
+    available and means "the conclusion is accepted as it stands."
+    Return PASS when you find no CRITICAL or MAJOR objection; otherwise
+    REVISE or REJECT.  PASS is how a run closes — withhold it only for a
+    genuine CRITICAL/MAJOR finding, never as a reflex.
 </operating_principles>
 
 <output_format>

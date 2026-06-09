@@ -1214,8 +1214,10 @@ class StrategizerNode(AgentNode):
                 )
                 notes_path = str(_notes_dir or "")
                 task_msg = (
-                    "<mode>FEEDBACK</mode>\n\n"
-                    "Final gate check before run closes.\n\n"
+                    "<mode>GATE</mode>\n\n"
+                    "Final gate check before run closes. PASS to accept the "
+                    "conclusion; REVISE/REJECT only for a CRITICAL or MAJOR "
+                    "objection.\n\n"
                     "<paths>\n"
                     f"study_dir             = {_study_dir}\n"
                     f"debug_dir             = {_debug_dir}\n"
@@ -2064,12 +2066,13 @@ class StrategizerNode(AgentNode):
                 budget_warnings.append({
                     "role": "user",
                     "content": (
-                        f"CRITICAL: time budget fully consumed "
-                        f"({elapsed:.0f}s / {budget:.0f}s). "
-                        "Wrap up and call Done() now; do not start new "
-                        "delegations. (Budget is advisory — the run "
-                        "continues, but a hard cost backstop applies at "
-                        f"{int(RUN_BACKSTOP_MULTIPLE)}x budget.)"
+                        f"Time budget fully consumed "
+                        f"({elapsed:.0f}s / {budget:.0f}s). This is an "
+                        "advisory soft limit — the run is NOT terminated. "
+                        "Wind down: finish the experiment in flight, then "
+                        "wrap up and call Done(); avoid starting new "
+                        "delegations. A hard cost backstop applies only at "
+                        f"{int(RUN_BACKSTOP_MULTIPLE)}x budget."
                     ),
                 })
             elif pct >= 0.95:

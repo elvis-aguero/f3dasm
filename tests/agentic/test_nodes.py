@@ -3080,3 +3080,24 @@ def test_resolve_delegation_evals_store_dir_path_resolution(tmp_path):
     with patch.object(RunStateSummary, "from_store", return_value=stub):
         result = _resolve_delegation_evals(store_dir, "D001", 7)
     assert result == 42
+
+
+def test_a6_critic_gate_allows_pass_feedback_does_not():
+    """Regression for the A6 deadlock: the Done() acceptance gate must run the
+    critic in a mode where PASS is available; AskForFeedback must not."""
+    from f3dasm._src.agentic.agents.critic import (
+        ADVERSARIAL_CRITIQUE_SYSTEM_PROMPT,
+    )
+    p = ADVERSARIAL_CRITIQUE_SYSTEM_PROMPT
+    # Two distinct verdict modes documented.
+    assert "<mode>FEEDBACK</mode>" in p
+    assert "<mode>GATE</mode>" in p
+    # FEEDBACK forbids PASS; GATE allows it (PASS = accept / how a run closes).
+    assert "PASS is NOT available" in p
+    assert "PASS IS\n    available" in p or "PASS IS available" in p
+
+    # The Done() gate task message must use GATE mode, not FEEDBACK.
+    import inspect
+    from f3dasm._src.agentic import nodes
+    src = inspect.getsource(nodes)
+    assert "<mode>GATE</mode>" in src, "Done() gate must invoke critic in GATE mode"
