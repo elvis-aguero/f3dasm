@@ -7,6 +7,7 @@ import concurrent.futures
 import inspect as _inspect
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -394,20 +395,22 @@ class ClaudeAdapter:
         last_assistant = None
         last_result: Any = None
         gen = query(prompt=prompt_str, options=options)
-        # Idle-stream timeout — catches a genuinely stalled connection (no
-        # stream message at all) and turns it into a retryable TimeoutError.
-        # Scoped to model generation: while a tool runs the window stands down
-        # (see _phase), so legitimate multi-minute Bash jobs are never cut.
-        # Default 180s, NOT 60s: a resonance wet run showed the workload has
-        # legitimate ~90s pauses, and a slow first-token (prefill) after a large
-        # tool result repeatedly exceeded 60s — so 60s guillotined a legitimate
-        # in-progress generation and (via 5 retries re-feeding the same big
-        # context) FAILED a delegation that had done real work. 180s clears
-        # realistic prefill while still catching a truly dead stream in ~3 min.
+        # Idle-stream timeout — turns a silent stream into a retryable
+        # TimeoutError. Resets on EVERY stream message (the parser wraps all
+        # stream_event types, so ping/lifecycle events — if the CLI forwards
+        # them — reset it too). Scoped to model generation: while a tool runs
+        # the window stands down (see _phase), so long Bash jobs are never cut.
+        # OPEN QUESTION (being measured — see the stream_evt debug records
+        # below): does the bundled CLI forward ping/message_start during a
+        # silent prefill? If it does, 60s of silence = a genuinely dead stream
+        # and 60s is safe; if not, a slow first-token could be cut. An earlier
+        # 180s bump was a hunch (a resonance run had a delegation die here, but
+        # the fatal gap wasn't captured — only ~90s TOOL pauses were, which are
+        # correctly suspended). Reverted to 60s pending the measurement rather
+        # than paper over a possibly-genuine stall.
         # Tune via F3DASM_LLM_STREAM_IDLE_TIMEOUT; 0 disables.
-        # F3DASM_LLM_TOOL_IDLE_TIMEOUT caps tool execution (0 = uncapped; a
-        # runaway tool is the delegation watchdog's concern, not this timeout's).
-        _idle = float(os.environ.get("F3DASM_LLM_STREAM_IDLE_TIMEOUT", "180"))
+        # F3DASM_LLM_TOOL_IDLE_TIMEOUT caps tool execution (0 = uncapped).
+        _idle = float(os.environ.get("F3DASM_LLM_STREAM_IDLE_TIMEOUT", "60"))
         _tool_idle = float(
             os.environ.get("F3DASM_LLM_TOOL_IDLE_TIMEOUT", "0")
         )
@@ -488,11 +491,31 @@ class ClaudeAdapter:
                 )
                 if _idle > 0 else gen
             )
+            # Measurement clock: the first event's gap below = time-to-first
+            # stream event (≈ prefill latency).
+            _last_evt = [time.monotonic()]
             async for msg in _stream:
                 if _capture:
                     if isinstance(msg, StreamEvent):
                         _pcount[0] += 1
-                        _d = _extract_delta(getattr(msg, "event", {}) or {})
+                        _ev = getattr(msg, "event", {}) or {}
+                        _et = _ev.get("type", "?") if isinstance(
+                            _ev, dict) else "?"
+                        _now = time.monotonic()
+                        _gap = _now - _last_evt[0]
+                        _last_evt[0] = _now
+                        # Record every NON-delta event (ping, message_start/
+                        # stop, content_block_start/stop, message_delta) and any
+                        # delta after a >2s pause — so we can see whether the
+                        # stream stays alive (pings) during silent/prefill
+                        # phases and the true inter-event gap distribution.
+                        # This is what settles whether a 60s silence is a dead
+                        # stream or a legitimately-slow first token.
+                        if _et != "content_block_delta" or _gap > 2.0:
+                            append_transcript({
+                                "type": "stream_evt", "evt": _et,
+                                "gap_s": round(_gap, 2)})
+                        _d = _extract_delta(_ev)
                         if _d:
                             _pbuf.append(_d)
                         if _pcount[0] % _PARTIAL_FLUSH_EVERY == 0:

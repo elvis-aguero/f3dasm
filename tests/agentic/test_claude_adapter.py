@@ -183,6 +183,42 @@ def test_delegation_id_injected_into_session_env(monkeypatch):
     assert "F3DASM_DELEGATION_ID" not in cap["options"]["env"]
 
 
+def test_stream_event_types_captured_for_ping_measurement(tmp_path, monkeypatch):
+    """Records each non-delta StreamEvent's type + inter-event gap, so a run
+    reveals whether ping/lifecycle events arrive during silent phases (the
+    data that settles whether 60s silence is a dead stream or slow prefill)."""
+    import json
+    from f3dasm._src.agentic.backends.base import set_transcript_sink
+
+    class _SE:
+        def __init__(self, etype):
+            self.event = {"type": etype}
+
+    def _gen_factory(prompt, options):
+        async def _g(prompt, options):
+            yield _SE("message_start")
+            yield _SE("ping")
+            yield _SE("content_block_delta")  # delta, fast → not recorded
+            yield _AssistantMessage([_TextBlock("hi")])
+            yield _ResultMessage()
+        return _g
+
+    monkeypatch.setenv("F3DASM_DEBUG", "1")
+    mod = _install_fake_sdk(query=_gen_factory(None, None))
+    mod.StreamEvent = _SE
+    ClaudeAdapter = _get_adapter()
+    sink = tmp_path / "D001.jsonl"
+    set_transcript_sink(str(sink))
+    ClaudeAdapter("claude-3", "sys", None, []).invoke(
+        [{"role": "user", "content": "hi"}])
+    set_transcript_sink(None)
+
+    recs = [json.loads(x) for x in sink.read_text().strip().splitlines()]
+    evts = [r["evt"] for r in recs if r["type"] == "stream_evt"]
+    assert "message_start" in evts and "ping" in evts
+    assert all("gap_s" in r for r in recs if r["type"] == "stream_evt")
+
+
 def test_no_transcript_when_debug_off(tmp_path, monkeypatch):
     from f3dasm._src.agentic.backends.base import set_transcript_sink
     monkeypatch.delenv("F3DASM_DEBUG", raising=False)
