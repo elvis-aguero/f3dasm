@@ -401,3 +401,28 @@ def test_add_categorical_to_discrete():
     disc = DiscreteParameter(lower_bound=3, upper_bound=5)
     result = cat + disc
     assert isinstance(result, CategoricalParameter)
+
+
+def test_parameter_unit_roundtrips_and_is_backward_compatible():
+    """Optional `unit` metadata round-trips through to_dict/from_dict, is
+    omitted when unset (byte-identical to old domain.json), and absent units
+    in older files load as None."""
+    from f3dasm._src.design.parameter import ContinuousParameter, Parameter
+
+    # Unset → not serialized (backward compat).
+    assert "unit" not in ContinuousParameter(
+        lower_bound=0.0, upper_bound=5.0).to_dict()
+
+    # Set → round-trips.
+    p = ContinuousParameter(lower_bound=0.0, upper_bound=5.0)
+    p.unit = "kPa"
+    restored = Parameter.from_dict(p.to_dict())
+    assert restored.unit == "kPa"
+
+    # Old dict without "unit" → loads as None (no crash).
+    legacy = {"type": "float", "to_disk": False, "store_function": None,
+              "load_function": None, "lower_bound": 0.0, "upper_bound": 1.0}
+    assert getattr(Parameter.from_dict(legacy), "unit", "MISSING") is None
+
+    # Base object parameter accepts unit via constructor.
+    assert Parameter(unit="MPa").to_dict()["unit"] == "MPa"

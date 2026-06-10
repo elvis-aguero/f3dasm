@@ -118,6 +118,7 @@ class Parameter:
         store_function: Optional[StoreFunction] = None,
         load_function: Optional[LoadFunction] = None,
         load_kwargs: Optional[dict[str, Any]] = None,
+        unit: Optional[str] = None,
     ):
         """
         Initialize the Parameter.
@@ -174,6 +175,10 @@ class Parameter:
         self.store_function = store_function
         self.load_function = load_function
         self.load_kwargs = load_kwargs
+        # Optional physical unit (e.g. "kPa") — pure metadata, defaults None.
+        # Round-trips through to_dict/from_dict; absent in older domain.json is
+        # tolerated (→ None), so this is fully backward-compatible.
+        self.unit = unit
 
     def __str__(self):
         """Return a string representation of the Parameter.
@@ -297,6 +302,10 @@ class Parameter:
         if dataclasses.is_dataclass(self):
             for f in dataclasses.fields(self):
                 d[f.name] = getattr(self, f.name)
+        # Optional unit metadata — emitted only when set, so domain.json for
+        # unit-less parameters is byte-identical to before (backward compat).
+        if getattr(self, "unit", None) is not None:
+            d["unit"] = self.unit
         return d
 
     @classmethod
@@ -337,12 +346,16 @@ class Parameter:
                 bytes.fromhex(param_dict["load_kwargs"])
             )
 
+        # Optional unit metadata (absent in older files → None).
+        unit = param_dict.get("unit")
+
         if param_type == "object":
             return Parameter(
                 to_disk=param_dict["to_disk"],
                 store_function=store_function,
                 load_function=load_function,
                 load_kwargs=load_kwargs,
+                unit=unit,
             )
 
         param_cls = _PARAM_REGISTRY.get(param_type)
@@ -350,7 +363,12 @@ class Parameter:
             raise ValueError(f"Unknown parameter type: {param_type}")
         fields = {f.name for f in dataclasses.fields(param_cls)}
         kwargs = {k: v for k, v in param_dict.items() if k in fields}
-        return param_cls(**kwargs)
+        param = param_cls(**kwargs)
+        # Restore unit post-construction (it is metadata, not a dataclass field,
+        # so it isn't in the constructor kwargs).
+        if unit is not None:
+            param.unit = unit
+        return param
 
 
 # =============================================================================

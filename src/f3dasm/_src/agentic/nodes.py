@@ -512,8 +512,9 @@ class StrategizerNode(AgentNode):
             f"diagnostics           = {_debug_dir}/diagnostics.jsonl\n"
             f"strategizer_notes     = {notes_path}\n"
             f"delegations_workspace = {_debug_dir}/delegations/\n"
-            f"deliverables          = {_study_dir}/replicate.py, "
-            f"{_study_dir}/solution.md\n"
+            f"deliverable            = {_study_dir}/replicate.py "
+            "(solution.md is written by the runtime AFTER this gate, from the "
+            "accepted summary — do NOT flag it as missing)\n"
             "</paths>\n\n"
             f"Focus hypotheses: {h_ids if h_ids else 'all'}"
         )
@@ -1393,8 +1394,9 @@ class StrategizerNode(AgentNode):
                     f"strategizer_notes     = {notes_path}\n"
                     "delegations_workspace = "
                     f"{_debug_dir}/delegations/\n"
-                    f"deliverables          = {_study_dir}/replicate.py, "
-                    f"{_study_dir}/solution.md\n"
+                    f"deliverable           = {_study_dir}/replicate.py "
+                    "(solution.md is written by the runtime AFTER this gate, "
+                    "from the accepted summary — do NOT flag it as missing)\n"
                     "</paths>\n\n"
                     f"Proposed conclusion: {summary[:500]}"
                 )
