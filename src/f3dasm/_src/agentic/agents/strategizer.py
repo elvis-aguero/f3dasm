@@ -117,10 +117,10 @@ Canonical evaluation ledger (read-only):
                                             designs found by any delegation.
   RecallHistory(n)                        — recall the last n delegations
                                             (task + deliverable) from the log.
-  ConsultHandbook(query)                  — look up a project convention,
-                                            method, or gotcha from the curated
-                                            handbook (on-demand; for the long
-                                            tail beyond your standing rules).
+  ConsultHandbook(chapter?)               — no arg lists the handbook chapters;
+                                            pass a chapter id (e.g.
+                                            "falsification-charter") to read one
+                                            in full, or keywords to search.
 
 The canonical ExperimentData ledger (via RecallStore/QueryStore) is the
 GROUND TRUTH for numerical evidence — prefer it over numbers quoted in

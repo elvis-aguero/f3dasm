@@ -28,6 +28,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .charter import FALSIFICATION_CHARTER
+
 _ENTRIES_DIR = Path(__file__).parent / "entries"
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)
 _TOKEN_RE = re.compile(r"[a-z0-9_]+")
@@ -47,6 +49,15 @@ class KBEntry:
     def text(self) -> str:
         """Full searchable text (title + tags + body)."""
         return f"{self.title}\n{' '.join(self.tags)}\n{self.body}"
+
+    @property
+    def summary(self) -> str:
+        """First non-empty body line, trimmed — the one-liner for the TOC."""
+        for line in self.body.splitlines():
+            s = line.strip()
+            if s:
+                return s if len(s) <= 88 else s[:85] + "..."
+        return ""
 
     def render(self) -> str:
         """Human/agent-facing rendering of the entry."""
@@ -96,6 +107,23 @@ def _load_entry(path: Path) -> KBEntry | None:
     )
 
 
+def _charter_entry() -> KBEntry:
+    """The falsification charter exposed as a handbook chapter.
+
+    Sourced from the single ``FALSIFICATION_CHARTER`` constant (the same text
+    push-injected into the strategizer/critic prompts) — NOT a duplicated file,
+    so there is one source and no drift. It is a canonical chapter, always
+    present regardless of the on-disk corpus.
+    """
+    return KBEntry(
+        id="falsification-charter",
+        title="Popperian validation — the falsification charter",
+        tags=["hypothesis", "falsification", "popper", "verdict", "charter"],
+        audience=["strategizer", "critic", "implementer"],
+        body=FALSIFICATION_CHARTER,
+    )
+
+
 class KnowledgeBase:
     """Curated, on-demand knowledge base of agentic conventions.
 
@@ -113,7 +141,9 @@ class KnowledgeBase:
     def load(cls, entries_dir: Path | None = None) -> "KnowledgeBase":
         """Load all curated entries from the corpus directory."""
         d = entries_dir or _ENTRIES_DIR
-        entries: list[KBEntry] = []
+        # The charter is a canonical chapter, always first — it is the
+        # contract everything else is consistent with.
+        entries: list[KBEntry] = [_charter_entry()]
         if d.is_dir():
             for path in sorted(d.glob("*.md")):
                 entry = _load_entry(path)
@@ -127,6 +157,23 @@ class KnowledgeBase:
 
     def get(self, entry_id: str) -> KBEntry | None:
         return self._by_id.get(entry_id)
+
+    def toc(self) -> str:
+        """The table of contents: one line per chapter (id — title + summary).
+
+        Cheap and complete — the agent sees every chapter and drills into one
+        by id, instead of guessing keywords that may match nothing.
+        """
+        lines = [
+            'HANDBOOK — available chapters. Call ConsultHandbook("<id>") to '
+            'read one in full, or ConsultHandbook("<keywords>") to search.',
+            "",
+        ]
+        for e in self._entries:
+            lines.append(f"- {e.id} — {e.title}")
+            if e.summary:
+                lines.append(f"    {e.summary}")
+        return "\n".join(lines)
 
     def search(self, query: str, k: int = 3) -> list[KBEntry]:
         """Return up to ``k`` entries most relevant to ``query``.

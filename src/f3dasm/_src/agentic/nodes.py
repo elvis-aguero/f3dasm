@@ -236,23 +236,30 @@ def _extract_report_section(text: str, name: str) -> str:
     return m.group(1).strip() if m else ""
 
 
-def _consult_handbook(query: str) -> str:
-    """ConsultHandbook tool: look up a project convention / idiom / gotcha
-    from the curated handbook (the agentic knowledge base), on demand.
+def _consult_handbook(query: str = "") -> str:
+    """ConsultHandbook tool: browse the curated handbook of project conventions.
 
-    The always-needed core (e.g. the verified f3dasm idioms) is already in the
-    prompt; this is for the long tail. Read-only and best-effort — never raises
-    into the agent loop.
+    Call with NO argument to get the table of contents (every chapter's id +
+    title). Pass a chapter id (e.g. "falsification-charter") to read that one
+    chapter in full. Pass free-text keywords to search when you don't know the
+    id. Read-only and best-effort — never raises into the agent loop.
     """
     try:
         from .knowledge import KnowledgeBase
-        hits = KnowledgeBase.load().search(str(query), k=3)
+        kb = KnowledgeBase.load()
     except Exception as exc:  # noqa: BLE001
         return f"(handbook unavailable: {exc})"
+    q = str(query).strip()
+    if not q:
+        return kb.toc()
+    entry = kb.get(q)  # exact chapter id → full chapter
+    if entry is not None:
+        return entry.render()
+    hits = kb.search(q, k=3)  # otherwise keyword search
     if not hits:
         return (
-            "No handbook entry matched that query. Proceed with best "
-            "judgment — the core f3dasm idioms are already in your prompt."
+            "No chapter id or keyword matched. Call ConsultHandbook() with no "
+            "argument to list the available chapters."
         )
     return "\n\n---\n\n".join(e.render() for e in hits)
 
