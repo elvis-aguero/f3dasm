@@ -86,6 +86,11 @@ steps and how model selection works.
 
 ## Run a study
 
+> **Authoring a study folder?** See the focused, executable contract at
+> [`docs/agentic/authoring-a-study.md`](docs/agentic/authoring-a-study.md)
+> (required/optional files, the evaluator contract, the pre-flight checklist,
+> and a runnable example pinned by `tests/agentic/test_study_contract.py`).
+
 ```bash
 # existing study
 uv run python -m f3dasm.agentic studies/agentic_black_box_8d
@@ -153,7 +158,8 @@ backend: claude                      # "claude" (default) or "ollama"
 budget: "00:30:00"                   # HH:MM:SS wall-clock (soft warn at 95/100%,
                                      #   HARD stop past the 5% cleanup window)
 eval_budget: 1000                    # max function evaluations (soft warn)
-checkpoint_every: 30                 # delegations between strategizer checkpoints
+checkpoint_every: 30                 # NOTE: currently a NO-OP — not read by the
+                                     #   runtime today; setting it does nothing.
 
 # Declares the run's oracle so the runtime can instrument it (see "canonical
 # ledger"). OPTIONAL — absent => honor-system ReportEvals fallback.

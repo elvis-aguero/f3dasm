@@ -6,6 +6,8 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -47,7 +49,16 @@ def test_build_image_calls_docker_build(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_run_claude_assembles_correct_docker_run_args(tmp_path, monkeypatch):
-    """run() with backend='claude' must mount study_dir and pass ANTHROPIC_API_KEY."""
+    """run() with backend='claude' mounts study_dir and forwards a credential.
+
+    With only ANTHROPIC_API_KEY set (no subscription token/creds), the runner
+    falls back to the key — passed as `-e ANTHROPIC_API_KEY` *passthrough* (the
+    value is read from the env by Docker, NOT embedded in argv) — and warns that
+    subscription auth is preferred. (See test_container_runner_auth.py for the
+    full precedence.)"""
+    # Deterministic: no subscription credential available → fallback path.
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "no_creds_here"))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
     from f3dasm._src.agentic.container_runner import ContainerRunner
@@ -57,7 +68,8 @@ def test_run_claude_assembles_correct_docker_run_args(tmp_path, monkeypatch):
     proc_mock = _make_proc_mock(0)
 
     with patch("subprocess.Popen", return_value=proc_mock) as mock_popen:
-        exit_code = runner.run()
+        with pytest.warns(UserWarning, match="Subscription auth is preferred"):
+            exit_code = runner.run()
 
     assert exit_code == 0
     mock_popen.assert_called_once()
@@ -70,10 +82,10 @@ def test_run_claude_assembles_correct_docker_run_args(tmp_path, monkeypatch):
     mount_arg = cmd[cmd.index("-v") + 1]
     assert str(tmp_path) in mount_arg
     assert ":/study" in mount_arg
-    # API key env var
-    assert "-e" in cmd
+    # API key forwarded as passthrough: `-e ANTHROPIC_API_KEY` (no =value in argv)
     env_args = [cmd[i + 1] for i, c in enumerate(cmd) if c == "-e"]
-    assert any("ANTHROPIC_API_KEY=sk-test-key" == a for a in env_args)
+    assert "ANTHROPIC_API_KEY" in env_args
+    assert not any("=sk-test-key" in a for a in env_args), "secret leaked into argv"
     # Image and container study dir
     assert "f3dasm:test" in cmd
     assert "/study" in cmd
