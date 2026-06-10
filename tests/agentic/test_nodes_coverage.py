@@ -966,6 +966,22 @@ def test_classify_response_missing_subsections():
     assert result is not None
 
 
+def test_classify_response_honors_per_agent_sections():
+    """Audit Finding 4: validation uses the passed report_sections (DRY single
+    source), so e.g. a missing ### Retrospective is caught when required."""
+    from f3dasm._src.agentic.nodes import _classify_response
+
+    body = (
+        "A" * 200 +
+        "\n## Report\n### Actions taken\nx\n### Conclusions\ny\n"
+        # has Actions + Conclusions, but NO Retrospective
+    )
+    secs = ["### Actions taken", "### Conclusions", "### Retrospective"]
+    assert _classify_response(body, secs) is not None  # Retrospective missing
+    # Same body passes when Retrospective isn't in the required set.
+    assert _classify_response(body, ["### Actions taken", "### Conclusions"]) is None
+
+
 def test_classify_response_valid_report():
     """_classify_response returns None for a well-formed report."""
     from f3dasm._src.agentic.nodes import _classify_response

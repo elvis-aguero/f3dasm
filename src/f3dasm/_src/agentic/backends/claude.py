@@ -382,8 +382,8 @@ class ClaudeAdapter:
             env=_sess_env,
             # Partial streaming → a fine-grained heartbeat: the stream emits a
             # StreamEvent sub-second while genuinely generating, so total
-            # silence becomes a reliable, near-instant stall signal and the
-            # idle timeout can be tight (60s) without false-positiving a
+            # silence becomes a reliable stall signal and the
+            # idle timeout can be bounded without false-positiving a
             # slow-but-working generation.
             include_partial_messages=True,
             **({"hooks": _hooks} if _hooks else {}),
@@ -394,21 +394,20 @@ class ClaudeAdapter:
         last_assistant = None
         last_result: Any = None
         gen = query(prompt=prompt_str, options=options)
-        # Idle-stream timeout. With include_partial_messages on, the stream
-        # emits a StreamEvent continuously (sub-second) during real generation,
-        # so this idle window measures TRUE silence: 60s of no event at all
-        # means a stalled connection, caught in ~1 min — not a slow-but-working
-        # call (whose only legit silence is time-to-first-token, well under
-        # 60s; if that ever trips, retry_on_transient simply retries). On trip,
-        # raises TimeoutError → retry_on_transient (wrapping invoke) retries.
+        # Idle-stream timeout — catches a genuinely stalled connection (no
+        # stream message at all) and turns it into a retryable TimeoutError.
+        # Scoped to model generation: while a tool runs the window stands down
+        # (see _phase), so legitimate multi-minute Bash jobs are never cut.
+        # Default 180s, NOT 60s: a resonance wet run showed the workload has
+        # legitimate ~90s pauses, and a slow first-token (prefill) after a large
+        # tool result repeatedly exceeded 60s — so 60s guillotined a legitimate
+        # in-progress generation and (via 5 retries re-feeding the same big
+        # context) FAILED a delegation that had done real work. 180s clears
+        # realistic prefill while still catching a truly dead stream in ~3 min.
         # Tune via F3DASM_LLM_STREAM_IDLE_TIMEOUT; 0 disables.
-        # The window is scoped to model generation: while a tool runs (a worker
-        # executing a multi-minute Bash job emits no stream), the tight window
-        # stands down — see _phase below — so legitimate long tool execution is
-        # never mistaken for a stalled stream. F3DASM_LLM_TOOL_IDLE_TIMEOUT
-        # caps tool execution (0 = uncapped; a runaway tool is the delegation
-        # watchdog's concern, not this timeout's).
-        _idle = float(os.environ.get("F3DASM_LLM_STREAM_IDLE_TIMEOUT", "60"))
+        # F3DASM_LLM_TOOL_IDLE_TIMEOUT caps tool execution (0 = uncapped; a
+        # runaway tool is the delegation watchdog's concern, not this timeout's).
+        _idle = float(os.environ.get("F3DASM_LLM_STREAM_IDLE_TIMEOUT", "180"))
         _tool_idle = float(
             os.environ.get("F3DASM_LLM_TOOL_IDLE_TIMEOUT", "0")
         )

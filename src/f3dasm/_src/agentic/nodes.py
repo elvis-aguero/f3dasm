@@ -861,7 +861,14 @@ class StrategizerNode(AgentNode):
                     messages = [{"role": "user", "content": task_msg}]
                     text = worker.invoke(messages)
 
-                    diagnosis = _classify_response(text)
+                    # Validate against THIS agent's declared report_sections
+                    # (audit Finding 4 — report_sections is now the single
+                    # source of truth, not a hardcoded list), so e.g. a missing
+                    # ### Retrospective earns one corrective retry.
+                    _req_sections = list(
+                        getattr(_target_agent, "report_sections", None) or []
+                    ) or None
+                    diagnosis = _classify_response(text, _req_sections)
                     if diagnosis is not None:
                         retry_messages = messages + [
                             {"role": "ai", "content": text},
