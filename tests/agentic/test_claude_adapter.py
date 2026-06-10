@@ -143,6 +143,46 @@ def test_partials_flushed_for_incomplete_turn(tmp_path, monkeypatch):
     assert any("tok49" in r["text"] for r in partials)
 
 
+def _capture_options_gen(captured: dict):
+    """A fake query that records the ClaudeAgentOptions dict it was given."""
+    async def _gen(prompt, options):
+        captured["options"] = options
+        yield _AssistantMessage([_TextBlock("ok")])
+        yield _ResultMessage()
+    return _gen
+
+
+def test_session_is_hermetic_setting_sources_empty():
+    """#1 fresh hooks: sessions load NO filesystem settings, so worker/critic
+    subprocesses don't inherit the developer's global ~/.claude hooks."""
+    cap: dict = {}
+    _install_fake_sdk(query=_capture_options_gen(cap))
+    ClaudeAdapter = _get_adapter()
+    ClaudeAdapter("claude-3", "sys", None, []).invoke(
+        [{"role": "user", "content": "hi"}])
+    assert cap["options"]["setting_sources"] == []
+
+
+def test_delegation_id_injected_into_session_env(monkeypatch):
+    """Finding 2: the bound delegation id reaches the session env as
+    F3DASM_DELEGATION_ID so get_evaluator() resolves without a cd into D###."""
+    from f3dasm._src.agentic.backends.base import set_delegation_id
+    cap: dict = {}
+    _install_fake_sdk(query=_capture_options_gen(cap))
+    ClaudeAdapter = _get_adapter()
+    adapter = ClaudeAdapter("claude-3", "sys", None, [])
+
+    set_delegation_id("D007")
+    adapter.invoke([{"role": "user", "content": "hi"}])
+    set_delegation_id(None)
+    assert cap["options"]["env"].get("F3DASM_DELEGATION_ID") == "D007"
+
+    # With no delegation bound, the key is absent (no stray injection).
+    cap.clear()
+    adapter.invoke([{"role": "user", "content": "hi"}])
+    assert "F3DASM_DELEGATION_ID" not in cap["options"]["env"]
+
+
 def test_no_transcript_when_debug_off(tmp_path, monkeypatch):
     from f3dasm._src.agentic.backends.base import set_transcript_sink
     monkeypatch.delenv("F3DASM_DEBUG", raising=False)

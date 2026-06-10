@@ -40,6 +40,21 @@ def get_transcript_sink() -> "str | None":
     return getattr(_transcript_tls, "path", None)
 
 
+def set_delegation_id(delegation_id: "str | None") -> None:
+    """Bind this thread's delegation id (None clears it).
+
+    Thread-local so concurrent delegations don't clobber each other. The Claude
+    backend injects it as a per-session ``F3DASM_DELEGATION_ID`` env var so
+    ``get_evaluator()`` resolves without the worker having to ``cd`` into its
+    ``D###`` directory first (audit Finding 2).
+    """
+    _transcript_tls.delegation_id = delegation_id
+
+
+def get_delegation_id() -> "str | None":
+    return getattr(_transcript_tls, "delegation_id", None)
+
+
 def append_transcript(record: dict) -> None:
     """Best-effort append one JSON record to the active transcript.
 

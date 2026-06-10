@@ -798,8 +798,15 @@ class StrategizerNode(AgentNode):
                     from .agent_prompts import IMPLEMENTER_REPORT_RETRY_PROMPT
                     from .backends.base import (
                         debug_enabled as _dbg,
+                        set_delegation_id as _set_did,
                         set_transcript_sink as _set_sink,
                     )
+
+                    # Bind the delegation id for this worker thread so the
+                    # backend can inject F3DASM_DELEGATION_ID into the session
+                    # env → get_evaluator() resolves without a mandatory cd
+                    # into D### (audit Finding 2).
+                    _set_did(delegation_id)
 
                     # DEBUG: stream this worker's full reasoning + tool-calls
                     # to debug/transcripts/{delegation_id}.jsonl (thread-local;

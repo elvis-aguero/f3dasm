@@ -333,6 +333,16 @@ class ClaudeAdapter:
         except Exception:  # noqa: BLE001 — nudge is best-effort, never fatal
             _hooks = None
 
+        # Per-session env: inject the delegation id (race-safe, thread-local)
+        # so get_evaluator() resolves without the worker having to cd into its
+        # D### dir (audit Finding 2). The SDK MERGES this over the inherited
+        # environment (PATH etc. preserved), so a bare extra key is safe.
+        from .base import get_delegation_id
+        _sess_env: dict = {}
+        _did = get_delegation_id()
+        if _did:
+            _sess_env["F3DASM_DELEGATION_ID"] = _did
+
         options = ClaudeAgentOptions(
             system_prompt=self.system_prompt,
             model=self.model,
@@ -346,6 +356,13 @@ class ClaudeAdapter:
             disallowed_tools=_effective_disallowed,
             permission_mode="bypassPermissions",
             strict_mcp_config=bool(mcp_servers) or bool(self.extra_mcp_servers),
+            # Hermetic session: load NO filesystem settings, so worker/critic
+            # subprocesses don't inherit the developer's global ~/.claude hooks
+            # (e.g. cbm-code-discovery-gate, which blocked legitimate Read calls
+            # for workers AND the critic). Our own hooks are passed
+            # programmatically via options.hooks below (audit/#1: fresh hooks).
+            setting_sources=[],
+            env=_sess_env,
             # Partial streaming → a fine-grained heartbeat: the stream emits a
             # StreamEvent sub-second while genuinely generating, so total
             # silence becomes a reliable, near-instant stall signal and the
