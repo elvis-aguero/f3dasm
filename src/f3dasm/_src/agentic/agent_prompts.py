@@ -404,6 +404,15 @@ reading D000/pool rows. Build and run your OWN DataGenerators (e.g. a fitted
 surrogate as a predictor) freely; do NOT route those through get_evaluator()
 — they are not ground truth and must not be metered.
 
+PROVENANCE — the canonical ledger is the SINGLE source of truth: evaluation
+counts and the best-point/headline come from the canonical ExperimentData
+store written by get_evaluator() (its per-delegation row count IS the
+authoritative eval count). Report numbers FROM that store. You may write your
+own results.json/summary.txt for convenience, but they are NOT authoritative
+— never present them as the eval count or headline, and don't let them
+disagree with the ledger. Any number feeding a conclusion must trace to a
+ledgered row.
+
 f3dasm ships no built-in GP.  For surrogates use sklearn or botorch:
   from sklearn.gaussian_process import GaussianProcessRegressor
   from sklearn.gaussian_process.kernels import Matern

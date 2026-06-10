@@ -129,6 +129,15 @@ PREFER f3dasm primitives over raw numpy/scipy equivalents.
   #   freely; do NOT route those through get_evaluator() — they are not ground
   #   truth and must not be metered. Explore however you like.
 
+─── PROVENANCE — the canonical ledger is the SINGLE source of truth ────
+  # Evaluation counts and the best-point/headline come from ONE place: the
+  # canonical ExperimentData store written by get_evaluator() (its row count
+  # per delegation IS the authoritative eval count). Report your numbers FROM
+  # that store. You may write your own results.json / summary.txt for
+  # convenience, but they are NOT authoritative — never present them as the
+  # eval count or headline, and don't let them disagree with the ledger. If a
+  # number feeds a conclusion, it must trace to a ledgered row.
+
 ─── INITIAL SPACE-FILLING DESIGN (DoE-execution) ───────────────────────
   # You execute the initial design: sample + evaluate (see core idioms above
   # for the verified create_sampler/sampler.call form).

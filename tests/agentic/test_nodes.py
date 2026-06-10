@@ -2142,6 +2142,29 @@ def _spec_with_write_deliverable():
     )
 
 
+def test_invoke_critic_persists_review_to_disk(tmp_path):
+    """#7: the critic's verdict/review is always written to disk (the PASS
+    branch never echoes it to the strategizer, so this is the audit trail)."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    node = StrategizerNode(
+        StubAdapter(), name="strategizer",
+        outgoing=["implementer", "critic"], spec=_spec_with_critic(),
+        worker_adapters={
+            "implementer": StubAdapter(),
+            "critic": MockCriticAdapter(verdict="REVISE"),
+        },
+    )
+    node._current_notes_dir = tmp_path / "debug" / "strategizer_notes"
+    node._current_notes_dir.mkdir(parents=True)
+
+    out = node._invoke_critic("<mode>GATE</mode> review this")
+    assert "REVISE" in out
+    review = tmp_path / "debug" / "critic_reviews" / "call_001.md"
+    assert review.exists(), "critic review not persisted to disk"
+    assert "Verdict" in review.read_text()
+
+
 def test_missing_deliverables_normalizes_workspace_prefix(tmp_path):
     """A config 'workspace/solution.md' must match the bare file WriteDeliverable
     actually writes at study_dir/ (audit Finding 1 — the resonance UNGATED bug)."""

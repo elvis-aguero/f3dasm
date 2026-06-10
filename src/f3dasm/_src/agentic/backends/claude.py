@@ -68,8 +68,25 @@ def _run_async_safe(coro: Any) -> Any:
         loop = None
 
     if loop is not None and loop.is_running():
+        # Nested-loop case (e.g. the critic invoked from inside the
+        # strategizer's running ainvoke): we hop to a fresh thread, so
+        # propagate the thread-local context (transcript sink + delegation id)
+        # into it — otherwise the critic's stream/env would silently lose them.
+        from .base import (
+            get_delegation_id,
+            get_transcript_sink,
+            set_delegation_id,
+            set_transcript_sink,
+        )
+        _sink, _did = get_transcript_sink(), get_delegation_id()
+
+        def _runner() -> Any:
+            set_transcript_sink(_sink)
+            set_delegation_id(_did)
+            return asyncio.run(coro)
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            return ex.submit(asyncio.run, coro).result()
+            return ex.submit(_runner).result()
     else:
         return asyncio.run(coro)
 
