@@ -1398,7 +1398,11 @@ class StrategizerNode(AgentNode):
                     "(solution.md is written by the runtime AFTER this gate, "
                     "from the accepted summary — do NOT flag it as missing)\n"
                     "</paths>\n\n"
-                    f"Proposed conclusion: {summary[:500]}"
+                    # FULL conclusion — never truncate what the adversarial gate
+                    # must validate (a head-excerpt would let an over-claim in
+                    # the body pass unseen). A Done() summary is small; context
+                    # is not a concern, and final_summary.md is also available.
+                    f"Proposed conclusion:\n{summary}"
                 )
                 import json as _json
                 ledger_dump = "(no hypotheses)"
