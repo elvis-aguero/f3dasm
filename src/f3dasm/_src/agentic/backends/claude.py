@@ -367,6 +367,9 @@ class ClaudeAdapter:
         if _did:
             _sess_env["F3DASM_DELEGATION_ID"] = _did
 
+        _max_buf_mb = float(os.environ.get("F3DASM_LLM_MAX_BUFFER_MB", "30"))
+        _max_buf = int(_max_buf_mb * 1024 * 1024)
+
         options = ClaudeAgentOptions(
             system_prompt=self.system_prompt,
             model=self.model,
@@ -387,6 +390,14 @@ class ClaudeAdapter:
             # programmatically via options.hooks below (audit/#1: fresh hooks).
             setting_sources=[],
             env=_sess_env,
+            # Stream-message buffer ceiling. Default 1MB is far too small for a
+            # literature reviewer whose tools return full PDFs — a single >1MB
+            # MCP tool result overflowed it and FATALLY (non-retried) killed the
+            # whole delegation (D003). 30MB clears realistic PDFs; non-PDF
+            # results never approach it. A result still exceeding this is caught
+            # gracefully below (turn cut short + marker), not a fatal crash.
+            # Tune via F3DASM_LLM_MAX_BUFFER_MB.
+            max_buffer_size=_max_buf,
             # Partial streaming → a fine-grained heartbeat: the stream emits a
             # StreamEvent sub-second while genuinely generating, so total
             # silence becomes a reliable stall signal and the
@@ -400,6 +411,7 @@ class ClaudeAdapter:
 
         last_assistant = None
         last_result: Any = None
+        _buffer_overflowed = False
         gen = query(prompt=prompt_str, options=options)
         # Idle-stream timeout — turns a silent stream into a retryable
         # TimeoutError. Resets on EVERY stream message. Scoped to model
@@ -540,6 +552,17 @@ class ClaudeAdapter:
                 elif isinstance(msg, ResultMessage):
                     last_result = msg
                     break
+        except Exception as exc:  # noqa: BLE001
+            _m = str(exc).lower()
+            if "maximum buffer size" in _m or "exceeded maximum" in _m:
+                # Graceful contour: a single tool result (e.g. a huge PDF)
+                # overflowed the stream buffer. The old behavior was a fatal,
+                # NON-retried crash that killed the whole delegation (D003).
+                # Instead, end the turn with what we have + a marker so the
+                # agent can retry the fetch smaller — the delegation survives.
+                _buffer_overflowed = True
+            else:
+                raise
         finally:
             if _capture:
                 _flush_partial()  # disclose a stuck/torn-down turn's tail
@@ -564,6 +587,15 @@ class ClaudeAdapter:
             for block in last_assistant.content:
                 if isinstance(block, TextBlock):
                     text += block.text
+        if _buffer_overflowed:
+            _note = (
+                f"[STREAM NOTE: a tool returned more than {_max_buf_mb:.0f} MB "
+                "in a single result and overflowed the message buffer; that "
+                "result was dropped and this turn was cut short (the delegation "
+                "did NOT crash). Re-run the tool with a smaller/narrower request "
+                "— fewer items, or a summary/extract instead of full text.]"
+            )
+            text = (text + "\n\n" + _note) if text else _note
         return text
 
     def invoke(self, messages: list[dict]) -> str:

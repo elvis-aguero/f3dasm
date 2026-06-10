@@ -168,6 +168,60 @@ def test_infer_schema_skips_underscore_closure_params():
     assert set(schema.get("required", [])) == {"path", "body"}
 
 
+def test_max_buffer_size_is_set_and_tunable(monkeypatch):
+    """The 1MB default crashed the lit reviewer on a >1MB PDF result; we set
+    30MB (env-tunable) so realistic large tool results don't overflow."""
+    cap: dict = {}
+    _install_fake_sdk(query=_capture_options_gen(cap))
+    ClaudeAdapter = _get_adapter()
+    ClaudeAdapter("claude-3", "sys", None, []).invoke(
+        [{"role": "user", "content": "hi"}])
+    assert cap["options"]["max_buffer_size"] == 30 * 1024 * 1024
+    cap.clear()
+    monkeypatch.setenv("F3DASM_LLM_MAX_BUFFER_MB", "50")
+    _install_fake_sdk(query=_capture_options_gen(cap))
+    _get_adapter()("claude-3", "sys", None, []).invoke(
+        [{"role": "user", "content": "hi"}])
+    assert cap["options"]["max_buffer_size"] == 50 * 1024 * 1024
+
+
+def test_buffer_overflow_is_graceful_not_fatal(monkeypatch):
+    """A buffer-overflow mid-stream must NOT crash the delegation — the turn
+    ends with a clear marker so the agent can retry smaller (gracefully
+    contour), instead of the old fatal non-retried FAILED."""
+    def _overflow_gen(prompt, options):
+        async def _g(prompt, options):
+            yield _AssistantMessage([_TextBlock("partial work")])
+            raise Exception(
+                "Failed to decode JSON: JSON message exceeded maximum "
+                "buffer size of 1048576 bytes")
+        return _g
+    _install_fake_sdk(query=_overflow_gen(None, None))
+    ClaudeAdapter = _get_adapter()
+    # Does NOT raise — returns gracefully with the marker appended.
+    out = ClaudeAdapter("claude-3", "sys", None, []).invoke(
+        [{"role": "user", "content": "hi"}])
+    assert "partial work" in out
+    assert "overflowed the message buffer" in out
+
+
+def test_non_buffer_stream_error_still_raises():
+    """Only buffer-overflow is contoured; other stream errors still propagate
+    (so retry_on_transient / FAILED handling stays intact)."""
+    import pytest as _pytest
+
+    def _err_gen(prompt, options):
+        async def _g(prompt, options):
+            yield _AssistantMessage([_TextBlock("x")])
+            raise RuntimeError("some other fatal error")
+        return _g
+    _install_fake_sdk(query=_err_gen(None, None))
+    ClaudeAdapter = _get_adapter()
+    with _pytest.raises(RuntimeError):
+        ClaudeAdapter("claude-3", "sys", None, []).invoke(
+            [{"role": "user", "content": "hi"}])
+
+
 def test_session_is_hermetic_setting_sources_empty():
     """#1 fresh hooks: sessions load NO filesystem settings, so worker/critic
     subprocesses don't inherit the developer's global ~/.claude hooks."""
