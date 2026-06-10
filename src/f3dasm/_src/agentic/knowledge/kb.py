@@ -138,7 +138,7 @@ class KnowledgeBase:
         self._by_id = {e.id: e for e in entries}
 
     @classmethod
-    def load(cls, entries_dir: Path | None = None) -> "KnowledgeBase":
+    def load(cls, entries_dir: Path | None = None) -> KnowledgeBase:
         """Load all curated entries from the corpus directory."""
         d = entries_dir or _ENTRIES_DIR
         # The charter is a canonical chapter, always first — it is the

@@ -118,7 +118,7 @@ def register_evaluator_entrypoint(
     run_config_path: Path,
     generator_file: Path | str,
     attr: str,
-    output_names: "list | None" = None,
+    output_names: list | None = None,
 ) -> str:
     """Register an agent-authored DataGenerator as the canonical oracle.
 
@@ -552,7 +552,7 @@ class AgenticRun:
             f"| total_tokens | {tokens_in + tokens_out:,} |\n"
             f"| estimated_cost | {cost_str} |\n"
             + (
-                f"\n## Tool-call errors per node\n\n"
+                "\n## Tool-call errors per node\n\n"
                 + "| node | error_count |\n"
                 + "|------|-------------|\n"
                 + "".join(
@@ -640,6 +640,7 @@ class AgenticRun:
 
         if backend == "ollama":
             import os
+
             from .backends.ollama import OllamaAdapter
             _closure_tool_names = {
                 "Done", "FollowUp", "WriteNote", "ReadNote", "ReportEvals"

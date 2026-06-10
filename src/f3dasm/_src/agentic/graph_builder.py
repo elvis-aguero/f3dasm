@@ -11,7 +11,11 @@ from langgraph.graph import StateGraph
 from .backends.base import Agent, Graph
 from .delegation_log import DelegationLog
 from .graph_state import AgenticState
-from .nodes import ImplementerNode, StrategizerNode, WorkerNode  # ImplementerNode re-exported for backward compat
+from .nodes import (  # ImplementerNode re-exported for backward compat
+    ImplementerNode,  # noqa: F401
+    StrategizerNode,
+    WorkerNode,
+)
 
 __all__ = ["build_graph"]
 
@@ -26,7 +30,7 @@ def build_graph(
     notes_dir: Any = None,
     lit_reviewer_notes_dir: Any = None,
     workspace_dir: Any = None,
-    delegation_log: "DelegationLog | None" = None,
+    delegation_log: DelegationLog | None = None,
 ) -> Any:
     """Build and compile a LangGraph StateGraph from a Graph spec.
 
@@ -52,7 +56,7 @@ def build_graph(
     # ONE adapter per named node — shared across all orchestrating nodes.
     node_adapters = {n: make_adapter(n, spec.nodes[n]) for n in spec.nodes}
 
-    for name, agent in spec.nodes.items():
+    for name, _agent in spec.nodes.items():
         adapter = node_adapters[name]  # shared instance, NOT make_adapter() again
         outgoing = spec.outgoing(name)
 

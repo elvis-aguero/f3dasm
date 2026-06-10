@@ -284,6 +284,7 @@ def _make_literature_tools() -> list:
     # --- zotero (read-only) ---
     try:
         import os
+
         from pyzotero import zotero as _pyzotero
 
         _lib_id = os.environ.get("ZOTERO_LIBRARY_ID")
@@ -397,7 +398,7 @@ class OllamaAdapter:
         # Populated after each invoke() with token counts for run-level accounting.
         self.last_usage: dict = {}
 
-    def copy(self) -> "OllamaAdapter":
+    def copy(self) -> OllamaAdapter:
         """Always return self.
 
         Concurrent delegations share this adapter instance and are serialized

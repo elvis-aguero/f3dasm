@@ -60,7 +60,7 @@ _EMBED_WITH = "fastembed>=0.3,onnxruntime<1.20,numpy<2"
 #   None   → not yet probed
 #   instance of _SubprocessEmbedder → available and ready
 #   False  → probed and unavailable (log once, never re-probe)
-_subprocess_embedder_state: "_SubprocessEmbedder | None | bool" = None
+_subprocess_embedder_state: _SubprocessEmbedder | None | bool = None
 _subprocess_embedder_warned = False
 
 
@@ -721,7 +721,7 @@ class LiteratureCorpus:
         self._embedding_model = None
         return self._embedding_model
 
-    def _load_all_embeddings(self) -> "tuple[list[dict], object]":
+    def _load_all_embeddings(self) -> tuple[list[dict], object]:
         """Load all chunks and embeddings.
 
         Returns (chunks, embeddings_matrix) or (chunks, None).
@@ -772,6 +772,7 @@ class LiteratureCorpus:
         or ``"No results found."``.
         """
         import math as _math
+
         import numpy as _np
 
         csv_rows = self._load_csv()

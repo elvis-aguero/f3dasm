@@ -11,8 +11,8 @@ from __future__ import annotations
 import os
 import re
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 __all__ = ["ScienceMonitor", "Violation"]
 
@@ -74,7 +74,7 @@ class ScienceMonitor:
         stale_k: int = STALE_K,
         max_inject: int = MAX_INJECT_PER_TURN,
         escalation_cap: int = ESCALATION_CAP,
-        store_dir: "str | None" = None,
+        store_dir: str | None = None,
     ) -> None:
         self._ledger = ledger
         self._dlog = delegation_log
@@ -90,7 +90,7 @@ class ScienceMonitor:
         self._pending_escalation: list[str] | None = None
         # Optional canonical store path for UNLEDGERED_EVALS rule.
         # Set lazily by StrategizerNode.__call__ when run_dir is known.
-        self.store_dir: "str | None" = store_dir
+        self.store_dir: str | None = store_dir
 
     def evaluate(self) -> list[Violation]:
         """Run all rules against current state; return live violations."""
@@ -218,8 +218,6 @@ class ScienceMonitor:
         exists (self-healing).
         """
         out = []
-        # Build id→record for O(1) lookup
-        by_id = {r["id"]: r for r in completed}
         for h_id, h in hypotheses.items():
             log = h.get("status_log", [])
             if not log or log[-1]["status"] != "OPEN":

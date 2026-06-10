@@ -22,7 +22,6 @@ from __future__ import annotations
 
 #                                                                      Modules
 # ==========================================================================
-
 import json
 import os
 import re
@@ -224,7 +223,7 @@ class InstrumentedDataGenerator(DataGenerator):
 
 def load_inner_evaluator(
     run_config: dict, study_dir: Path
-) -> "DataGenerator | None":
+) -> DataGenerator | None:
     """Resolve and instantiate the inner evaluator from run_config.
 
     Resolution order
@@ -348,7 +347,7 @@ def load_inner_evaluator(
                         result = [result[n] for n in _out_names]
                     elif not isinstance(result, (list, tuple)):
                         result = [result]
-                    for name, val in zip(_out_names, result):
+                    for name, val in zip(_out_names, result, strict=False):
                         experiment_sample._output_data[name] = val
                     experiment_sample.job_status = (
                         JobStatus.FINISHED
@@ -486,7 +485,7 @@ def _load_run_config() -> dict:
 
 # ==========================================================================
 # Module-level mtime cache: {str(store_dir): (mtime, RunStateSummary)}
-_RSS_CACHE: dict[str, tuple[float, "RunStateSummary"]] = {}
+_RSS_CACHE: dict[str, tuple[float, RunStateSummary]] = {}
 # Guards _RSS_CACHE: the summary is read from main (closure) threads and
 # refreshed from background delegation threads. Benign on CPython, but
 # the lock makes it correct on free-threaded builds too.
@@ -509,7 +508,7 @@ class RunStateSummary:
         n_rows: int,
         n_per_delegation: dict,
         n_per_source: dict,
-        n_per_fidelity: "dict | None",
+        n_per_fidelity: dict | None,
         output_stats: dict,
     ) -> None:
         self.n_rows = n_rows
@@ -523,10 +522,10 @@ class RunStateSummary:
     @classmethod
     def from_store(
         cls,
-        store_dir: "Path | str",
+        store_dir: Path | str,
         *,
-        fidelity_column: "Optional[str]" = None,
-    ) -> "RunStateSummary | None":
+        fidelity_column: Optional[str] = None,
+    ) -> RunStateSummary | None:
         """Build a RunStateSummary from the canonical store.
 
         Returns ``None`` if the store does not exist or is empty.
@@ -580,7 +579,7 @@ class RunStateSummary:
             )
 
         # Fidelity: only group when column is in INPUT columns
-        n_per_fidelity: "dict | None" = None
+        n_per_fidelity: dict | None = None
         if (
             fidelity_column is not None
             and df_in is not None

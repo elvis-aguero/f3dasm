@@ -15,9 +15,9 @@ The user's only required input is ``<study-dir>/PROBLEM_STATEMENT.md``.
 from __future__ import annotations
 
 from .._src.agentic.agent_runtime import (
+    DEFAULT_MODEL,
     AgenticRun,
     AgenticRunError,
-    DEFAULT_MODEL,
     Delegation,
     Report,
     StudyConfig,

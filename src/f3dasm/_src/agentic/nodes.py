@@ -10,7 +10,6 @@ from __future__ import annotations
 import threading
 import time
 import traceback
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -30,7 +29,7 @@ __all__ = [
 
 
 def _resolve_delegation_evals(
-    store_dir: "Path | None",
+    store_dir: Path | None,
     delegation_id: str,
     reported: int,
 ) -> int:
@@ -67,7 +66,7 @@ def _resolve_delegation_evals(
     return reported
 
 
-def _stamped_eval_count(store_dir: "Path | None", delegation_id: str) -> int:
+def _stamped_eval_count(store_dir: Path | None, delegation_id: str) -> int:
     """Rows in the canonical store stamped with this delegation_id (0 if none).
 
     Unlike _resolve_delegation_evals (which falls back to the honour-system
@@ -293,7 +292,7 @@ class StrategizerNode(AgentNode):
         worker_adapters: dict | None = None,
         notes_dir: Any = None,
         workspace_dir: Any = None,
-        delegation_log: "DelegationLog | None" = None,
+        delegation_log: DelegationLog | None = None,
     ) -> None:
         super().__init__(adapter)
         self._name = name
@@ -458,7 +457,11 @@ class StrategizerNode(AgentNode):
         _n = self._critic_calls
         from .backends.base import (
             debug_enabled as _dbg,
+        )
+        from .backends.base import (
             get_transcript_sink as _get_sink,
+        )
+        from .backends.base import (
             set_transcript_sink as _set_sink,
         )
         _notes = self._current_notes_dir
@@ -848,7 +851,11 @@ class StrategizerNode(AgentNode):
                     from .agent_prompts import IMPLEMENTER_REPORT_RETRY_PROMPT
                     from .backends.base import (
                         debug_enabled as _dbg,
+                    )
+                    from .backends.base import (
                         set_delegation_id as _set_did,
+                    )
+                    from .backends.base import (
                         set_transcript_sink as _set_sink,
                     )
 
@@ -1062,6 +1069,7 @@ class StrategizerNode(AgentNode):
                             _manifest = _ws / "registration.json"
                             if _manifest.exists():
                                 import json as _json
+
                                 from .agent_runtime import (
                                     register_evaluator_entrypoint,
                                 )
@@ -1497,8 +1505,8 @@ class StrategizerNode(AgentNode):
                     route["kind"] = "done"
                     route["summary"] = banner + summary
                     return prefix + (
-                        f"Run complete (UNGATED — closed after "
-                        f"3 unsatisfiable critic revisions; objections "
+                        "Run complete (UNGATED — closed after "
+                        "3 unsatisfiable critic revisions; objections "
                         "recorded in solution.md)."
                     )
                 return (
@@ -1601,7 +1609,7 @@ class StrategizerNode(AgentNode):
         #   store_dir/experiment_data/output.csv  ✓
         # ------------------------------------------------------------------
 
-        def _derive_store_dir() -> "Path | None":
+        def _derive_store_dir() -> Path | None:
             nd = node._current_notes_dir
             if nd is None:
                 return None
@@ -1627,10 +1635,10 @@ class StrategizerNode(AgentNode):
             return summary.format()
 
         def QueryStore(
-            delegation_ids: "str | list | None" = None,
-            source: "str | None" = None,
-            n_best: "int | None" = None,
-            output_name: "str | None" = None,
+            delegation_ids: str | list | None = None,
+            source: str | None = None,
+            n_best: int | None = None,
+            output_name: str | None = None,
         ) -> str:
             """Filtered view of the evaluation ledger (e.g. rows from D001+D003
             only). Use to ground claims or to select training subsets; cite row
@@ -1663,7 +1671,7 @@ class StrategizerNode(AgentNode):
                 )
 
             # Decode delegation_ids: JSON / comma / bare / list
-            d_ids: "list[str] | None" = None
+            d_ids: list[str] | None = None
             if delegation_ids is not None:
                 if isinstance(delegation_ids, list):
                     d_ids = [str(x) for x in delegation_ids]
@@ -2164,7 +2172,7 @@ class StrategizerNode(AgentNode):
             status: str,
             comment: str,
             posterior: float,
-            evidence: "dict | None" = None,
+            evidence: dict | None = None,
         ) -> str:
             """Update hypothesis status with evidence and updated belief.
 
@@ -2188,7 +2196,7 @@ class StrategizerNode(AgentNode):
                         "ERROR: evidence must be a JSON object like "
                         '{"delegation": "D004", "numbers": {...}}.'
                     )
-            triggered_by: "str | None" = (
+            triggered_by: str | None = (
                 node._delegation_log.last_completed_id(node._name)
                 if node._delegation_log is not None else None
             )
@@ -2285,7 +2293,7 @@ class StrategizerNode(AgentNode):
 
         from langchain_core.messages import AIMessage, HumanMessage
         from langgraph.graph import END
-        from langgraph.types import Command, interrupt
+        from langgraph.types import Command
 
         # Update notes_dir from current state run_dir
         run_dir = state.get("run_dir")
@@ -2484,6 +2492,8 @@ class StrategizerNode(AgentNode):
         # to debug/transcripts/strategizer/turn_NNN.jsonl.
         from .backends.base import (
             debug_enabled as _dbg,
+        )
+        from .backends.base import (
             set_transcript_sink as _set_sink,
         )
         self._turn_count = getattr(self, "_turn_count", 0) + 1
@@ -2602,7 +2612,7 @@ class WorkerNode(AgentNode):
         adapter: Any,
         study_dir: Any = None,
         workspace_dir: Any = None,
-        delegation_log: "DelegationLog | None" = None,
+        delegation_log: DelegationLog | None = None,
         name: str = "worker",
     ) -> None:
         super().__init__(adapter)

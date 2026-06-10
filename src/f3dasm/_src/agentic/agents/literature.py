@@ -216,8 +216,8 @@ class LiteratureReviewAgent(Agent):
         from pathlib import Path as _Path
 
         try:
-            from ..literature_corpus import LiteratureCorpus
             from ..literature_corpus import (
+                LiteratureCorpus,
                 SourceCooldownError,
                 _robust_get,
                 _robust_post,
@@ -573,7 +573,7 @@ class LiteratureReviewAgent(Agent):
             bm25 = BM25Okapi(tokenized)
             scores = bm25.get_scores(question.lower().split())
             ranked = sorted(
-                zip(blocks, scores),
+                zip(blocks, scores, strict=False),
                 key=lambda x: x[1],
                 reverse=True,
             )

@@ -8,10 +8,10 @@ repos:
         files: ^pyproject\.toml$
         additional_dependencies: ["toml-sort==0.23.1"]
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.13.0
+    rev: v0.14.10  # aligned with the `ruff>=0.14.10` floor in pyproject
     hooks:
-      - id: ruff-format # formatter
-        types_or: [python, pyi, jupyter, toml]
+      # Lint-only: check (and apply safe fixes), but never auto-reformat.
+      # ruff-format is intentionally omitted — adopting it is a separate call.
       - id: ruff-check # linter
         types_or: [python, pyi, jupyter, toml]
         args: [--fix]

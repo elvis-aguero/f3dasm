@@ -99,7 +99,7 @@ class HypothesisEntry:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "HypothesisEntry":
+    def from_dict(cls, data: dict) -> HypothesisEntry:
         # STRICT: missing fields raise.  Old ledger files do not load.
         log = [StatusLogEntry(**e) for e in data["status_log"]]
         return cls(

@@ -244,7 +244,7 @@ class ClaudeAdapter:
         # Populated after each ainvoke() with token counts from ResultMessage.
         self.last_usage: dict = {}
 
-    def copy(self) -> "ClaudeAdapter":
+    def copy(self) -> ClaudeAdapter:
         """Always return self.
 
         Concurrent delegations share this adapter instance and are serialized

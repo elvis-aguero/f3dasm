@@ -11,8 +11,12 @@ import random
 import re
 import threading
 import time
-from datetime import datetime, timezone
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Debug / transcript capture — master switch F3DASM_DEBUG, OFF by default.
@@ -31,16 +35,16 @@ def debug_enabled() -> bool:
     return os.environ.get("F3DASM_DEBUG", "").strip().lower() in _DEBUG_TRUE
 
 
-def set_transcript_sink(path: "str | None") -> None:
+def set_transcript_sink(path: str | None) -> None:
     """Point this thread's transcript at *path* (None clears it)."""
     _transcript_tls.path = str(path) if path else None
 
 
-def get_transcript_sink() -> "str | None":
+def get_transcript_sink() -> str | None:
     return getattr(_transcript_tls, "path", None)
 
 
-def set_delegation_id(delegation_id: "str | None") -> None:
+def set_delegation_id(delegation_id: str | None) -> None:
     """Bind this thread's delegation id (None clears it).
 
     Thread-local so concurrent delegations don't clobber each other. The Claude
@@ -51,7 +55,7 @@ def set_delegation_id(delegation_id: "str | None") -> None:
     _transcript_tls.delegation_id = delegation_id
 
 
-def get_delegation_id() -> "str | None":
+def get_delegation_id() -> str | None:
     return getattr(_transcript_tls, "delegation_id", None)
 
 
@@ -149,9 +153,9 @@ class Agent:
 
     def build_closure_tools(
         self,
-        study_dir: "Path",
+        study_dir: Path,
         delegation_id: str | None = None,
-        lit_reviewer_notes_dir: "Path | None" = None,
+        lit_reviewer_notes_dir: Path | None = None,
     ) -> dict:
         """Return runtime closure tools for this agent. Override in subclasses.
 

@@ -1,5 +1,6 @@
 """Container entrypoint: python -m f3dasm._src.agentic.run [study_dir] [--model X] [--budget N]"""
 from __future__ import annotations
+
 import argparse
 import sys
 from pathlib import Path
