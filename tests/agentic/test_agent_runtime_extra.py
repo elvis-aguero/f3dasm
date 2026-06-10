@@ -255,8 +255,10 @@ def test_init_canonical_store_writes_run_config_json(tmp_path):
     loaded = json.loads(cfg_path.read_text())
     assert loaded["store_dir"] == str(run_dir / "experiment_data")
     assert "counter_dir" not in loaded
+    # Lock co-located with the data (store_dir/experiment_data/) so D000
+    # ingestion and D001+ evaluations lock the same file (audit Finding 3).
     assert loaded["lock_path"] == str(
-        run_dir / "experiment_data" / ".lock"
+        run_dir / "experiment_data" / "experiment_data" / ".lock"
     )
     assert loaded["evaluator_name"] == "my_study"
     assert loaded["fidelity_column"] is None

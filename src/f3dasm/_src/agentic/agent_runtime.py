@@ -97,7 +97,10 @@ def _init_canonical_store(
 
     config: dict = {
         "store_dir": str(store_dir),
-        "lock_path": str(store_dir / ".lock"),
+        # Co-locate the lock with the data (store_dir/experiment_data/) so
+        # D000 ingestion (_ingest_precomputed_pool) and D001+ evaluations
+        # (InstrumentedDataGenerator default) all lock the SAME file.
+        "lock_path": str(store_dir / "experiment_data" / ".lock"),
         "evaluator_name": study_dir.name,
         "study_dir": str(study_dir),
         "fidelity_column": eval_cfg.get("fidelity_column"),

@@ -3,5 +3,5 @@ backend: claude
 budget: "01:00:00"
 checkpoint_every: 30
 required_deliverables:
-  - workspace/replicate.py
-  - workspace/solution.md
+  - replicate.py
+  - solution.md

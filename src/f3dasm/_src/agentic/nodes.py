@@ -129,7 +129,8 @@ _CAPABILITY_PHRASES = [
     "unable to", "not able to", "i am unable",
 ]
 
-_VALID_VERDICTS = {"PASS", "REVISE", "REJECT", "ACCEPT", "FAIL"}
+# The critic emits exactly these three (agents/critic.py); no others.
+_VALID_VERDICTS = {"PASS", "REVISE", "REJECT"}
 
 
 def _parse_verdict(text: str) -> str:
@@ -1398,7 +1399,7 @@ class StrategizerNode(AgentNode):
                 critique_text = node._invoke_critic(task_msg)
                 verdict = _parse_verdict(critique_text)
 
-                if verdict in ("PASS", "ACCEPT"):
+                if verdict == "PASS":
                     # Conclusion accepted + recorded. Now — and only now —
                     # ask the exit interview as a separate turn.
                     node._done_warned = False
@@ -2193,8 +2194,22 @@ class StrategizerNode(AgentNode):
         can be declared in state['required_deliverables'].
         """
         study_dir = Path(state.get("study_dir", "."))
-        required = ["replicate.py"] + list(state.get("required_deliverables") or [])
-        return [p for p in required if not (study_dir / p).exists()]
+        # WriteDeliverable writes BARE names to study_dir/ (it rejects path
+        # separators), and solution.md lands at study_dir/ too. Normalise any
+        # configured path to its basename so a stray 'workspace/…' prefix in a
+        # study config can't spuriously flag a present deliverable as missing.
+        required = ["replicate.py"] + list(
+            state.get("required_deliverables") or [])
+        seen: set[str] = set()
+        missing: list[str] = []
+        for p in required:
+            name = Path(p).name
+            if name in seen:
+                continue
+            seen.add(name)
+            if not (study_dir / name).exists():
+                missing.append(name)
+        return missing
 
     def __call__(self, state: AgenticState) -> Any:
         import time
@@ -2212,9 +2227,12 @@ class StrategizerNode(AgentNode):
             if self._ledger is None:
                 self._ledger = HypothesisLedger(self._current_notes_dir)
             # Wire canonical store dir into ScienceMonitor lazily.
-            # notes_dir.parent.parent = run_dir; store_dir adds
-            # /experiment_data so RunStateSummary.from_store can
-            # find run_dir/experiment_data/experiment_data/output.csv
+            # store_dir is the ExperimentData *project_dir* (run_dir/
+            # experiment_data), NOT the folder holding the CSVs. ExperimentData
+            # appends its own EXPERIMENTDATA_SUBFOLDER ("experiment_data"), so
+            # the rows live one level deeper at
+            # run_dir/experiment_data/experiment_data/output.csv — hence the
+            # apparent double directory is correct, not a typo.
             if self._science_monitor is not None:
                 self._science_monitor.store_dir = (
                     self._current_notes_dir.parent.parent

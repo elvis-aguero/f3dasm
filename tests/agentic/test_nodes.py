@@ -2142,6 +2142,28 @@ def _spec_with_write_deliverable():
     )
 
 
+def test_missing_deliverables_normalizes_workspace_prefix(tmp_path):
+    """A config 'workspace/solution.md' must match the bare file WriteDeliverable
+    actually writes at study_dir/ (audit Finding 1 — the resonance UNGATED bug)."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    (tmp_path / "replicate.py").write_text("x")
+    (tmp_path / "solution.md").write_text("y")
+    node = StrategizerNode(
+        StubAdapter(), name="strategizer", outgoing=["implementer"],
+        spec=_spec_with_write_deliverable(), notes_dir=tmp_path,
+    )
+    # Prefixed paths still resolve to the bare files at study root → none missing.
+    state = {
+        "study_dir": str(tmp_path),
+        "required_deliverables": ["workspace/replicate.py", "workspace/solution.md"],
+    }
+    assert node._missing_deliverables(state) == []
+    # A genuinely absent deliverable is still reported (as a bare name).
+    state2 = {"study_dir": str(tmp_path), "required_deliverables": ["report.pdf"]}
+    assert node._missing_deliverables(state2) == ["report.pdf"]
+
+
 def test_write_deliverable_injected_when_in_tools(tmp_path):
     """WriteDeliverable closure is present when declared in agent tools."""
     from f3dasm._src.agentic.nodes import StrategizerNode
