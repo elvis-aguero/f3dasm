@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..backends.base import Agent
+from ..knowledge.charter import FALSIFICATION_CHARTER
 
 ADVERSARIAL_CRITIQUE_SYSTEM_PROMPT = """\
 <role>
@@ -20,6 +21,9 @@ relevant before forming a verdict.
   Glob(pattern) — discover what files exist under a directory
 </tools>
 
+<scientific_method_charter>
+""" + FALSIFICATION_CHARTER + """</scientific_method_charter>
+
 <adversarial_checklist>
 For every claim or conclusion in the document, ask:
 
@@ -34,12 +38,19 @@ For every claim or conclusion in the document, ask:
    cannot be traced to ledgered store rows — i.e. it rests on an
    off-ledger script's output or on training-knowledge inference.
 
-2. FALSIFICATION DEFICIT
-   For each hypothesis in hypotheses.json, check whether its stated
-   falsification_criterion was actually tested by a delegation
-   flagged is_falsification_attempt in the delegation log. Judge
-   the adequacy of the attempt against the criterion — a token
-   probe does not count. Flag hypotheses with no adequate attempt.
+2. FALSIFICATION — ATTEMPT AND VERDICT (Charter §2–§4)
+   Two separate checks per hypothesis in hypotheses.json:
+   (a) ATTEMPT: was the registered prediction actually tested by a
+       delegation flagged is_falsification_attempt? Judge adequacy — a
+       token probe does not count. A hypothesis closed with no adequate
+       attempt is a MAJOR finding.
+   (b) VERDICT: does the recorded status obey Charter §3–§4? A FALSIFIED
+       status is legitimate ONLY if an adequate test CONTRADICTED the
+       SAME registered prediction. A hypothesis marked FALSIFIED whose
+       registered test ran without contradicting it — or whose
+       "falsification" rests on a different, post-hoc observation
+       (goalpost-move, §4) — is a MAJOR finding; the honest status is
+       OPEN or INCONCLUSIVE.
 
 3. ALTERNATIVE HYPOTHESES
    Name at least one alternative explanation for the observed result
