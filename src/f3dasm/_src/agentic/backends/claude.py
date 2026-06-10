@@ -406,14 +406,17 @@ class ClaudeAdapter:
         # generation: while a tool runs the window stands down (see _phase).
         # MEASURED (the stream_evt instrumentation settled this): the bundled
         # CLI forwards NO ping events — only message lifecycle — so during a
-        # mid-generation pause we get ZERO liveness signal. A supercompressible
-        # (Sonnet) run captured a 53.6s LEGITIMATE (recovered) gap, and a
-        # delegation died on the old 60s window — so 60s false-cuts legitimate
-        # slow generations. 180s sits ~3.3x above the observed legit gap while
-        # still catching a truly dead (silent-forever) stream in ~3 min.
+        # mid-generation pause we get ZERO liveness signal. Two supercompressible
+        # (Sonnet) runs captured LEGITIMATE (recovered) active-generation gaps of
+        # 53.6s AND 252-256s (one mid-tool_use-block composition, one
+        # tool_result→next message_start delay). So earlier 60s/180s windows
+        # would guillotine legitimate slow generations. 300s clears the observed
+        # ~256s legit gap while still catching a truly dead (silent-forever)
+        # stream in ~5 min. (256s is close to 300s — raise further if longer
+        # legit gaps appear; a runaway is the delegation watchdog's concern.)
         # Tune via F3DASM_LLM_STREAM_IDLE_TIMEOUT; 0 disables.
         # F3DASM_LLM_TOOL_IDLE_TIMEOUT caps tool execution (0 = uncapped).
-        _idle = float(os.environ.get("F3DASM_LLM_STREAM_IDLE_TIMEOUT", "180"))
+        _idle = float(os.environ.get("F3DASM_LLM_STREAM_IDLE_TIMEOUT", "300"))
         _tool_idle = float(
             os.environ.get("F3DASM_LLM_TOOL_IDLE_TIMEOUT", "0")
         )
