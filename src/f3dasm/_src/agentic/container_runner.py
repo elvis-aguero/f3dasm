@@ -6,10 +6,14 @@ import subprocess
 import sys
 import threading
 import time
+import warnings
 from pathlib import Path
 from typing import Any
 
 __all__ = ["ContainerRunner"]
+
+# Mount point inside the container for the Claude CLI config/credentials dir.
+_CONTAINER_CLAUDE_CONFIG = "/claude-config"
 
 # Resolved at container start time; hardcoded mount point inside the container.
 _CONTAINER_STUDY_DIR = "/study"
@@ -18,10 +22,15 @@ _CONTAINER_STUDY_DIR = "/study"
 class ContainerRunner:
     """Run AgenticRun inside a Docker/Colima container.
 
-    Claude backend (default):
+    Claude backend (default) — subscription auth is PREFERRED, API key is a
+    warned fallback (see ``_claude_auth_args``):
         docker run --rm
             -v <study_dir>:/study
-            -e ANTHROPIC_API_KEY
+            (subscription) -e CLAUDE_CODE_OAUTH_TOKEN   (from `claude setup-token`)
+                  or  -v ~/.claude:/claude-config -e CLAUDE_CONFIG_DIR=/claude-config
+            (fallback) -e ANTHROPIC_API_KEY             (warns; never set when
+                  a subscription credential is present — the API key would
+                  otherwise take CLI auth precedence and clobber it)
             <image> /study [--model X] [--budget N]
 
     Ollama backend — host Ollama (default):
@@ -73,8 +82,7 @@ class ContainerRunner:
 
         # Environment
         if self.backend == "claude":
-            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-            cmd += ["-e", f"ANTHROPIC_API_KEY={api_key}"]
+            cmd += self._claude_auth_args()
         elif self.backend == "ollama":
             ollama_url = (
                 os.environ.get("OLLAMA_BASE_URL")
@@ -102,6 +110,53 @@ class ContainerRunner:
                 cmd += ["--budget", str(self.budget)]
 
         return self._popen_and_stream(cmd)
+
+    def _claude_auth_args(self) -> list[str]:
+        """Docker args that authenticate the in-container Claude CLI.
+
+        Precedence (subscription PREFERRED; API key is a warned fallback):
+          1. CLAUDE_CODE_OAUTH_TOKEN — long-lived subscription token from
+             ``claude setup-token``; forwarded as an env var (cluster-friendly,
+             no host mount needed).
+          2. host Claude config dir — if ``~/.claude/.credentials.json`` (or
+             ``$CLAUDE_CONFIG_DIR``) exists, mount it so the in-container CLI
+             reuses the host's logged-in session and refreshes it in place.
+          3. ANTHROPIC_API_KEY — fallback only; emits a warning.
+          4. nothing — hard fail with an actionable message.
+
+        When a subscription credential is used the API key is deliberately NOT
+        forwarded: the CLI ranks ANTHROPIC_API_KEY above the subscription
+        token, so setting it would silently override the subscription.
+        ``-e VAR`` (no value) passes the host value through without exposing
+        the secret in the process arg list.
+        """
+        if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+            return ["-e", "CLAUDE_CODE_OAUTH_TOKEN"]
+
+        cfg_dir = os.environ.get("CLAUDE_CONFIG_DIR") or str(
+            Path.home() / ".claude")
+        if (Path(cfg_dir) / ".credentials.json").is_file():
+            return [
+                "-v", f"{cfg_dir}:{_CONTAINER_CLAUDE_CONFIG}",
+                "-e", f"CLAUDE_CONFIG_DIR={_CONTAINER_CLAUDE_CONFIG}",
+            ]
+
+        if os.environ.get("ANTHROPIC_API_KEY"):
+            warnings.warn(
+                "No subscription credential found (CLAUDE_CODE_OAUTH_TOKEN "
+                f"unset and no {cfg_dir}/.credentials.json); falling back to "
+                "ANTHROPIC_API_KEY. Subscription auth is preferred — generate "
+                "a token with `claude setup-token`.",
+                stacklevel=2,
+            )
+            return ["-e", "ANTHROPIC_API_KEY"]
+
+        raise RuntimeError(
+            "No Claude credentials available for the container. Provide ONE "
+            "of: CLAUDE_CODE_OAUTH_TOKEN (run `claude setup-token`), a host "
+            "login at ~/.claude/.credentials.json (or $CLAUDE_CONFIG_DIR), or "
+            "ANTHROPIC_API_KEY as a fallback."
+        )
 
     def _run_compose(self) -> int:
         compose = str(self._docker_dir / "docker-compose.yml")
