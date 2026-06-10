@@ -284,7 +284,8 @@ def test_unanchored_delegation_self_heals(tmp_path):
 # Test 7: POSTERIOR_INERTIA — barely moved posterior triggers, big move doesn't
 # ---------------------------------------------------------------------------
 
-def test_posterior_inertia(tmp_path):
+def test_posterior_inertia(tmp_path, monkeypatch):
+    import f3dasm._src.agentic.science_monitor as sm
     ledger, dlog, mon, _ = make_world(tmp_path)
     h_id = propose(ledger)  # prior=0.5, initial log entry posterior=0.5
     record_done(dlog, "D001", [h_id], REPORT)
@@ -293,10 +294,14 @@ def test_posterior_inertia(tmp_path):
         h_id, "SUPPORTED", "barely moved",
         evidence={"delegation": "D001", "numbers": {"best_y": 1.47}},
         posterior=0.52, triggered_by=None)
-    violations = mon.evaluate()
-    rules = {v.rule for v in violations}
+    # DEFAULT: OFF — trust the agent to calibrate; no nag on a small move.
+    monkeypatch.setattr(sm, "POSTERIOR_INERTIA_ENABLED", False)
+    assert "POSTERIOR_INERTIA" not in {v.rule for v in mon.evaluate()}
+    # When explicitly re-enabled, it still fires on a barely-moved update.
+    monkeypatch.setattr(sm, "POSTERIOR_INERTIA_ENABLED", True)
+    rules = {v.rule for v in mon.evaluate()}
     assert "POSTERIOR_INERTIA" in rules, (
-        f"Expected POSTERIOR_INERTIA for 0.5→0.52, got: {rules}")
+        f"Expected POSTERIOR_INERTIA for 0.5→0.52 when enabled, got: {rules}")
 
     # New world: close with a bigger jump (0.05 from prior 0.5 = big enough)
     ledger2, dlog2, mon2, _ = make_world(tmp_path / "sub")
@@ -427,7 +432,7 @@ def test_diagnostics_written_once_per_live_violation(tmp_path):
 # Test 12: escalation after 3 distinct rules on one hypothesis
 # ---------------------------------------------------------------------------
 
-def test_escalation_after_three_violations_one_hypothesis(tmp_path):
+def test_escalation_after_three_violations_one_hypothesis(tmp_path, monkeypatch):
     """Three distinct rules accumulate in _h_rule_seen for one h_id.
 
     Phase 1: h_id OPEN + bare delegations → UNANCHORED_DELEGATION
@@ -435,6 +440,8 @@ def test_escalation_after_three_violations_one_hypothesis(tmp_path):
     Phase 3: SUPPORTED but no falsification → SUPPORTED_WITHOUT_ATTACK
     After 3 distinct rules for h_id → escalation_due() returns [h_id].
     """
+    import f3dasm._src.agentic.science_monitor as sm
+    monkeypatch.setattr(sm, "POSTERIOR_INERTIA_ENABLED", True)  # needed as rule 2
     ledger, dlog, mon, _ = make_world(tmp_path)
     h_id = propose(ledger)
     # Need a second h so the ledger has room and STALE_OPEN doesn't
@@ -578,12 +585,14 @@ def test_error_streak_escalates(tmp_path):
 # Test 17: POSTERIOR_INERTIA boundary — delta 0.049 fires, delta 0.06 does not
 # ---------------------------------------------------------------------------
 
-def test_posterior_inertia_boundary(tmp_path):
-    """Epsilon boundary: |delta| < 0.05 fires; |delta| >= 0.05 does not.
+def test_posterior_inertia_boundary(tmp_path, monkeypatch):
+    """Epsilon boundary (when ENABLED): |delta| < 0.05 fires; >= 0.05 does not.
 
     World A: prior=0.5, close at 0.54 → delta=0.04 < 0.05 → fires.
     World B: prior=0.5, close at 0.56 → delta=0.06 >= 0.05 → silent.
     """
+    import f3dasm._src.agentic.science_monitor as sm
+    monkeypatch.setattr(sm, "POSTERIOR_INERTIA_ENABLED", True)
     # World A: delta = 0.04 — should fire POSTERIOR_INERTIA
     ledger_a, dlog_a, mon_a, _ = make_world(tmp_path / "a")
     h_a = propose(ledger_a)   # prior=0.5

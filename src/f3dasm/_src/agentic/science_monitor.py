@@ -28,6 +28,15 @@ EVIDENCE_NUMBERS_MATCH_ENABLED = (
 
 STALE_K = 3
 POSTERIOR_EPSILON = 0.05
+# POSTERIOR_INERTIA is OFF by default: it nags when a status change moves belief
+# < POSTERIOR_EPSILON, but that mis-fires on already-extreme posteriors (e.g.
+# 0.95→0.97 is a legitimately small move near the ceiling). Trust the agent to
+# calibrate its own beliefs; the critic judges over/under-claiming. Code kept;
+# re-enable with F3DASM_POSTERIOR_INERTIA=1.
+POSTERIOR_INERTIA_ENABLED = (
+    os.environ.get("F3DASM_POSTERIOR_INERTIA", "").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
 MAX_INJECT_PER_TURN = 2
 ESCALATION_CAP = 2
 ESCALATE_AFTER_VIOLATIONS = 3
@@ -166,7 +175,8 @@ class ScienceMonitor:
                     prev_belief = entry["posterior"]
                     break
             post = log[-1].get("posterior")
-            if (prev_belief is not None and post is not None
+            if (POSTERIOR_INERTIA_ENABLED
+                    and prev_belief is not None and post is not None
                     and abs(post - prev_belief) < POSTERIOR_EPSILON):
                 out.append(Violation(
                     "POSTERIOR_INERTIA", "warn", h_id,
