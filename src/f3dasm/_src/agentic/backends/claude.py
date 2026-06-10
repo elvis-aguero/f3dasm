@@ -47,6 +47,12 @@ def _infer_schema_from_callable(fn: Any) -> dict:
     props: dict = {}
     required: list[str] = []
     for pname, param in sig.parameters.items():
+        # Skip leading-underscore params: by convention these are closure
+        # constants bound via the default-arg idiom (e.g. `_ws=delegation_ws`,
+        # `_did=delegation_id`), NOT model inputs. Exposing them let a model
+        # pass e.g. `_ws` as a string → `str / path` TypeError in a write tool.
+        if pname.startswith("_"):
+            continue
         ann = param.annotation
         if ann is _inspect.Parameter.empty:
             json_type = {"type": "string"}
@@ -396,21 +402,18 @@ class ClaudeAdapter:
         last_result: Any = None
         gen = query(prompt=prompt_str, options=options)
         # Idle-stream timeout — turns a silent stream into a retryable
-        # TimeoutError. Resets on EVERY stream message (the parser wraps all
-        # stream_event types, so ping/lifecycle events — if the CLI forwards
-        # them — reset it too). Scoped to model generation: while a tool runs
-        # the window stands down (see _phase), so long Bash jobs are never cut.
-        # OPEN QUESTION (being measured — see the stream_evt debug records
-        # below): does the bundled CLI forward ping/message_start during a
-        # silent prefill? If it does, 60s of silence = a genuinely dead stream
-        # and 60s is safe; if not, a slow first-token could be cut. An earlier
-        # 180s bump was a hunch (a resonance run had a delegation die here, but
-        # the fatal gap wasn't captured — only ~90s TOOL pauses were, which are
-        # correctly suspended). Reverted to 60s pending the measurement rather
-        # than paper over a possibly-genuine stall.
+        # TimeoutError. Resets on EVERY stream message. Scoped to model
+        # generation: while a tool runs the window stands down (see _phase).
+        # MEASURED (the stream_evt instrumentation settled this): the bundled
+        # CLI forwards NO ping events — only message lifecycle — so during a
+        # mid-generation pause we get ZERO liveness signal. A supercompressible
+        # (Sonnet) run captured a 53.6s LEGITIMATE (recovered) gap, and a
+        # delegation died on the old 60s window — so 60s false-cuts legitimate
+        # slow generations. 180s sits ~3.3x above the observed legit gap while
+        # still catching a truly dead (silent-forever) stream in ~3 min.
         # Tune via F3DASM_LLM_STREAM_IDLE_TIMEOUT; 0 disables.
         # F3DASM_LLM_TOOL_IDLE_TIMEOUT caps tool execution (0 = uncapped).
-        _idle = float(os.environ.get("F3DASM_LLM_STREAM_IDLE_TIMEOUT", "60"))
+        _idle = float(os.environ.get("F3DASM_LLM_STREAM_IDLE_TIMEOUT", "180"))
         _tool_idle = float(
             os.environ.get("F3DASM_LLM_TOOL_IDLE_TIMEOUT", "0")
         )

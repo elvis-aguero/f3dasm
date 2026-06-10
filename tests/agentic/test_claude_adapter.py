@@ -152,6 +152,22 @@ def _capture_options_gen(captured: dict):
     return _gen
 
 
+def test_infer_schema_skips_underscore_closure_params():
+    """Closure capture-args (_ws=..., _did=...) must NOT appear in the tool
+    schema — else a model can pass them (e.g. _ws as a string) and crash a
+    write tool with str / path. Real params are still exposed."""
+    from f3dasm._src.agentic.backends.claude import _infer_schema_from_callable
+
+    def _write(path: str, body: str, _ws="x", _did="D001"):
+        return ""
+
+    schema = _infer_schema_from_callable(_write)
+    props = schema["properties"]
+    assert "path" in props and "body" in props
+    assert "_ws" not in props and "_did" not in props
+    assert set(schema.get("required", [])) == {"path", "body"}
+
+
 def test_session_is_hermetic_setting_sources_empty():
     """#1 fresh hooks: sessions load NO filesystem settings, so worker/critic
     subprocesses don't inherit the developer's global ~/.claude hooks."""
