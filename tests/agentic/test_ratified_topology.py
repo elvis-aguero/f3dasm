@@ -368,10 +368,10 @@ def test_non_entry_node_delegate_omits_hypothesis_check():
     implementer) have ``_ledger=None``, so specialist→lit_reviewer
     delegation works without hypothesis_ids.
     """
-    # Verify directly by reading the Delegate source:
+    # Verify directly by reading the routing module source:
     import inspect
-    from f3dasm._src.agentic.nodes import StrategizerNode
-    src = inspect.getsource(StrategizerNode._build_routing_closures)
+    from f3dasm._src.agentic.nodes.tools import routing as _routing
+    src = inspect.getsource(_routing)
     # The guard must be conditional on ledger presence
     assert "node._ledger is not None" in src, (
         "Delegate must guard h_ids check on node._ledger is not None"
