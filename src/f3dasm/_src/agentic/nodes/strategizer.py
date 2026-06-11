@@ -1,7 +1,5 @@
-"""LangGraph node classes for the f3dasm agentic runtime.
+"""StrategizerNode: orchestrator node for the f3dasm agentic runtime.
 
-Each node class implements ``__call__(state: AgenticState) -> Command``,
-which is the ADAS-inspectable topology entry point.
 ``inspect.getsource(StrategizerNode.__call__)`` reads the full routing logic.
 """
 
@@ -22,6 +20,7 @@ from ..science_monitor import ScienceMonitor
 
 # public surface is defined in nodes/__init__.py
 from ._constants import RUN_BACKSTOP_MULTIPLE
+from .base import AgentNode
 from .critic_gate import CriticGateMixin
 from .lifecycle import LifecycleMixin
 from .parsing import (  # noqa: F401
@@ -37,20 +36,6 @@ from .recording import RecordingMixin
 from .tools.routing import (
     _EXIT_INTERVIEW,  # noqa: F401 – canonical def in routing.py
 )
-
-
-class AgentNode:
-    """Base class for ADAS-inspectable LangGraph nodes.
-
-    Subclasses override __call__ to define routing topology.
-    inspect.getsource(MyNode.__call__) reads the full routing logic.
-    """
-
-    def __init__(self, adapter: Any) -> None:
-        self.adapter = adapter
-
-    def __call__(self, state: AgenticState) -> Any:
-        raise NotImplementedError
 
 
 class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode):
@@ -771,149 +756,3 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         )
 
 
-class WorkerNode(AgentNode):
-    """Generic worker node: executes tasks, writes Reports, returns to caller.
-
-    Used for any non-orchestrator agent (Implementer, Debugger,
-    LiteratureReviewer, etc.).  The node name in the graph is what
-    distinguishes agents — not the node class.
-    """
-
-    def __init__(
-        self,
-        adapter: Any,
-        study_dir: Any = None,
-        workspace_dir: Any = None,
-        delegation_log: DelegationLog | None = None,
-        name: str = "worker",
-    ) -> None:
-        super().__init__(adapter)
-        self._name = name
-        self._delegation_log = delegation_log
-        self._evals_reported: dict = {}
-        self._workspace_dir = Path(workspace_dir) if workspace_dir else None
-        self._setup_sandboxed_write()
-        self.adapter.closure_tools.update(self._build_eval_closures())
-        if delegation_log is not None:
-            self.adapter.closure_tools["RecallHistory"] = self._make_recall_history()
-
-    def _make_recall_history(self) -> Any:
-        """Build the RecallHistory closure for this worker node."""
-        node = self
-
-        def RecallHistory(n: int = 5) -> str:
-            """Return the last n delegations received by this node as (task, deliverable) pairs.
-            Call at the start of a delegation to recall prior work. Returns oldest-first."""
-            if node._delegation_log is None:
-                return "No delegation log available."
-            records = node._delegation_log.query_received(node._name, n)
-            if not records:
-                return "No prior delegations found."
-            parts = []
-            for i, r in enumerate(records, 1):
-                parts.append(
-                    f"== Prior delegation {i} ==\n"
-                    f"Task: {r['task']}\n\n"
-                    f"Deliverable:\n{r['deliverable']}"
-                )
-            return "\n\n---\n\n".join(parts)
-
-        return RecallHistory
-
-    def _setup_sandboxed_write(self) -> None:
-        """Replace native Write with a workspace-sandboxed closure.
-
-        Removes 'Write' from native_tools so the SDK doesn't expose it,
-        then injects a closure that hard-rejects any path that resolves
-        outside the workspace.  Path.resolve() collapses '..' and symlinks,
-        so traversal attacks are blocked at the tool level, not just the prompt.
-
-        Bash is kept native but cwd is already set to study_dir by the adapter;
-        the prompt further constrains it to the workspace.
-        """
-        if self._workspace_dir is None:
-            return  # no sandboxing if study_dir unknown (e.g. tests)
-
-        workspace = self._workspace_dir.resolve()
-
-        # Remove native Write so the SDK doesn't expose an unrestricted version
-        if hasattr(self.adapter, "native_tools") and "Write" in self.adapter.native_tools:
-            self.adapter.native_tools = [
-                t for t in self.adapter.native_tools if t != "Write"
-            ]
-
-        def Write(path: str, body: str) -> str:
-            """Write a file.  Restricted to workspace — no exceptions."""
-            try:
-                # Resolve against workspace so relative paths land there
-                candidate = (workspace / path).resolve()
-            except Exception as exc:  # noqa: BLE001
-                return f"ERROR: invalid path {path!r}: {exc}"
-
-            # Reject anything that escapes the delegations tree
-            try:
-                candidate.relative_to(workspace)
-            except ValueError:
-                return (
-                    f"ERROR: write rejected — path resolves to {candidate}, "
-                    f"which is outside the workspace ({workspace}). "
-                    "Only paths inside the workspace are permitted."
-                )
-
-            candidate.parent.mkdir(parents=True, exist_ok=True)
-            candidate.write_text(body, encoding="utf-8")
-            return f"Written: {candidate}"
-
-        self.adapter.closure_tools["Write"] = Write
-
-    def _build_eval_closures(self) -> dict:
-        evals = self._evals_reported
-
-        def ReportEvals(count: int) -> str:
-            """Report the number of function evaluations used in this task."""
-            evals["count"] = int(count)
-            return f"Recorded {count} evaluations."
-
-        return {"ReportEvals": ReportEvals}
-
-    def __call__(self, state: AgenticState) -> Any:
-        from langchain_core.messages import AIMessage
-        from langgraph.types import Command
-
-        from ..agent_prompts import IMPLEMENTER_REPORT_RETRY_PROMPT
-
-        self._evals_reported.clear()
-        messages = _to_adapter_messages(state["messages"])
-        text = self.adapter.invoke(messages)
-
-        diagnosis = _classify_response(text)
-        if diagnosis is not None:
-            # One retry with correction prompt
-            retry_messages = messages + [
-                {"role": "ai", "content": text},
-                {
-                    "role": "user",
-                    "content": (
-                        f"{IMPLEMENTER_REPORT_RETRY_PROMPT}"
-                        f"\n\nDiagnosis: {diagnosis}"
-                    ),
-                },
-            ]
-            text = self.adapter.invoke(retry_messages)
-
-        ai_msg = AIMessage(content=text)
-        evals_delta = self._evals_reported.get("count", 0)
-        return_to = state.get("return_to")
-        return Command(
-            goto=return_to,
-            update={
-                "messages": [ai_msg],
-                "last_report": text,
-                "evals_used": state.get("evals_used", 0) + evals_delta,
-            },
-        )
-
-
-# Backward-compatible alias — ImplementerNode is the WorkerNode used in the
-# canonical 2-node topology.  New code should use WorkerNode directly.
-ImplementerNode = WorkerNode

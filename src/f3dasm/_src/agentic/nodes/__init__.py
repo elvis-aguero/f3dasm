@@ -1,13 +1,8 @@
-"""Agentic graph nodes. Re-exports the public surface so existing
-``from ...agentic.nodes import X`` imports keep working after the package split."""
+"""Agentic graph nodes. Public surface for the nodes package."""
 
 # Intentionally re-exports private helpers (_*) needed by tests and internal callers.
-from .core import (  # noqa: F401
-    _EXIT_INTERVIEW,
-    AgentNode,
-    ImplementerNode,
-    StrategizerNode,
-    WorkerNode,
+from .base import AgentNode
+from .parsing import (  # noqa: F401
     _classify_response,
     _consult_handbook,
     _extract_report_section,
@@ -16,6 +11,11 @@ from .core import (  # noqa: F401
     _stamped_eval_count,
     _to_adapter_messages,
 )
+from .strategizer import StrategizerNode
+from .tools.routing import (
+    _EXIT_INTERVIEW,  # noqa: F401 – canonical def in routing.py
+)
+from .worker import ImplementerNode, WorkerNode
 
 __all__ = [
     "AgentNode",
