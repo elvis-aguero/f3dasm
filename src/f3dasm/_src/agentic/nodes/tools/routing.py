@@ -41,12 +41,10 @@ _EXIT_INTERVIEW = (
 
 
 def build_routing_tools(node) -> dict:
-    self = node   # shim: the pasted body uses `self.` and starts with `node = self`
-    node = self
-    route = self._route
-    outgoing = self._outgoing
-    study_dir = self._study_dir
-    interactive = self._interactive
+    route = node._route
+    outgoing = node._outgoing
+    study_dir = node._study_dir
+    interactive = node._interactive
 
     # Build target hints from each connected agent's description.
     _target_hints = "\n  ".join(
@@ -1249,8 +1247,8 @@ def build_routing_tools(node) -> dict:
     # an ImplementerAgent or DebuggerAgent that gains outgoing edges does not
     # declare them and therefore does not receive them.
     _agent_tools: frozenset = frozenset()
-    if self._spec is not None:
-        _ag = self._spec.nodes.get(self._name)
+    if node._spec is not None:
+        _ag = node._spec.nodes.get(node._name)
         if _ag is not None:
             _agent_tools = _ag.tools
 
@@ -1265,8 +1263,7 @@ def build_routing_tools(node) -> dict:
             return "ERROR: study_dir not available."
 
         allowed_exts = {".py", ".md"}
-        from pathlib import Path as _Path
-        p = _Path(filename)
+        p = Path(filename)
         if p.suffix not in allowed_exts:
             return (
                 f"ERROR: filename must end in {allowed_exts}, got {filename!r}."
@@ -1275,7 +1272,7 @@ def build_routing_tools(node) -> dict:
             return "ERROR: filename must be a bare name (no path separators)."
 
         # Write directly to study_dir/ — the user-visible output location.
-        target = _Path(node._study_dir) / p.name
+        target = Path(node._study_dir) / p.name
         target.write_text(content, encoding="utf-8")
         return prefix + f"Written: {target}"
 
@@ -1292,13 +1289,13 @@ def build_routing_tools(node) -> dict:
 
     # Hypothesis closures: always built but functionally inert without a
     # ledger (notes_dir only provided to the entry node).
-    closures.update(self._build_hypothesis_closures())
+    closures.update(node._build_hypothesis_closures())
 
     # AskForFeedback is only injected when a critic node is
     # connected AND this is the entry node (only the entry node
     # gates Done).
-    critic_name: str | None = self._find_critic_name()
-    spec = self._spec
+    critic_name: str | None = node._find_critic_name()
+    spec = node._spec
 
     if critic_name is not None:
         _critic_name = critic_name
@@ -1350,5 +1347,5 @@ def build_routing_tools(node) -> dict:
         closures["AskForFeedback"] = AskForFeedback
 
     # Wrap every closure so ERROR returns and exceptions are counted.
-    _node_name = self._name
-    return {k: self._wrap_closure(v, _node_name) for k, v in closures.items()}
+    _node_name = node._name
+    return {k: node._wrap_closure(v, _node_name) for k, v in closures.items()}
