@@ -16,6 +16,7 @@ from .core import (  # noqa: F401
     _to_adapter_messages,
 )
 
+# Intentionally re-exports private helpers (_*) needed by tests and internal callers.
 __all__ = [
     "AgentNode",
     "StrategizerNode",
