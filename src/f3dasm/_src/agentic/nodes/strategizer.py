@@ -17,25 +17,12 @@ if TYPE_CHECKING:
 from ..delegation_log import DelegationLog
 from ..hypothesis_ledger import HypothesisLedger
 from ..science_monitor import ScienceMonitor
-
-# public surface is defined in nodes/__init__.py
 from ._constants import RUN_BACKSTOP_MULTIPLE
 from .base import AgentNode
 from .critic_gate import CriticGateMixin
 from .lifecycle import LifecycleMixin
-from .parsing import (  # noqa: F401
-    _classify_response,
-    _consult_handbook,
-    _extract_report_section,
-    _parse_verdict,
-    _resolve_delegation_evals,
-    _stamped_eval_count,
-    _to_adapter_messages,
-)
+from .parsing import _to_adapter_messages
 from .recording import RecordingMixin
-from .tools.routing import (
-    _EXIT_INTERVIEW,  # noqa: F401 – canonical def in routing.py
-)
 
 
 class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode):

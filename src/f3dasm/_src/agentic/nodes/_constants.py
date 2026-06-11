@@ -1,6 +1,6 @@
 """Shared module-level constants for the nodes package — kept here (not in
-core.py) so both core.py and lifecycle.py can import them without an import
-cycle."""
+strategizer.py) so both strategizer.py and lifecycle.py (and routing.py) can
+import them without an import cycle."""
 import os as _os
 
 # Time budget is a SOFT constraint (warnings only). This multiple is the
