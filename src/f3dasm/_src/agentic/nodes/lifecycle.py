@@ -5,14 +5,12 @@ from __future__ import annotations
 import os as _os
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-# Mirror the two backstop constants from core.py to avoid an import cycle.
-# (core.py imports lifecycle.py, so lifecycle.py must NOT import from core.)
-RUN_BACKSTOP_MULTIPLE = float(
-    _os.environ.get("F3DASM_RUN_BACKSTOP_MULTIPLE", "2.0")
-)
-_BACKSTOP_ENABLED = RUN_BACKSTOP_MULTIPLE > 0
+from ._constants import _BACKSTOP_ENABLED, RUN_BACKSTOP_MULTIPLE
+
+if TYPE_CHECKING:
+    from langgraph.types import Command
 
 
 class LifecycleMixin:
@@ -85,7 +83,7 @@ class LifecycleMixin:
             update.update(extra_update)
         return Command(goto=END, update=update)
 
-    def _check_unrecoverable(self, state, budget, start):
+    def _check_unrecoverable(self, state: Any, budget: float | None, start: float | None) -> Command | None:
         """Return a halt Command if an unrecoverable condition is met, else None.
         Extracted verbatim from __call__ (USD ceiling → repeated errors → time
         backstop)."""

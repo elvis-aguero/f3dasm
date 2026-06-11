@@ -17,19 +17,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ..graph_state import AgenticState
 
-# Time budget is a SOFT constraint (warnings only). This multiple is the
-# run-level cost backstop: a run is aborted once it exceeds
-# RUN_BACKSTOP_MULTIPLE x the time budget, to bound runaway cost.
-# Wall-clock is a poor proxy for cost when a single oracle eval can take days
-# (the SOTA problems), so the cap is configurable and can be DISABLED: set
-# F3DASM_RUN_BACKSTOP_MULTIPLE <= 0 to turn the hard cap off entirely.
-import os as _os  # noqa: E402
-
 from ..delegation_log import DelegationLog
 from ..hypothesis_ledger import HypothesisLedger
 from ..science_monitor import ScienceMonitor
 
 # public surface is defined in nodes/__init__.py
+from ._constants import _BACKSTOP_ENABLED, RUN_BACKSTOP_MULTIPLE
 from .critic_gate import CriticGateMixin
 from .lifecycle import LifecycleMixin
 from .parsing import (  # noqa: F401
@@ -42,11 +35,6 @@ from .parsing import (  # noqa: F401
     _to_adapter_messages,
 )
 from .recording import RecordingMixin
-
-RUN_BACKSTOP_MULTIPLE = float(
-    _os.environ.get("F3DASM_RUN_BACKSTOP_MULTIPLE", "2.0")
-)
-_BACKSTOP_ENABLED = RUN_BACKSTOP_MULTIPLE > 0
 
 # Post-Done exit interview for the strategizer. Asked as a SEPARATE turn only
 # after the critic accepted the conclusion — so the strategizer never carries
