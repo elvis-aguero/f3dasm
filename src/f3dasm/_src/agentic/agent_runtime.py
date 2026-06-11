@@ -104,6 +104,11 @@ def _init_canonical_store(
         "evaluator_name": study_dir.name,
         "study_dir": str(study_dir),
         "fidelity_column": eval_cfg.get("fidelity_column"),
+        # Extensible, oracle-stamped provenance columns ({col: value}) — an
+        # open schema so any study can carry the metadata its science needs
+        # (fidelity, regime, seed, mesh, …). Stamped on every ledger row by
+        # InstrumentedDataGenerator, never authored by the agent.
+        "provenance": eval_cfg.get("provenance"),
         "evaluator_entrypoint": eval_cfg.get("entrypoint"),
         "evaluator_output_names": eval_cfg.get("output_names"),
         "evaluator_lookup": eval_cfg.get("lookup"),
@@ -493,7 +498,10 @@ class AgenticRun:
         config: dict[str, Any] = {
             "configurable": {"thread_id": thread_id},
             "recursion_limit": int(
-                os.environ.get("F3DASM_RECURSION_LIMIT", "500")
+                # 2000 ≈ hundreds of delegations; the old 500 (and the legacy
+                # 25 on some branches) could crash a long multi-delegation run
+                # mid-flight (GraphRecursionError). Override via env if needed.
+                os.environ.get("F3DASM_RECURSION_LIMIT", "2000")
             ),
         }
 

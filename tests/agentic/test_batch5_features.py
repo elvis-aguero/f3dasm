@@ -1,0 +1,135 @@
+"""Pins for the 2026-06-11 batch:
+  #5  the 3-strikes UNGATED escape is a SILENT backstop (not coached to the agent)
+  #6  extensible, oracle-stamped provenance columns (open schema)
+  #9  EVIDENCE_NUMBERS_MATCH re-enabled by default at 1e-3 relative tolerance
+  #10b recursion_limit default raised to 2000
+"""
+from __future__ import annotations
+
+import importlib
+import json
+from pathlib import Path
+
+from f3dasm._src.agentic.delegation_log import DelegationLog
+from f3dasm._src.agentic.hypothesis_ledger import HypothesisLedger
+from f3dasm._src.agentic.science_monitor import ScienceMonitor
+from f3dasm._src.experimentdata import ExperimentData
+from f3dasm._src.experimentsample import ExperimentSample, JobStatus
+
+_SRC = Path(__file__).resolve().parents[2] / "src" / "f3dasm" / "_src" / "agentic"
+
+
+# --- #5: escape is a silent backstop, never advertised ----------------------
+
+def test_three_strikes_escape_not_coached_to_agent():
+    """The strategizer-facing critic-verdict message must not teach the N=3
+    escape (advertising it makes the agent exhaust the critic instead of
+    earning a PASS). The backstop logic itself stays."""
+    nodes = (_SRC / "nodes.py").read_text()
+    # The old coaching phrasing must be gone from the agent-facing message.
+    assert "again anyway" not in nodes
+    assert "after 3 attempts the run closes" not in nodes
+    assert "(revision {node._revise_count}/3)" not in nodes
+    # The silent backstop must still exist.
+    assert "_revise_count >= 3" in nodes
+
+
+# --- #6: extensible, oracle-stamped provenance -------------------------------
+
+def test_extra_provenance_stamped_and_persisted(tmp_path, monkeypatch):
+    from f3dasm._src.agentic.instrumented import get_evaluator
+
+    study = tmp_path / "study"
+    study.mkdir()
+    (study / "tiny_eval.py").write_text(
+        "def evaluate_kw(**k):\n    return float(sum(k.values()))\n")
+    store = tmp_path / "store"
+    store.mkdir()
+    debug = tmp_path / "debug"
+    deleg = debug / "delegations" / "D001"
+    deleg.mkdir(parents=True)
+    cfg = {
+        "store_dir": str(store),
+        "lock_path": str(store / "experiment_data" / ".lock"),
+        "evaluator_name": "t",
+        "evaluator_entrypoint": "tiny_eval.py:evaluate_kw",
+        "evaluator_output_names": ["f"],
+        "evaluator_lookup": None,
+        "fidelity_column": None,
+        "study_dir": str(study),
+        "provenance": {"fidelity": 7, "regime": "linear"},
+    }
+    (debug / "run_config.json").write_text(json.dumps(cfg))
+    monkeypatch.chdir(deleg)
+    monkeypatch.delenv("F3DASM_DELEGATION_ID", raising=False)
+
+    gen = get_evaluator()
+    s = ExperimentSample(
+        _input_data={"x0": 0.3, "x1": 0.2}, _output_data={},
+        job_status=JobStatus.OPEN)
+    out = gen.execute(s)
+
+    # Stamped on the row (oracle-side, not agent-authored)...
+    assert out._output_data["fidelity"] == 7
+    assert out._output_data["regime"] == "linear"
+    # ...and persisted in the canonical store as real columns.
+    data = ExperimentData.from_file(project_dir=store)
+    _, df_out = data.to_pandas()
+    assert "fidelity" in df_out.columns
+    assert int(df_out.iloc[0]["fidelity"]) == 7
+    assert "regime" in df_out.columns
+
+
+def test_no_provenance_block_means_no_extra_columns(tmp_path):
+    """Open schema is opt-in: absent 'provenance' → only the fixed three."""
+    from f3dasm._src.agentic.instrumented import InstrumentedDataGenerator
+    from f3dasm._src.core import DataGenerator
+
+    class _Const(DataGenerator):
+        def execute(self, s, **k):
+            s._output_data["y"] = 1.0
+            return s
+
+    gen = InstrumentedDataGenerator(
+        inner=_Const(), store_dir=tmp_path / "s", delegation_id="D001")
+    out = gen.execute(ExperimentSample(
+        _input_data={"x": 0.0}, _output_data={}, job_status=JobStatus.OPEN))
+    assert set(out._output_data) == {"y", "_delegation_id", "source", "_ts"}
+
+
+# --- #9: EVIDENCE_NUMBERS_MATCH default-on @ 1e-3 -----------------------------
+
+def test_evidence_numbers_match_default_on(monkeypatch):
+    import f3dasm._src.agentic.science_monitor as sm
+    monkeypatch.delenv("F3DASM_EVIDENCE_NUMBERS_MATCH", raising=False)
+    importlib.reload(sm)
+    try:
+        assert sm.EVIDENCE_NUMBERS_MATCH_ENABLED is True
+        monkeypatch.setenv("F3DASM_EVIDENCE_NUMBERS_MATCH", "0")
+        importlib.reload(sm)
+        assert sm.EVIDENCE_NUMBERS_MATCH_ENABLED is False
+    finally:
+        monkeypatch.delenv("F3DASM_EVIDENCE_NUMBERS_MATCH", raising=False)
+        importlib.reload(sm)  # restore default-on for the rest of the suite
+
+
+def test_numbers_match_1e3_tolerance(tmp_path):
+    """1e-3 relative tolerance accepts sensible rounding (the documented bug
+    case) but still rejects a wholly different number."""
+    ledger = HypothesisLedger(tmp_path)
+    dlog = DelegationLog(tmp_path / "dlog.jsonl")
+    mon = ScienceMonitor(ledger, dlog)
+    report = "### Numbers\nbest_f: -0.040278683\n"
+    # rounded citation: |−0.040279 − −0.040278683| ≈ 3e-7 ≤ 1e-3·0.04 → anchors
+    # (this is exactly the case the old 1e-6 tolerance wrongly rejected)
+    assert mon._numbers_match({"best_f": -0.040279}, report)
+    # 20% off → not anchored
+    assert not mon._numbers_match({"best_f": -0.05}, report)
+
+
+# --- #10b: recursion_limit default raised ------------------------------------
+
+def test_recursion_limit_default_raised():
+    rt = (_SRC / "agent_runtime.py").read_text()
+    assert 'F3DASM_RECURSION_LIMIT", "2000"' in rt
+    assert '"500"' not in rt.split("recursion_limit")[1][:200]

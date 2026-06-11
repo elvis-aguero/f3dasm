@@ -370,6 +370,16 @@ class ClaudeAdapter:
         _max_buf_mb = float(os.environ.get("F3DASM_LLM_MAX_BUFFER_MB", "30"))
         _max_buf = int(_max_buf_mb * 1024 * 1024)
 
+        # The SDK spawns the CLI with cwd=self.study_dir; if that directory
+        # doesn't exist the subprocess dies with a cryptic CLIConnectionError
+        # ("Working directory does not exist") mid-delegation. Create it
+        # defensively so a missing worker workspace can never abort a run.
+        if self.study_dir:
+            try:
+                self.study_dir.mkdir(parents=True, exist_ok=True)
+            except Exception:  # noqa: BLE001 — best-effort; spawn surfaces real errors
+                pass
+
         options = ClaudeAgentOptions(
             system_prompt=self.system_prompt,
             model=self.model,

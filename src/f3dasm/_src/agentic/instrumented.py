@@ -89,6 +89,7 @@ class InstrumentedDataGenerator(DataGenerator):
         fidelity_column: Optional[str] = None,
         lock_path: Optional[Path | str] = None,
         flush_every: int = 1,
+        extra_provenance: Optional[dict] = None,
     ) -> None:
         self.inner = inner
         self.store_dir = Path(store_dir)
@@ -96,6 +97,13 @@ class InstrumentedDataGenerator(DataGenerator):
         self.source = source
         self.fidelity_column = fidelity_column  # unused Phase 1
         self.flush_every = flush_every
+        # Extensible, oracle-stamped provenance: arbitrary {column: value}
+        # declared per run (config 'provenance' block, or set by the runtime).
+        # Stamped into EVERY evaluated row at the metered call — so the schema
+        # is open (any future problem can add columns: fidelity, regime, seed,
+        # mesh, …) and the VALUES come from the oracle wrapper, never from the
+        # agent (which keeps the audit trail trustworthy).
+        self.extra_provenance: dict = dict(extra_provenance or {})
 
         if lock_path is None:
             lock_path = (
@@ -134,6 +142,9 @@ class InstrumentedDataGenerator(DataGenerator):
         out._output_data["_delegation_id"] = self.delegation_id
         out._output_data["source"] = self.source
         out._output_data["_ts"] = ts
+        # Extensible declared provenance (oracle-stamped, not agent-authored).
+        for _col, _val in self.extra_provenance.items():
+            out._output_data[_col] = _val
 
         self._buffer.append(deepcopy(out))
 
@@ -186,8 +197,10 @@ class InstrumentedDataGenerator(DataGenerator):
             ):
                 canon = ExperimentData(domain=batch_domain)
 
-            # Ensure provenance columns are declared on the canon domain.
-            for col in ("_delegation_id", "source", "_ts"):
+            # Ensure provenance columns are declared on the canon domain
+            # (fixed three + any extensible declared columns).
+            for col in ("_delegation_id", "source", "_ts",
+                        *self.extra_provenance):
                 canon._domain.add_output(col, exist_ok=True)
 
             merged = canon + batch
@@ -412,6 +425,10 @@ def get_evaluator(inner: Optional[DataGenerator] = None) -> (
         run_config.get("evaluator_name", ""),
     )
     fidelity_column = run_config.get("fidelity_column")
+    # Extensible provenance declared for this run (open schema; stamped on
+    # every row by the wrapper, never by the agent). Tolerate a non-dict.
+    _prov = run_config.get("provenance")
+    extra_provenance = _prov if isinstance(_prov, dict) else {}
 
     if inner is None:
         study_dir_str = run_config.get("study_dir")
@@ -440,6 +457,7 @@ def get_evaluator(inner: Optional[DataGenerator] = None) -> (
         source=source,
         fidelity_column=fidelity_column,
         lock_path=lock_path,
+        extra_provenance=extra_provenance,
     )
 
 

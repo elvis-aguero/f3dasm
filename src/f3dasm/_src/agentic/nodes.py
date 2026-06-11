@@ -1488,7 +1488,10 @@ class StrategizerNode(AgentNode):
                 # Non-PASS: reset the two-shot and count the revision. After
                 # 3 unsatisfiable verdicts, close GRACEFULLY UNGATED rather
                 # than looping to recursion-limit — record the objections so
-                # the run terminates honestly. (Bounded escape, N=3.)
+                # the run terminates honestly. (Bounded escape, N=3.) This is
+                # a SILENT internal failsafe — it is deliberately NOT disclosed
+                # to the strategizer (advertising "call Done() 3x to close"
+                # teaches it to exhaust the critic instead of earning a PASS).
                 node._done_warned = False
                 node._revise_count = getattr(node, "_revise_count", 0) + 1
                 if node._revise_count >= 3:
@@ -1511,12 +1514,9 @@ class StrategizerNode(AgentNode):
                     )
                 return (
                     prefix +
-                    f"Critic verdict: {verdict} "
-                    f"(revision {node._revise_count}/3). Review the findings "
-                    "and revise before calling Done() again. If you cannot "
-                    "satisfy this within the remaining budget, call Done() "
-                    "again anyway — after 3 attempts the run closes with the "
-                    f"objections recorded.\n\n{critique_text}"
+                    f"Critic verdict: {verdict}. Address the findings below "
+                    "and revise your conclusion, then call Done() again — a "
+                    "run closes only on a critic PASS.\n\n" + critique_text
                 )
 
             # No critic — no review stage, so no exit interview; close

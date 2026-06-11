@@ -16,13 +16,15 @@ from dataclasses import dataclass
 
 __all__ = ["ScienceMonitor", "Violation"]
 
-# EVIDENCE_NUMBERS_MATCH (the anchored-evidence rule) is OFF by default: its
-# verbatim/tight-tolerance match rejected legitimately-grounded-but-rounded
-# citations (e.g. -0.040279 vs the report's -0.040278683…), stalling wrap-up.
-# Fabricated/mis-cited numbers are now caught by the adversarial critic gate.
-# Re-enable with F3DASM_EVIDENCE_NUMBERS_MATCH=1.
+# EVIDENCE_NUMBERS_MATCH (the anchored-evidence rule) is ON by default. It was
+# briefly disabled because a tight 1e-6 match rejected legitimately-grounded-
+# but-rounded citations (e.g. -0.040279 vs the report's -0.040278683…); that was
+# a TOLERANCE bug, not a concept bug. Re-enabled with a 1e-3 RELATIVE tolerance
+# (see _numbers_match), which anchors the headline against the report while
+# tolerating sensible rounding. It is the only in-flight grounding check (the
+# critic gate is end-of-run). Disable with F3DASM_EVIDENCE_NUMBERS_MATCH=0.
 EVIDENCE_NUMBERS_MATCH_ENABLED = (
-    os.environ.get("F3DASM_EVIDENCE_NUMBERS_MATCH", "").strip().lower()
+    os.environ.get("F3DASM_EVIDENCE_NUMBERS_MATCH", "1").strip().lower()
     in {"1", "true", "yes", "on"}
 )
 
@@ -302,7 +304,8 @@ class ScienceMonitor:
         of the wrong delegation. The critic judges semantics.
 
         Prefers the ### Numbers section (key: value lines); falls back to
-        the full text. Numeric match: rel tol 1e-6. Value-only (keys are
+        the full text. Numeric match: rel tol 1e-3 (tolerates sensible
+        rounding while still catching fabrication). Value-only (keys are
         not bound).
         """
         section = _NUMBERS_SECTION_RE.search(deliverable)
@@ -318,7 +321,7 @@ class ScienceMonitor:
         # Anchored if any cited numeric value appears in the report.
         for v in numeric_vals:
             if any(
-                abs(v - hv) <= 1e-6 * max(abs(v), abs(hv), 1e-12)
+                abs(v - hv) <= 1e-3 * max(abs(v), abs(hv), 1e-12)
                 for hv in hay_floats
             ):
                 return True
