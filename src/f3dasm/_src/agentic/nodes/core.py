@@ -15,11 +15,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .graph_state import AgenticState
+    from ..graph_state import AgenticState
 
-from .delegation_log import DelegationLog
-from .hypothesis_ledger import HypothesisLedger
-from .science_monitor import ScienceMonitor
+from ..delegation_log import DelegationLog
+from ..hypothesis_ledger import HypothesisLedger
+from ..science_monitor import ScienceMonitor
 
 __all__ = [
     "AgentNode", "StrategizerNode", "WorkerNode", "ImplementerNode",
@@ -54,7 +54,7 @@ def _resolve_delegation_evals(
     if store_dir is None:
         return reported
     try:
-        from .instrumented import RunStateSummary
+        from ..instrumented import RunStateSummary
         summary = RunStateSummary.from_store(store_dir)
         if (
             summary is not None
@@ -76,7 +76,7 @@ def _stamped_eval_count(store_dir: Path | None, delegation_id: str) -> int:
     if store_dir is None:
         return 0
     try:
-        from .instrumented import RunStateSummary
+        from ..instrumented import RunStateSummary
         summary = RunStateSummary.from_store(store_dir)
         if summary is not None:
             return int(summary.n_per_delegation.get(delegation_id, 0))
@@ -195,7 +195,7 @@ def _classify_response(
         When ``None`` the four default sections from
         ``_REQUIRED_SUBSECTIONS`` are used.
     """
-    from .agent_prompts import (
+    from ..agent_prompts import (
         REFLECT_DIAGNOSIS_CAPABILITY_LIMIT,
         REFLECT_DIAGNOSIS_MISSING_SUBSECTIONS_TEMPLATE,
         REFLECT_DIAGNOSIS_NO_REPORT_HEADING,
@@ -244,7 +244,7 @@ def _consult_handbook(query: str = "") -> str:
     id. Read-only and best-effort — never raises into the agent loop.
     """
     try:
-        from .knowledge import KnowledgeBase
+        from ..knowledge import KnowledgeBase
         kb = KnowledgeBase.load()
     except Exception as exc:  # noqa: BLE001
         return f"(handbook unavailable: {exc})"
@@ -389,7 +389,7 @@ class StrategizerNode(AgentNode):
         self._error_counts: dict[str, int] = {}
         # Separable per-call telemetry — additive, off the decision path. Lives
         # under debug/telemetry/ (notes_dir is debug/strategizer_notes).
-        from .telemetry import Telemetry
+        from ..telemetry import Telemetry
         self._telemetry: Telemetry | None = (
             Telemetry(Path(notes_dir).parent) if notes_dir is not None else None
         )
@@ -470,13 +470,13 @@ class StrategizerNode(AgentNode):
         )
         self._critic_calls = getattr(self, "_critic_calls", 0) + 1
         _n = self._critic_calls
-        from .backends.base import (
+        from ..backends.base import (
             debug_enabled as _dbg,
         )
-        from .backends.base import (
+        from ..backends.base import (
             get_transcript_sink as _get_sink,
         )
-        from .backends.base import (
+        from ..backends.base import (
             set_transcript_sink as _set_sink,
         )
         _notes = self._current_notes_dir
@@ -873,14 +873,14 @@ class StrategizerNode(AgentNode):
                 # On-demand handbook lookup, available to every worker.
                 worker.closure_tools["ConsultHandbook"] = _consult_handbook
                 try:
-                    from .agent_prompts import IMPLEMENTER_REPORT_RETRY_PROMPT
-                    from .backends.base import (
+                    from ..agent_prompts import IMPLEMENTER_REPORT_RETRY_PROMPT
+                    from ..backends.base import (
                         debug_enabled as _dbg,
                     )
-                    from .backends.base import (
+                    from ..backends.base import (
                         set_delegation_id as _set_did,
                     )
-                    from .backends.base import (
+                    from ..backends.base import (
                         set_transcript_sink as _set_sink,
                     )
 
@@ -938,7 +938,7 @@ class StrategizerNode(AgentNode):
                         if node._current_notes_dir is not None else None
                     )
                     if node._canonical_source_registered():
-                        from .agent_prompts import (
+                        from ..agent_prompts import (
                             UNLEDGERED_EVALS_RETRY_PROMPT,
                         )
                         _bounces = 0
@@ -1100,7 +1100,7 @@ class StrategizerNode(AgentNode):
                             if _manifest.exists():
                                 import json as _json
 
-                                from .agent_runtime import (
+                                from ..agent_runtime import (
                                     register_evaluator_entrypoint,
                                 )
                                 _m = _json.loads(_manifest.read_text())
@@ -1650,7 +1650,7 @@ class StrategizerNode(AgentNode):
             """Summary of the run's canonical evaluation ledger: rows per
             delegation/source, output ranges. Call before deciding the next
             delegation."""
-            from .instrumented import RunStateSummary
+            from ..instrumented import RunStateSummary
             sd = _derive_store_dir()
             if sd is None:
                 return (
@@ -1676,9 +1676,9 @@ class StrategizerNode(AgentNode):
             values from here as evidence."""
             import json as _json
 
-            from ..errors import EmptyFileError, ReachMaximumTriesError
-            from ..experimentdata import ExperimentData
-            from .instrumented import _PROVENANCE_COLS
+            from ...errors import EmptyFileError, ReachMaximumTriesError
+            from ...experimentdata import ExperimentData
+            from ..instrumented import _PROVENANCE_COLS
 
             sd = _derive_store_dir()
             if sd is None:
@@ -2680,10 +2680,10 @@ class StrategizerNode(AgentNode):
         )
         # DEBUG: stream this strategizer turn's full reasoning + tool-calls
         # to debug/transcripts/strategizer/turn_NNN.jsonl.
-        from .backends.base import (
+        from ..backends.base import (
             debug_enabled as _dbg,
         )
-        from .backends.base import (
+        from ..backends.base import (
             set_transcript_sink as _set_sink,
         )
         self._turn_count = getattr(self, "_turn_count", 0) + 1
@@ -2904,7 +2904,7 @@ class WorkerNode(AgentNode):
         from langchain_core.messages import AIMessage
         from langgraph.types import Command
 
-        from .agent_prompts import IMPLEMENTER_REPORT_RETRY_PROMPT
+        from ..agent_prompts import IMPLEMENTER_REPORT_RETRY_PROMPT
 
         self._evals_reported.clear()
         messages = _to_adapter_messages(state["messages"])

@@ -3181,6 +3181,6 @@ def test_a6_critic_gate_allows_pass_feedback_does_not():
 
     # The Done() gate task message must use GATE mode, not FEEDBACK.
     import inspect
-    from f3dasm._src.agentic import nodes
-    src = inspect.getsource(nodes)
+    from f3dasm._src.agentic.nodes import core as _nodes_core
+    src = inspect.getsource(_nodes_core)
     assert "<mode>GATE</mode>" in src, "Done() gate must invoke critic in GATE mode"
