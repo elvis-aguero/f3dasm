@@ -34,25 +34,8 @@ from .parsing import (  # noqa: F401
     _to_adapter_messages,
 )
 from .recording import RecordingMixin
-
-# Post-Done exit interview for the strategizer. Asked as a SEPARATE turn only
-# after the critic accepted the conclusion — so the strategizer never carries
-# the interview in its working context (no pollution). It answers with one more
-# Done() whose summary is just a ### Retrospective block.
-_EXIT_INTERVIEW = (
-    "Your conclusion has been accepted by the critic and recorded — the run "
-    "is effectively closed. One last thing before we finalise: a quick "
-    "question about the SYSTEM you worked within (its rules, tools, and the "
-    "monitor/critic feedback), NOT the science. Call Done() ONE more time "
-    "with a summary containing only a ### Retrospective block:\n"
-    "- CONSISTENCY: ok | flagged — did any rule, tool, monitor message, or "
-    "critic finding contradict another, or contradict what you were told "
-    "elsewhere (e.g. a rule that rejected evidence you believe was correct)? "
-    "Write 'flagged' and QUOTE both sides; otherwise 'ok'. (Most important.)\n"
-    "- DECISION: the one strategic choice you were least sure the system "
-    "wanted, and why you made it.\n"
-    "- FRICTION: anything counterintuitive about the rules/tools, or 'none'.\n"
-    "This will NOT reopen the run."
+from .tools.routing import (
+    _EXIT_INTERVIEW,  # noqa: F401 – canonical def in routing.py
 )
 
 
