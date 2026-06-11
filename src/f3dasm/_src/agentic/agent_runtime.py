@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -316,12 +317,14 @@ class AgenticRun:
         graph: Graph | None = None,
         model: str | None = None,
         budget: float | None = None,
+        budget_usd: float | None = None,
         eval_budget: int | None = None,
         interactive: bool = True,
         max_ask: int = 1,
         container: bool = False,
         container_image: str = "f3dasm-agentic:latest",
         resume_from: Path | None = None,
+        review_statement: bool = True,
     ) -> None:
         self.study_dir = Path(study_dir).resolve()
         cfg = _load_study_config(self.study_dir)
@@ -344,6 +347,12 @@ class AgenticRun:
         else:
             self._budget = None
 
+        # Hard USD cost ceiling (None = no ceiling). Honoured only when the
+        # backend reports per-call cost (claude); ollama has no cost data.
+        self._budget_usd = (
+            budget_usd if budget_usd is not None else cfg.get("budget_usd")
+        )
+
         self._graph_spec = graph or _default_graph()
         self._interactive = interactive
         self._max_ask = max_ask
@@ -351,6 +360,13 @@ class AgenticRun:
         self._container_image = container_image
         self._resume_from = (
             Path(resume_from) if resume_from is not None else None
+        )
+        # Pre-run problem-statement review (Item B). User-controllable; cfg can
+        # also disable it. Default on.
+        self._review_statement = (
+            review_statement
+            if review_statement is not None
+            else cfg.get("review_statement", True)
         )
         self._run_dir = None  # set in execute()
 
@@ -477,6 +493,18 @@ class AgenticRun:
             thread_id = str(uuid.uuid4())
             _tid_path.write_text(thread_id)
 
+        # Pre-run problem-statement review (advisory; interactive-refine when
+        # enabled). Fresh runs only — a resume replays the checkpoint and must
+        # not re-prompt. Skipped when a graph is injected programmatically
+        # (a test affordance — _run_dir is set above so _make_adapter can build
+        # the ephemeral reviewer session on real runs).
+        if (
+            _resume is None
+            and getattr(self, "_review_statement", True)
+            and getattr(self, "_graph", None) is None
+        ):
+            problem = self._review_problem_statement(problem, debug_dir)
+
         initial_state = AgenticState(
             messages=[HumanMessage(content=problem)],
             study_dir=str(self.study_dir),
@@ -484,6 +512,7 @@ class AgenticRun:
             last_report=None,
             total_delegations=0,
             budget_seconds=getattr(self, "_budget", None),
+            budget_usd=getattr(self, "_budget_usd", None),
             run_dir=str(run_dir),
             eval_budget=getattr(self, "_eval_budget", None),
             evals_used=0,
@@ -521,7 +550,47 @@ class AgenticRun:
                 checkpointer=saver,
             )
             graph_input = None if _resume is not None else initial_state
-            result = graph.invoke(graph_input, config=config)
+            # On resume, the checkpointed state still carries the OLD budgets
+            # and start_time. Re-seed them from this AgenticRun so a run that
+            # halted on a budget can actually make progress after the user
+            # raises it (cumulative token_totals persist in the checkpoint, so
+            # the spend-so-far is still counted against the new ceiling).
+            if _resume is not None and hasattr(graph, "update_state"):
+                try:
+                    graph.update_state(config, {
+                        "budget_seconds": getattr(self, "_budget", None),
+                        "budget_usd": getattr(self, "_budget_usd", None),
+                        "eval_budget": getattr(self, "_eval_budget", None),
+                        "start_time": start_time,
+                    })
+                except Exception:  # noqa: BLE001
+                    log.warning("resume state refresh failed", exc_info=True)
+            try:
+                result = graph.invoke(graph_input, config=config)
+            except BaseException as _exc:  # noqa: BLE001
+                # Any unhandled crash (GraphRecursionError, KeyboardInterrupt,
+                # OOM, …): record a resumable status so resume_from is always
+                # an option after a break, then re-raise (we do not swallow).
+                try:
+                    (debug_dir / "run_status.json").write_text(
+                        json.dumps({
+                            "status": "crashed",
+                            "reason": f"{type(_exc).__name__}: {_exc}"[:500],
+                            "resumable": True,
+                            "thread_id": thread_id,
+                        }, indent=2),
+                        encoding="utf-8",
+                    )
+                except OSError:
+                    pass
+                raise
+        # Merge per-call telemetry into an analysis-ready summary.json (additive,
+        # off the decision path — a failure here must not fail the run).
+        try:
+            from .telemetry import Telemetry
+            Telemetry.merge(debug_dir)
+        except Exception:  # noqa: BLE001
+            log.warning("telemetry merge failed", exc_info=True)
         report = result.get("last_report") or ""
         evals = result.get("evals_used", 0)
         tokens = result.get("token_totals") or {}
@@ -596,6 +665,74 @@ class AgenticRun:
         handler.close()
 
         return report
+
+    def _review_problem_statement(
+        self, problem: str, debug_dir: Path, *, adapter=None
+    ) -> str:
+        """Advisory pre-run well-posedness review (Item B).
+
+        Always writes ``debug/problem_statement_review.md``.  When the run is
+        interactive and gaps are found, offers a per-gap refine via the same
+        ``input()`` channel the in-graph FollowUp uses, appending accepted
+        clarifications to the statement (and to a saved addendum).  Returns the
+        (possibly augmented) problem text.  NEVER blocks an autonomous run: any
+        reviewer failure falls back to the original statement unchanged.
+        """
+        from .reviewer import (
+            ProblemStatementReviewerAgent,
+            format_review_markdown,
+            parse_review,
+            review_gaps,
+        )
+
+        try:
+            if adapter is None:
+                adapter = self._make_adapter(
+                    "problem_statement_reviewer",
+                    ProblemStatementReviewerAgent(),
+                )
+            raw = adapter.invoke([{"role": "user", "content": problem}])
+            review = parse_review(raw)
+        except Exception:  # noqa: BLE001 — advisory, never blocks
+            return problem
+
+        try:
+            (debug_dir / "problem_statement_review.md").write_text(
+                format_review_markdown(review, problem), encoding="utf-8"
+            )
+        except OSError:
+            pass
+
+        gaps = review_gaps(review)
+        if not (gaps and self._interactive):
+            return problem
+
+        clarifications: list[tuple[str, str]] = []
+        print(
+            "\nThe problem statement may be under-specified. For each gap, "
+            "type a clarification (or leave blank to skip):"
+        )
+        for g in gaps:
+            try:
+                ans = input(f"  [{g['element']}] {g['note']}\n  > ").strip()
+            except (EOFError, KeyboardInterrupt):
+                ans = ""
+            if ans:
+                clarifications.append((g["element"], ans))
+
+        if not clarifications:
+            return problem
+
+        addendum = "\n\n## Clarifications (added pre-run via HITL review)\n" + (
+            "\n".join(f"- **{el}**: {ans}" for el, ans in clarifications)
+        )
+        try:
+            (debug_dir / "problem_statement_addendum.md").write_text(
+                addendum.strip() + "\n", encoding="utf-8"
+            )
+        except OSError:
+            pass
+        return problem + addendum
 
     def _make_adapter(self, name: str, agent: Agent):
         run_dir = self._run_dir

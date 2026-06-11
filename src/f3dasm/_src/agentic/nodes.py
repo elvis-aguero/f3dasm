@@ -316,6 +316,15 @@ class StrategizerNode(AgentNode):
         # Budget state — set at the start of each __call__ from AgenticState
         self._budget_seconds: float | None = None
         self._run_start: float | None = None
+        # Hard USD cost ceiling (None = inactive). Set each __call__ from state.
+        self._budget_usd: float | None = None
+        # True once any LLM call reports a real cost (claude). Stays False under
+        # ollama (cost is None) → the USD ceiling is treated as inactive.
+        self._cost_observed: bool = False
+        self._usd_inactive_warned: bool = False
+        # Consecutive Errored delegations per target (reset on that target's
+        # next success). Drives the repeated-errors resumable halt.
+        self._consecutive_errors: dict[str, int] = {}
         # Per-delegation pending messages (budget warnings) to prepend to
         # worker tool results.  Keyed by delegation_id; drained on next call.
         self._pending_worker_msgs: dict[str, list[str]] = {}
@@ -378,6 +387,12 @@ class StrategizerNode(AgentNode):
         # Per-node raw tool-call error count: any ERROR: return or raised
         # exception from any injected closure counts as one error for that node.
         self._error_counts: dict[str, int] = {}
+        # Separable per-call telemetry — additive, off the decision path. Lives
+        # under debug/telemetry/ (notes_dir is debug/strategizer_notes).
+        from .telemetry import Telemetry
+        self._telemetry: Telemetry | None = (
+            Telemetry(Path(notes_dir).parent) if notes_dir is not None else None
+        )
         self.adapter.closure_tools.update(self._build_routing_closures())
         self.adapter.route_watcher = lambda: self._route.get("kind") == "done"
 
@@ -483,6 +498,16 @@ class StrategizerNode(AgentNode):
             # Restore the strategizer's own sink (same thread-local).
             if _dbg() and _notes is not None:
                 _set_sink(_prev_sink)
+        # Account the critic's tokens/cost — critic consults are real LLM calls
+        # and must land in token_totals AND telemetry (they were previously
+        # uncounted, undercounting run cost and omitting the 'critic' role).
+        self._record_usage(
+            getattr(worker, "last_usage", {}) or {},
+            role=self._role_of(critic_name),
+            model=getattr(worker, "model", None),
+            phase="critic_review",
+            delegation_id=f"critic-{_n}",
+        )
         # Always-on: persist the verdict/review to disk + record retrospective.
         self._persist_critic_review(_n, critique)
         self._record_retrospective("critic", f"critic-{_n}", critique)
@@ -964,9 +989,10 @@ class StrategizerNode(AgentNode):
                     if _onb is not None:
                         _onb.events = []
 
-                    # Accumulate token usage from this worker invocation.
+                    # Accumulate token usage from this worker invocation
+                    # (_usage is also consumed downstream by the delegation log).
                     _usage = getattr(worker, "last_usage", {}) or {}
-                    node._accumulate_usage(_usage)
+                    node._record_worker_usage(worker, target, delegation_id)
 
                     # Scan worker report for MCP tool errors (infrastructure, not agent fault).
                     # MCP errors appear as lines containing "error" near tool names in the report.
@@ -1010,6 +1036,10 @@ class StrategizerNode(AgentNode):
                             "evals": _evals,
                             "usage": _usage,
                         })
+                        # This target made progress → clear its consecutive
+                        # error streak (the repeated-errors halt is for a
+                        # target stuck failing, not one that recovers).
+                        node._consecutive_errors[target] = 0
                     with node._notifications_lock:
                         node._notifications.append(
                             f"[Delegation {delegation_id} Done]"
@@ -1099,15 +1129,13 @@ class StrategizerNode(AgentNode):
 
                     # Worker retrospective (every node has a 'job done'
                     # moment — see _record_retrospective).
-                    _role = (
-                        getattr(node._spec.nodes.get(target), "role", None)
-                        or target
+                    node._record_retrospective(
+                        node._role_of(target), delegation_id, text
                     )
-                    node._record_retrospective(_role, delegation_id, text)
                 except Exception:  # noqa: BLE001
                     tb = traceback.format_exc()
                     _usage = getattr(worker, "last_usage", {}) or {}
-                    node._accumulate_usage(_usage)
+                    node._record_worker_usage(worker, target, delegation_id)
                     with node._registry_lock:
                         node._registry[delegation_id].update({
                             "status": "Errored",
@@ -1115,6 +1143,9 @@ class StrategizerNode(AgentNode):
                             "evals": evals_box["count"],
                             "usage": _usage,
                         })
+                        node._consecutive_errors[target] = (
+                            node._consecutive_errors.get(target, 0) + 1
+                        )
                     with node._notifications_lock:
                         node._notifications.append(
                             f"[Delegation {delegation_id} Errored]"
@@ -2128,6 +2159,111 @@ class StrategizerNode(AgentNode):
 
         return _wrapped
 
+    def _role_of(self, target: str) -> str:
+        """Configured role of a connected node, falling back to its name."""
+        return getattr(self._spec.nodes.get(target), "role", None) or target
+
+    def _record_worker_usage(
+        self, worker: Any, target: str, delegation_id: str | None
+    ) -> None:
+        """Record a worker delegation's token usage. Shared by the success and
+        error paths so the two can never drift (role is derived, not hardcoded)."""
+        self._record_usage(
+            getattr(worker, "last_usage", {}) or {},
+            role=self._role_of(target),
+            model=getattr(worker, "model", None),
+            phase="delegation",
+            delegation_id=delegation_id,
+        )
+
+    def _record_usage(
+        self,
+        usage: dict,
+        *,
+        role: str | None,
+        model: str | None,
+        phase: str | None,
+        delegation_id: str | None,
+    ) -> None:
+        """Accumulate token totals (decision path) AND emit one telemetry row
+        (additive, off the decision path).  Telemetry failures are swallowed
+        inside ``record_call`` so they can never break a run."""
+        self._accumulate_usage(usage)
+        if self._telemetry is not None:
+            self._telemetry.record_call(
+                role=role, model=model, phase=phase,
+                delegation_id=delegation_id, usage=usage,
+            )
+
+    def _halt_resumable(
+        self,
+        state: Any,
+        *,
+        reason: str,
+        status: str = "halted",
+        extra_update: dict | None = None,
+    ):
+        """Checkpoint-and-halt cleanly on an unrecoverable condition.
+
+        Instead of crashing, write ``debug/run_status.json`` (so tooling and
+        the human can see the run is resumable) and return a ``Command`` to
+        ``END`` whose ``last_report`` is prefixed with a HALTED banner.  The
+        durable SqliteSaver checkpoint + the persisted ``thread_id`` are what
+        make the run resumable via ``AgenticRun(resume_from=...)`` — no new
+        serialized state is introduced here.
+        """
+        import json as _json
+
+        from langchain_core.messages import AIMessage
+        from langgraph.graph import END
+        from langgraph.types import Command
+
+        run_dir = state.get("run_dir")
+        thread_id = None
+        if run_dir:
+            debug_dir = Path(run_dir) / "debug"
+            tid_path = debug_dir / "thread_id"
+            try:
+                if tid_path.exists():
+                    thread_id = tid_path.read_text().strip()
+            except OSError:
+                thread_id = None
+            try:
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                (debug_dir / "run_status.json").write_text(
+                    _json.dumps(
+                        {
+                            "status": status,
+                            "reason": reason,
+                            "resumable": True,
+                            "thread_id": thread_id,
+                        },
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+            except OSError:
+                pass
+
+        # Preserve the latest conclusion below the banner.
+        prior_text = ""
+        for _m in reversed(state["messages"]):
+            if isinstance(_m, AIMessage):
+                prior_text = str(_m.content)
+                break
+
+        banner = f"## ⚠ HALTED (resumable) — {reason}\n\n"
+        update = {
+            "messages": [],
+            "done": True,
+            "last_report": banner + (prior_text or "(no prior report)"),
+            "token_totals": dict(self._token_totals),
+            "error_counts": dict(self._error_counts),
+        }
+        if extra_update:
+            update.update(extra_update)
+        return Command(goto=END, update=update)
+
     def _accumulate_usage(self, usage: dict) -> None:
         """Thread-safe accumulation of token counts from adapter.last_usage."""
         with self._registry_lock:
@@ -2138,6 +2274,7 @@ class StrategizerNode(AgentNode):
             cost = usage.get("total_cost_usd")
             if cost is not None:
                 self._token_totals["total_cost_usd"] += cost
+                self._cost_observed = True
 
     def _build_hypothesis_closures(self) -> dict:
         """Build HypothesisPropose/Update/List/Get closures."""
@@ -2337,6 +2474,7 @@ class StrategizerNode(AgentNode):
         # Store on node so GetStatus() can compute delegation timeout
         self._budget_seconds = budget
         self._run_start = start
+        self._budget_usd = state.get("budget_usd")
         if budget is not None and start is not None:
             elapsed = time.time() - start
             pct = elapsed / budget
@@ -2375,34 +2513,98 @@ class StrategizerNode(AgentNode):
                 ),
             })
 
-        # ── Run-level cost backstop ───────────────────────────────────────────
-        # Time budget itself is SOFT (warnings only). This is a separate
-        # outermost guard: if the run blows past RUN_BACKSTOP_MULTIPLE x the
-        # budget it is aborted to bound runaway cost — a backstop, not the
-        # budget being a hard constraint. Checked between turns; a turn stuck
-        # polling is nudged toward Done() via GetStatus (see budget broadcast).
+        # ── Unrecoverable-condition detectors → checkpoint-and-halt ──────────
+        # Three conditions converge on the single _halt_resumable path: a clean
+        # END + debug/run_status.json + a HALTED banner, leaving the durable
+        # SqliteSaver checkpoint resumable. Helper to fold in the delegation /
+        # eval tallies every halt update needs.
+        def _halt_tallies() -> dict:
+            with self._registry_lock:
+                _total_new = len(self._registry)
+                _evals_new = sum(
+                    e["evals"] for e in self._registry.values()
+                )
+            return {
+                "total_delegations": (
+                    state["total_delegations"] + _total_new
+                ),
+                "evals_used": state.get("evals_used", 0) + _evals_new,
+            }
+
+        # (1) USD cost ceiling. Hard, resumable (raise budget_usd and resume).
+        # Inactive under ollama (no cost data): warn once, never halt.
+        _budget_usd = self._budget_usd
+        if _budget_usd is not None and _budget_usd > 0:
+            _spent = self._token_totals.get("total_cost_usd") or 0.0
+            if not self._cost_observed:
+                if (
+                    getattr(self, "_turn_count", 0) >= 1
+                    and not self._usd_inactive_warned
+                ):
+                    self._usd_inactive_warned = True
+                    self._record_science_drift({
+                        "error_type": "USD_BUDGET_INACTIVE",
+                        "budget_usd": _budget_usd,
+                        "note": "no per-call cost reported (e.g. ollama); "
+                                "USD ceiling treated as inactive",
+                    })
+            elif _spent >= _budget_usd:
+                self._record_science_drift({
+                    "error_type": "USD_BACKSTOP",
+                    "spent_usd": _spent,
+                    "budget_usd": _budget_usd,
+                })
+                return self._halt_resumable(
+                    state,
+                    reason=(
+                        f"USD budget exhausted "
+                        f"(${_spent:.4f} / ${_budget_usd:.4f})"
+                    ),
+                    extra_update=_halt_tallies(),
+                )
+
+        # (2) Repeated errors: a target failing N times in a row (genuine
+        # worker EXCEPTIONS, not REVISE loops or poor results — those reset the
+        # streak on any success) is not going to self-heal by looping the
+        # strategizer at it again. The default is deliberately CONSERVATIVE: a
+        # legitimate run "stuck" in the scientific process loops on critic
+        # verdicts and slow delegations, none of which count here — only hard
+        # consecutive crashes do. Tune via F3DASM_MAX_CONSECUTIVE_ERRORS; set 0
+        # to disable entirely.
+        _max_err = int(
+            _os.environ.get("F3DASM_MAX_CONSECUTIVE_ERRORS", "12")
+        )
+        if _max_err > 0:
+            with self._registry_lock:
+                _stuck = [
+                    (t, n) for t, n in self._consecutive_errors.items()
+                    if n >= _max_err
+                ]
+            if _stuck:
+                _t, _n = _stuck[0]
+                self._record_science_drift({
+                    "error_type": "REPEATED_ERRORS",
+                    "target": _t,
+                    "consecutive": _n,
+                })
+                return self._halt_resumable(
+                    state,
+                    reason=(
+                        f"repeated errors: {_t} failed {_n}x consecutively"
+                    ),
+                    extra_update=_halt_tallies(),
+                )
+
+        # (3) Time backstop: past RUN_BACKSTOP_MULTIPLE x the (soft) time
+        # budget, bound runaway cost. Now resumable (raise budget + resume).
         if _BACKSTOP_ENABLED and budget is not None and start is not None:
             _elapsed_now = time.time() - start
             if _elapsed_now > budget * RUN_BACKSTOP_MULTIPLE:
-                # Collect any abandoned delegations for reporting
                 with self._registry_lock:
                     _abandoned = [
                         d for d, e in self._registry.items()
                         if e["status"] in ("Working", "FollowUp")
                     ]
-                    _total_new_budget = len(self._registry)
-                    _evals_new_budget = sum(
-                        e["evals"] for e in self._registry.values()
-                    )
-                # Best-effort: grab last AI text from state messages
-                _prior_text = ""
-                for _m in reversed(state["messages"]):
-                    if isinstance(_m, AIMessage):
-                        _prior_text = str(_m.content)
-                        break
-                # Log the backstop event to diagnostics.jsonl so it
-                # is traceable, but do NOT stamp the banner into
-                # solution.md — the deliverable carries the conclusion.
                 self._record_science_drift({
                     "error_type": "RUN_BACKSTOP",
                     "elapsed": _elapsed_now,
@@ -2410,25 +2612,13 @@ class StrategizerNode(AgentNode):
                     "multiple": RUN_BACKSTOP_MULTIPLE,
                     "abandoned": _abandoned,
                 })
-                return Command(
-                    goto=END,
-                    update={
-                        "messages": [],
-                        "done": True,
-                        "last_report": (
-                            _prior_text or "(no prior report)"
-                        ),
-                        "total_delegations": (
-                            state["total_delegations"]
-                            + _total_new_budget
-                        ),
-                        "evals_used": (
-                            state.get("evals_used", 0)
-                            + _evals_new_budget
-                        ),
-                        "token_totals": dict(self._token_totals),
-                        "error_counts": dict(self._error_counts),
-                    },
+                return self._halt_resumable(
+                    state,
+                    reason=(
+                        f"time backstop: {int(RUN_BACKSTOP_MULTIPLE)}x budget "
+                        f"exceeded ({_elapsed_now:.0f}s / {budget:.0f}s)"
+                    ),
+                    extra_update=_halt_tallies(),
                 )
 
         # A1/A2: reset per-turn state so a reused node starts clean each call.
@@ -2503,7 +2693,13 @@ class StrategizerNode(AgentNode):
                 / "strategizer" / f"turn_{self._turn_count:03d}.jsonl"))
         text = self.adapter.invoke(messages)
         # Accumulate strategizer's own token usage.
-        self._accumulate_usage(getattr(self.adapter, "last_usage", {}) or {})
+        self._record_usage(
+            getattr(self.adapter, "last_usage", {}) or {},
+            role=self._role_of(self._name),
+            model=getattr(self.adapter, "model", None),
+            phase="strategizer_turn",
+            delegation_id=None,
+        )
         ai_msg = AIMessage(content=text)
 
         route = self._route

@@ -244,6 +244,20 @@ class ClaudeAdapter:
         # Populated after each ainvoke() with token counts from ResultMessage.
         self.last_usage: dict = {}
 
+    def _compute_allowed_tools(self, qualified_mcp_tools) -> list[str]:
+        """All allowed tool names, ALWAYS as a list (never None).
+
+        The SDK does ``list(options.allowed_tools)`` when building its command,
+        which raises ``TypeError`` on ``None`` — so a tool-less agent (e.g. the
+        one-shot problem-statement reviewer) must still get ``[]`` here, not
+        ``None``. An empty list correctly means "no tools allowed".
+        """
+        return (
+            list(qualified_mcp_tools)
+            + list(self.native_tools)
+            + list(self.extra_allowed_tools)
+        )
+
     def copy(self) -> ClaudeAdapter:
         """Always return self.
 
@@ -386,10 +400,7 @@ class ClaudeAdapter:
             cwd=str(self.study_dir) if self.study_dir else None,
             tools=self.native_tools or [],
             mcp_servers=mcp_servers if mcp_servers else {},
-            allowed_tools=(
-                (qualified_mcp_tools + self.native_tools + self.extra_allowed_tools)
-                or None
-            ),
+            allowed_tools=self._compute_allowed_tools(qualified_mcp_tools),
             disallowed_tools=_effective_disallowed,
             permission_mode="bypassPermissions",
             strict_mcp_config=bool(mcp_servers) or bool(self.extra_mcp_servers),

@@ -19,6 +19,7 @@ class AgenticState(MessagesState):
     last_report: str | None
     total_delegations: int
     budget_seconds: float | None
+    budget_usd: float | None     # hard USD cost ceiling; None = no USD ceiling
     run_dir: str | None          # absolute path to runs/<timestamp>/
     eval_budget: int | None      # max function evaluations (from config)
     evals_used: int              # running count across delegations

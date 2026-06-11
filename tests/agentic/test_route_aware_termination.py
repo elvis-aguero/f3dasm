@@ -12,17 +12,14 @@ Covers:
 from __future__ import annotations
 
 import tempfile
-import time
 import threading
+import time
 from pathlib import Path
 
-import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import END
-from langgraph.types import Command
 
 from f3dasm._src.agentic.backends.base import Agent, Edge, Graph
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -187,13 +184,18 @@ def test_accepted_done_no_banner():
 # ---------------------------------------------------------------------------
 
 
-def test_run_backstop_aborts_past_multiple():
-    """Past RUN_BACKSTOP_MULTIPLE x budget: invoke skipped, run terminates,
-    last_report carries the conclusion (NOT the RUN BACKSTOP banner)."""
+def test_run_backstop_halts_resumable_past_multiple(tmp_path):
+    """Past RUN_BACKSTOP_MULTIPLE x budget: invoke skipped, the run HALTS
+    cleanly and resumably — a HALTED banner is prefixed (conclusion kept
+    below it) and debug/run_status.json marks it resumable."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
-    study_dir = Path(tempfile.mkdtemp(prefix="f3dasm_rat_"))
+    study_dir = tmp_path / "study"
+    study_dir.mkdir()
     (study_dir / "replicate.py").write_text("# test\n")
+    run_dir = study_dir / "runs" / "T"
+    (run_dir / "debug").mkdir(parents=True)
+    (run_dir / "debug" / "thread_id").write_text("tid-xyz")
 
     adapter = StubAdapter(response="Should not be called.")
     spec = _minimal_spec()
@@ -201,22 +203,122 @@ def test_run_backstop_aborts_past_multiple():
         adapter, name="strategizer", outgoing=["implementer"], spec=spec,
     )
 
-    # budget=10s, started 100s ago → elapsed = 10x budget >> 2x backstop
-    state = _make_state(study_dir=study_dir)
+    # budget=10s, started 100s ago → elapsed = 10x budget >> 2x backstop.
+    # Provide a prior AI conclusion so we can assert it is preserved.
+    state = _make_state(
+        study_dir=study_dir,
+        messages=[HumanMessage(content="p"), AIMessage(content="CONCLUSION X")],
+    )
     state["budget_seconds"] = 10
     state["start_time"] = time.time() - 100
+    state["run_dir"] = str(run_dir)
 
     cmd = node(state)
 
-    assert adapter.invoke_count == 0, (
-        f"adapter.invoke called {adapter.invoke_count}x; should be skipped"
-    )
+    assert adapter.invoke_count == 0, "invoke must be skipped past the backstop"
     assert cmd.goto == END
     assert cmd.update.get("done") is True
-    # Deliverable must NOT contain the cost-guard banner.
-    assert "RUN BACKSTOP" not in cmd.update.get("last_report", ""), (
-        "solution.md must carry the conclusion, not the backstop banner"
+    report = cmd.update.get("last_report", "")
+    assert "HALTED (resumable)" in report and "time backstop" in report
+    assert "CONCLUSION X" in report, "the prior conclusion must be preserved"
+
+    import json
+    status = json.loads(
+        (run_dir / "debug" / "run_status.json").read_text()
     )
+    assert status["status"] == "halted"
+    assert status["resumable"] is True
+    assert status["thread_id"] == "tid-xyz"
+
+
+def test_usd_budget_exhausted_halts_resumable(tmp_path):
+    """When accrued cost reaches budget_usd, the run halts resumably."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    study_dir = tmp_path / "study"
+    study_dir.mkdir()
+    (study_dir / "replicate.py").write_text("# test\n")
+    run_dir = study_dir / "runs" / "T"
+    (run_dir / "debug").mkdir(parents=True)
+    (run_dir / "debug" / "thread_id").write_text("tid-usd")
+
+    adapter = StubAdapter(response="Should not be called.")
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"],
+        spec=_minimal_spec(),
+    )
+    # Simulate cost already accrued past the ceiling (claude reports cost).
+    node._accumulate_usage({"input_tokens": 1, "total_cost_usd": 0.60})
+    assert node._cost_observed is True
+
+    state = _make_state(study_dir=study_dir)
+    state["budget_usd"] = 0.50
+    state["run_dir"] = str(run_dir)
+
+    cmd = node(state)
+
+    assert adapter.invoke_count == 0
+    assert cmd.goto == END and cmd.update.get("done") is True
+    assert "USD budget exhausted" in cmd.update.get("last_report", "")
+    import json
+    status = json.loads((run_dir / "debug" / "run_status.json").read_text())
+    assert status["status"] == "halted" and status["resumable"] is True
+
+
+def test_usd_budget_inactive_under_ollama_does_not_halt(tmp_path):
+    """No per-call cost (ollama) → the USD ceiling is inactive: the run is
+    NOT halted even with a budget_usd set, and the strategizer runs."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    study_dir = tmp_path / "study"
+    study_dir.mkdir()
+    (study_dir / "replicate.py").write_text("# test\n")
+
+    adapter = StubAdapter(response="ollama answer")
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"],
+        spec=_minimal_spec(),
+    )
+    # Ollama: cost is None → never observed.
+    node._accumulate_usage({"input_tokens": 100, "total_cost_usd": None})
+    assert node._cost_observed is False
+    # Pretend a prior turn happened so the inactive-warning path is reachable.
+    node._turn_count = 1
+
+    state = _make_state(study_dir=study_dir)
+    state["budget_usd"] = 0.01
+
+    node(state)
+    assert adapter.invoke_count == 1, "ollama run must continue (USD inactive)"
+    assert node._usd_inactive_warned is True
+
+
+def test_repeated_errors_halt_resumable(tmp_path, monkeypatch):
+    """N consecutive Errored delegations from one target → resumable halt."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    monkeypatch.setenv("F3DASM_MAX_CONSECUTIVE_ERRORS", "3")
+    study_dir = tmp_path / "study"
+    study_dir.mkdir()
+    (study_dir / "replicate.py").write_text("# test\n")
+    run_dir = study_dir / "runs" / "T"
+    (run_dir / "debug").mkdir(parents=True)
+    (run_dir / "debug" / "thread_id").write_text("tid-err")
+
+    adapter = StubAdapter(response="Should not be called.")
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"],
+        spec=_minimal_spec(),
+    )
+    node._consecutive_errors["implementer"] = 3  # at threshold
+
+    state = _make_state(study_dir=study_dir)
+    state["run_dir"] = str(run_dir)
+
+    cmd = node(state)
+    assert adapter.invoke_count == 0
+    assert cmd.goto == END and cmd.update.get("done") is True
+    assert "repeated errors: implementer" in cmd.update.get("last_report", "")
 
 
 def test_soft_budget_does_not_terminate_below_backstop():
@@ -390,7 +492,7 @@ def test_readnote_directory_returns_error(tmp_path):
         study_dir=str(tmp_path),
     )
     state = _make_state(study_dir=tmp_path)
-    cmd = node(state)
+    node(state)
 
     assert results, "ReadNote was never called"
     assert "ERROR" in results[0], (
