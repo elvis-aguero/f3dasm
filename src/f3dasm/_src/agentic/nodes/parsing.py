@@ -7,9 +7,7 @@ focused on node class definitions.
 
 from __future__ import annotations
 
-from pathlib import (
-    Path,  # noqa: F401  (used by _resolve_delegation_evals / _stamped_eval_count)
-)
+from pathlib import Path
 
 _REQUIRED_SUBSECTIONS = [
     "### Actions taken",

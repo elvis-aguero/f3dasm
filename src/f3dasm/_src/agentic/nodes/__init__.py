@@ -1,6 +1,7 @@
 """Agentic graph nodes. Re-exports the public surface so existing
 ``from ...agentic.nodes import X`` imports keep working after the package split."""
 
+# Intentionally re-exports private helpers (_*) needed by tests and internal callers.
 from .core import (  # noqa: F401
     _EXIT_INTERVIEW,
     AgentNode,
@@ -16,7 +17,6 @@ from .core import (  # noqa: F401
     _to_adapter_messages,
 )
 
-# Intentionally re-exports private helpers (_*) needed by tests and internal callers.
 __all__ = [
     "AgentNode",
     "StrategizerNode",
