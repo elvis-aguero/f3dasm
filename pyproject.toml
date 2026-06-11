@@ -46,12 +46,16 @@ requires-python = ">=3.10"
 version = "2.2.3"
 
 [project.optional-dependencies]
+# Lean, torch-free orchestration core. The literature reviewer still works
+# here, degraded to lexical retrieval: pymupdf does PDF→MD and rank-bm25 does
+# search (no torch). docling/fastembed (the torch-pullers) live in
+# `agentic-extra` as a quality upgrade.
 agentic = [
   "claude-agent-sdk>=0.2.82,<1.0.0",
-  # docling pulls torch, which ships no Intel-macOS wheels;
-  # PDF extraction falls back to pymupdf there.
-  "docling>=2.0.0; sys_platform != 'darwin' or platform_machine == 'arm64'",
   "pymupdf>=1.24.0",
+  "rank-bm25>=0.2.2",
+  # paper search — lightweight (httpx + tenacity), so it stays in the lean core
+  "semanticscholar>=0.8.0",
   "langchain-community>=0.3.0,<1.0.0",
   "langchain-core>=0.3.0,<1.0.0",
   "langchain-ollama>=0.2.0,<1.0.0",
@@ -59,8 +63,16 @@ agentic = [
   "langgraph>=0.2.0,<1.0.0",
   "langgraph-checkpoint-sqlite>=2.0",
   "ollama>=0.4.0",
-  "rank-bm25>=0.2.2",
   "requests>=2.28.0"
+]
+# Heavy quality upgrade for the literature reviewer, installed ON TOP of
+# `agentic`: layout-aware PDF→MD (docling, which pulls torch via
+# docling-ibm-models) + dense embeddings (fastembed). These are the ONLY
+# torch-pullers. The marker excludes the torch-bound wheels on Intel macOS,
+# where the lean pymupdf+BM25 path is used.
+agentic-extra = [
+  "docling>=2.0.0; sys_platform != 'darwin' or platform_machine == 'arm64'",
+  "fastembed>=0.3.0; sys_platform != 'darwin' or platform_machine == 'arm64'"
 ]
 all = [
   "abaqus2py>=1.0.0",
@@ -84,13 +96,11 @@ docs = [
 figures = [
   "matplotlib>=3.7.5"
 ]
+# Back-compat alias: `lit` now folds into `agentic-extra` (which adds docling
+# on top of the former fastembed + semanticscholar). `pip install f3dasm[lit]`
+# keeps working.
 lit = [
-  # onnxruntime's Intel-macOS wheels are NumPy-1.x builds, incompatible
-  # with this project's numpy>=2 pin — in-process fastembed is skipped
-  # there; dense retrieval still works via the out-of-process embed
-  # worker (_embed_worker.py).
-  "fastembed>=0.3.0; sys_platform != 'darwin' or platform_machine == 'arm64'",
-  "semanticscholar>=0.8.0"
+  "f3dasm[agentic-extra]"
 ]
 scipy = [
   "scipy>=1.10.1"
