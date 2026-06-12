@@ -4,6 +4,7 @@ hypothesis tools). Built per-node; the node is passed in so closures reach its
 state. Extracted verbatim from StrategizerNode._build_routing_closures."""
 from __future__ import annotations
 
+import re
 import threading
 import time
 import traceback
@@ -18,6 +19,57 @@ from ..parsing import (
     _resolve_delegation_evals,
     _stamped_eval_count,
 )
+
+# Forward-compatible delegation-target resolution. Agents repeatedly name a
+# target by CAPABILITY rather than the exact graph node name — e.g.
+# "pipeline"/"pipeline_executor" for the implementer (the "pipeline executor"),
+# "data_generation" for the datagenerator — and bounce off "unknown target".
+# Resolve in order: exact node name -> normalized name (case/separator-
+# insensitive) -> normalized role -> a small curated synonym->ROLE map. The
+# synonym map targets a ROLE (not a node name) and is resolved to whichever
+# live outgoing node carries that role, so it survives node renames / topology
+# changes (forward-compatible). Returns the canonical node name, or None.
+_TARGET_ROLE_ALIASES = {
+    "pipeline": "implementer",
+    "pipelineexecutor": "implementer",
+    "pipelineexecution": "implementer",
+    "executor": "implementer",
+    "datageneration": "datagenerator",
+    "datagen": "datagenerator",
+    "oracle": "datagenerator",
+}
+
+
+def _norm_target(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def resolve_target(
+    requested: str, outgoing: list[str], roles: dict[str, str]
+) -> str | None:
+    """Map a requested delegation target to a valid outgoing node name, or None.
+
+    ``roles`` maps node name -> its configured role. Resolution is exact-name →
+    normalized-name → normalized-role → curated synonym→role. Only a unique,
+    confident match resolves; anything else returns None (caller errors)."""
+    if requested in outgoing:
+        return requested
+    rn = _norm_target(requested)
+    if not rn:
+        return None
+    for t in outgoing:  # normalized node name (case/separator-insensitive)
+        if _norm_target(t) == rn:
+            return t
+    for t in outgoing:  # normalized role
+        if _norm_target(roles.get(t, "")) == rn:
+            return t
+    role = _TARGET_ROLE_ALIASES.get(rn)  # curated synonym -> role -> live node
+    if role:
+        for t in outgoing:
+            if roles.get(t, "") == role:
+                return t
+    return None
+
 
 # Post-Done exit interview for the strategizer. Asked as a SEPARATE turn only
 # after the critic accepted the conclusion — so the strategizer never carries
@@ -79,11 +131,24 @@ def build_routing_tools(node) -> dict:
         wait: bool = False,
         is_falsification_attempt: bool = False,
     ) -> str:
-        if target not in outgoing:
+        _resolved = resolve_target(
+            target, outgoing,
+            {t: getattr(node._spec.nodes.get(t), "role", "") for t in outgoing},
+        )
+        if _resolved is None:
             return (
                 f"ERROR: unknown target {target!r}."
                 f" Valid targets: {outgoing}"
             )
+        if _resolved != target:
+            # Forward-compatible alias resolution: the agent named the target by
+            # capability (e.g. 'pipeline_executor' -> 'implementer'). Proceed and
+            # record it for observability instead of bouncing the agent.
+            node._record_intervention(
+                "TARGET_ALIAS", _resolved,
+                f"delegation target {target!r} resolved to {_resolved!r}.",
+            )
+            target = _resolved
         worker_template = node._worker_adapters.get(target)
         if worker_template is None:
             return (
