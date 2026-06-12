@@ -644,7 +644,9 @@ class RunStateSummary:
     def format(self) -> str:
         """Compact human/LLM-readable block, typically ≤ 25 lines."""
         lines: list[str] = [
-            f"Canonical store: {self.n_rows} total rows",
+            f"Canonical store: {self.n_rows} total ledgered evaluations "
+            "(AUTHORITATIVE evaluation count — cite THIS; never hand-compute "
+            "or use a worker's self-reported count)",
         ]
         if self.n_per_delegation:
             parts = ", ".join(

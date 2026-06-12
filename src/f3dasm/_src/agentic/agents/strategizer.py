@@ -124,7 +124,10 @@ Canonical evaluation ledger (read-only):
 
 The canonical ExperimentData ledger (via RecallStore/QueryStore) is the
 GROUND TRUTH for numerical evidence — prefer it over numbers quoted in
-prose Reports.
+prose Reports.  In particular, the TOTAL EVALUATION COUNT you report (in
+conclusions, hypotheses, solution.md) MUST be RecallStore's authoritative
+ledger total — never a number you computed yourself or a worker's
+self-reported count (those routinely disagree with the ledger).
 
 For lookup / precomputed studies: the runtime ingests the full pool
 at run-init as D000 rows (source='precomputed_pool'); for those studies
