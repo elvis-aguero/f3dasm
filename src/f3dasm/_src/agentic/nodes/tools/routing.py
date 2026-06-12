@@ -44,6 +44,28 @@ def _norm_target(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (s or "").lower())
 
 
+# f3dasm marks infeasible / failed designs with a large-magnitude sentinel
+# output (e.g. ±1e9; the resonance study treats resonance <= -1e8 as
+# infeasible). "Best" must never return such a placeholder.
+_INFEASIBLE_SENTINEL_MAG = 1e8
+
+
+def _select_best_index(values, n_best, minimize=True, sentinel_mag=_INFEASIBLE_SENTINEL_MAG):
+    """Index of the n best *feasible* values.
+
+    Coerces to numeric, drops NaN and large-magnitude infeasibility
+    placeholders, then picks the smallest (minimize) or largest (maximize).
+    Returns a possibly-empty index when no feasible values remain.
+    """
+    import pandas as pd
+    s = pd.to_numeric(values, errors="coerce").dropna()
+    s = s[s.abs() < sentinel_mag]
+    if s.empty:
+        return s.index
+    chosen = s.nsmallest(n_best) if minimize else s.nlargest(n_best)
+    return chosen.index
+
+
 def resolve_target(
     requested: str, outgoing: list[str], roles: dict[str, str]
 ) -> str | None:
@@ -1161,10 +1183,16 @@ def build_routing_tools(node) -> dict:
         source: str | None = None,
         n_best: int | None = None,
         output_name: str | None = None,
+        minimize: bool = True,
     ) -> str:
         """Filtered view of the evaluation ledger (e.g. rows from D001+D003
         only). Use to ground claims or to select training subsets; cite row
-        values from here as evidence."""
+        values from here as evidence.
+
+        n_best returns the best rows by output_name: smallest when minimize=True
+        (default), largest when minimize=False (set this for MAXIMIZATION
+        objectives). Infeasible/placeholder rows (large-magnitude sentinel
+        outputs) are never returned as 'best'."""
         import json as _json
 
         from ....errors import EmptyFileError, ReachMaximumTriesError
@@ -1243,17 +1271,24 @@ def build_routing_tools(node) -> dict:
                     f"ERROR: n_best must be an integer, got "
                     f"{n_best!r}."
                 )
+        if isinstance(minimize, str):  # MCP string-in tools may pass "false"
+            minimize = minimize.strip().lower() not in (
+                "false", "0", "no", "max", "maximize"
+            )
         if n_best is not None and output_name is not None:
             if output_name not in filtered.columns:
                 return (
                     f"ERROR: output column {output_name!r} not found. "
                     f"Available: {list(filtered.columns)}"
                 )
-            import pandas as _pd2
-            col_num = _pd2.to_numeric(
-                filtered[output_name], errors="coerce"
+            best_idx = _select_best_index(
+                filtered[output_name], n_best, minimize=minimize
             )
-            best_idx = col_num.nsmallest(n_best).index
+            if len(best_idx) == 0:
+                return (
+                    f"No feasible rows to rank by {output_name!r} "
+                    "(all matching rows are infeasibility placeholders)."
+                )
             best_rows = filtered.loc[best_idx]
             # Include input columns + output_name + _delegation_id
             show_cols = []
@@ -1273,7 +1308,7 @@ def build_routing_tools(node) -> dict:
                     c for c in filtered_in.columns
                     if c in show_cols
                 ]]
-                combined = _pd2.concat(
+                combined = _pd.concat(
                     [best_in, best_rows[
                         [c for c in show_cols
                          if c not in best_in.columns]
