@@ -543,19 +543,31 @@ def build_routing_tools(node) -> dict:
                     evals_box["count"],
                 )
                 with node._registry_lock:
-                    node._registry[delegation_id].update({
-                        "status": "Done",
-                        "result": text,
-                        "evals": _evals,
-                        "usage": _usage,
-                    })
-                    # This target made progress → clear its consecutive
-                    # error streak (the repeated-errors halt is for a
-                    # target stuck failing, not one that recovers).
-                    node._consecutive_errors[target] = 0
+                    _detached = (
+                        node._registry[delegation_id].get("status")
+                        == "Cancelled"
+                    )
+                    if _detached:
+                        # CancelDelegation detached this while it ran: keep it
+                        # Cancelled and DISCARD the deliverable. Usage was
+                        # already recorded above (the worker did spend tokens).
+                        node._registry[delegation_id]["evals"] = _evals
+                    else:
+                        node._registry[delegation_id].update({
+                            "status": "Done",
+                            "result": text,
+                            "evals": _evals,
+                            "usage": _usage,
+                        })
+                        # This target made progress → clear its consecutive
+                        # error streak (the repeated-errors halt is for a
+                        # target stuck failing, not one that recovers).
+                        node._consecutive_errors[target] = 0
                 with node._notifications_lock:
                     node._notifications.append(
-                        f"[Delegation {delegation_id} Done]"
+                        f"[Delegation {delegation_id} "
+                        + ("completed after cancellation — result discarded]"
+                           if _detached else "Done]")
                     )
                 # Write delegation record to graph-wide delegation log
                 if node._delegation_log is not None:
@@ -846,6 +858,41 @@ def build_routing_tools(node) -> dict:
             f"polled {poll_count} times)" + hint_str + tail
         )
 
+    def CancelDelegation(delegation_id: str) -> str:
+        """Detach a still-running delegation so it no longer blocks Done().
+
+        Marks it Cancelled: it is excluded from the active-delegation check and
+        its eventual result is discarded, though its token usage is still
+        accounted. The background worker is not force-killed (it finishes on
+        its own and is ignored). Use when a delegation is no longer needed —
+        e.g. it has run long enough, or you want to conclude without it."""
+        prefix = node._drain_notifications()
+        with node._registry_lock:
+            entry = node._registry.get(delegation_id)
+            if entry is None:
+                return (
+                    prefix + f"No delegation {delegation_id!r}. "
+                    f"Known: {list(node._registry)}"
+                )
+            st = entry.get("status")
+            if st not in ("Working", "FollowUp"):
+                return (
+                    prefix + f"Delegation {delegation_id} is {st!r}, not "
+                    "running — nothing to cancel."
+                )
+            entry["status"] = "Cancelled"
+        with node._notifications_lock:
+            node._notifications.append(
+                f"[Delegation {delegation_id} cancelled — detached; its "
+                "result will be ignored]"
+            )
+        return (
+            prefix + f"Delegation {delegation_id} cancelled (detached): "
+            "excluded from the run, its result will be ignored. You may "
+            "proceed (e.g. call Done() if nothing else is running) or start "
+            "other work."
+        )
+
     def Reply(delegation_id: str, answer: str) -> str:
         """Answer a worker's FollowUp question and unblock it.
 
@@ -886,13 +933,21 @@ def build_routing_tools(node) -> dict:
                 if e["status"] == "Working"
             ]
         if pending:
+            # Soft nudge (NOT an "ERROR:" return, so it isn't counted as a
+            # tool error): closing now is premature, but offer the three real
+            # ways forward instead of a dead-end bounce.
             return (
                 prefix +
-                f"ERROR: {len(pending)} delegation(s) still running: "
-                f"{pending}. "
-                "Wait for all delegations to complete (Done or Errored) "
-                "before calling Done(). Use Delegate(wait=True) next time "
-                "to avoid this."
+                f"{len(pending)} delegation(s) still running: {pending}. "
+                "Closing now is premature — you have three options:\n"
+                "  (a) keep working: inspect results so far, write notes, or "
+                "start another delegation while these finish;\n"
+                "  (b) wait, then GetStatus(<id>) on each and interpret its "
+                "results before you conclude;\n"
+                "  (c) CancelDelegation(<id>) if a delegation is no longer "
+                "needed — it detaches and stops blocking Done().\n"
+                "Re-call Done() once none are still running. "
+                "(Tip: Delegate(wait=True) avoids this for sequential tasks.)"
             )
         # Exit-interview capture (final stage): the conclusion is already
         # accepted + recorded; this Done() carries ONLY the retrospective.
@@ -1333,6 +1388,7 @@ def build_routing_tools(node) -> dict:
     closures: dict = {
         "Delegate": Delegate,
         "GetStatus": GetStatus,
+        "CancelDelegation": CancelDelegation,
         "Reply": Reply,
         "FollowUp": FollowUp,
         "RecallStore": RecallStore,

@@ -870,8 +870,11 @@ def test_done_with_pending_delegations_returns_error(tmp_path):
     node(_make_state(study_dir=tmp_path))
 
     assert done_results
-    assert "ERROR" in done_results[0]
-    assert "still running" in done_results[0].lower() or "Working" in done_results[0]
+    # Soft 3-option nudge (not a hard error): still refuses to close, but
+    # offers keep-working / wait / CancelDelegation.
+    assert "still running" in done_results[0].lower()
+    assert "CancelDelegation" in done_results[0]
+    assert not done_results[0].lstrip().startswith("ERROR:")
 
 
 # ---------------------------------------------------------------------------

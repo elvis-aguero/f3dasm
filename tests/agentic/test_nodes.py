@@ -162,7 +162,9 @@ def test_strategizer_delegate_returns_task_id():
 
 
 def test_done_blocked_while_delegation_pending():
-    """Done returns an error when called while a delegation is still Working."""
+    """Done returns a soft 3-option nudge (not a hard error) when called while
+    a delegation is still Working — it still refuses to close, but offers the
+    keep-working / wait / CancelDelegation paths."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
     results: list[str] = []
@@ -194,9 +196,10 @@ def test_done_blocked_while_delegation_pending():
     )
     node(make_state())
 
-    # Done should have returned an error about pending delegation
-    assert results and "ERROR" in results[0]
-    assert "still running" in results[0]
+    # Done should have refused with the soft 3-option nudge (not a hard error)
+    assert results and "still running" in results[0]
+    assert "CancelDelegation" in results[0]  # offers the cancel path
+    assert not results[0].lstrip().startswith("ERROR:")  # soft, not an error
 
 
 def test_strategizer_increments_delegation_count():
