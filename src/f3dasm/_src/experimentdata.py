@@ -931,6 +931,16 @@ class ExperimentData:
         >>> input_array, output_array = experiment_data.to_numpy()
         """
         df_input, df_output = self.to_pandas(keep_references=False)
+        # Drop underscore-prefixed metadata columns (e.g. provenance stamped by
+        # instrumented runs: _delegation_id, _source, _ts). They are bookkeeping,
+        # not measured values, and their presence (some are strings) would
+        # otherwise degrade the array to object dtype.
+        df_input = df_input.loc[
+            :, ~df_input.columns.astype(str).str.startswith("_")
+        ]
+        df_output = df_output.loc[
+            :, ~df_output.columns.astype(str).str.startswith("_")
+        ]
         return df_input.to_numpy(), df_output.to_numpy()
 
     def to_pandas(

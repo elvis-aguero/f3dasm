@@ -1293,8 +1293,8 @@ def build_routing_tools(node) -> dict:
         mask = _pd.Series([True] * len(df_out), index=df_out.index)
         if d_ids is not None and "_delegation_id" in df_out.columns:
             mask &= df_out["_delegation_id"].isin(d_ids)
-        if source is not None and "source" in df_out.columns:
-            mask &= df_out["source"] == source
+        if source is not None and "_source" in df_out.columns:
+            mask &= df_out["_source"] == source
 
         filtered = df_out[mask]
         filtered_in = df_in[mask] if df_in is not None else None

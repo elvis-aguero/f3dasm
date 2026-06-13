@@ -271,6 +271,27 @@ def test_to_numpy(experiment_data_with_output):
     assert output_arr.shape[0] == len(experiment_data_with_output)
 
 
+def test_to_numpy_drops_underscore_prefixed_columns():
+    """Convention: to_numpy() excludes underscore-prefixed (metadata) columns,
+    so injected provenance/bookkeeping can never degrade the returned array to
+    object dtype. Real outputs are untouched."""
+    dom = Domain()
+    dom.add_float("x0", 0.0, 1.0)
+    dom.add_output("y", exist_ok=True)
+    dom.add_output("_meta", exist_ok=True)  # string metadata column
+    samples = {
+        0: ExperimentSample(
+            _input_data={"x0": 0.5},
+            _output_data={"y": 1.5, "_meta": "provenance-str"},
+            job_status=JobStatus.FINISHED,
+        ),
+    }
+    data = ExperimentData.from_data(data=samples, domain=dom)
+    _, output_arr = data.to_numpy()
+    assert output_arr.shape[1] == 1, "underscore column should be dropped"
+    assert np.issubdtype(output_arr.dtype, np.floating), output_arr.dtype
+
+
 def test_to_pandas(experiment_data_with_output):
     df_input, df_output = experiment_data_with_output.to_pandas()
     assert isinstance(df_input, pd.DataFrame)

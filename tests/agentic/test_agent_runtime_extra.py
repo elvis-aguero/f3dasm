@@ -405,7 +405,7 @@ def test_ingest_precomputed_pool_d000_rows_in_store(tmp_path):
     assert (df_out["_delegation_id"] == "D000").all(), (
         f"Expected all D000, got: {df_out['_delegation_id'].unique()}"
     )
-    assert (df_out["source"] == "precomputed_pool").all()
+    assert (df_out["_source"] == "precomputed_pool").all()
     assert df_out["_ts"].notna().all()
 
 

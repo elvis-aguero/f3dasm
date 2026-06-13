@@ -72,15 +72,39 @@ def test_execute_stamps_provenance(tmp_path):
     df_in, df_out = data.to_pandas()
 
     assert "_delegation_id" in df_out.columns, df_out.columns.tolist()
-    assert "source" in df_out.columns, df_out.columns.tolist()
+    assert "_source" in df_out.columns, df_out.columns.tolist()
     assert "_ts" in df_out.columns, df_out.columns.tolist()
     assert "f" in df_out.columns, df_out.columns.tolist()
 
     row = df_out.iloc[0]
     assert row["_delegation_id"] == "D001"
-    assert row["source"] == "test_source"
+    assert row["_source"] == "test_source"
     # _ts should be a non-empty string
     assert isinstance(row["_ts"], str) and len(row["_ts"]) > 0
+
+
+def test_to_numpy_excludes_underscore_provenance(tmp_path):
+    """All provenance columns are now underscore-prefixed (_delegation_id,
+    _source, _ts), so core to_numpy() drops them and returns a clean numeric
+    array instead of an object-dtype array contaminated by the metadata."""
+    import numpy as np
+    from f3dasm._src.agentic.instrumented import InstrumentedDataGenerator
+
+    gen = InstrumentedDataGenerator(
+        inner=_SumGenerator(),
+        store_dir=tmp_path,
+        delegation_id="D001",
+        source="test_source",
+        flush_every=1,
+    )
+    gen.execute(_make_sample(0.3))
+
+    data = ExperimentData.from_file(project_dir=tmp_path)
+    _, out_arr = data.to_numpy()
+
+    # only the real output "f" survives → numeric, not object dtype
+    assert out_arr.shape[1] == 1, out_arr
+    assert np.issubdtype(out_arr.dtype, np.floating), out_arr.dtype
 
 
 # ---------------------------------------------------------------------------

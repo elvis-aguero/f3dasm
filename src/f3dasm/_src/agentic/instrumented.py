@@ -140,7 +140,7 @@ class InstrumentedDataGenerator(DataGenerator):
             timespec="seconds"
         )
         out._output_data["_delegation_id"] = self.delegation_id
-        out._output_data["source"] = self.source
+        out._output_data["_source"] = self.source
         out._output_data["_ts"] = ts
         # Extensible declared provenance (oracle-stamped, not agent-authored).
         for _col, _val in self.extra_provenance.items():
@@ -199,7 +199,7 @@ class InstrumentedDataGenerator(DataGenerator):
 
             # Ensure provenance columns are declared on the canon domain
             # (fixed three + any extensible declared columns).
-            for col in ("_delegation_id", "source", "_ts",
+            for col in ("_delegation_id", "_source", "_ts",
                         *self.extra_provenance):
                 canon._domain.add_output(col, exist_ok=True)
 
@@ -509,7 +509,7 @@ _RSS_CACHE: dict[str, tuple[float, RunStateSummary]] = {}
 # the lock makes it correct on free-threaded builds too.
 _RSS_CACHE_LOCK = __import__("threading").Lock()
 
-_PROVENANCE_COLS = frozenset({"_delegation_id", "source", "_ts"})
+_PROVENANCE_COLS = frozenset({"_delegation_id", "_source", "_ts"})
 
 
 class RunStateSummary:
@@ -589,9 +589,9 @@ class RunStateSummary:
                 .to_dict()
             )
         n_per_source: dict = {}
-        if "source" in df_out.columns:
+        if "_source" in df_out.columns:
             n_per_source = (
-                df_out["source"]
+                df_out["_source"]
                 .value_counts()
                 .to_dict()
             )

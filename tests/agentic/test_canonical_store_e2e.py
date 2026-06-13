@@ -49,7 +49,7 @@ def test_runtime_config_to_store_roundtrip(tmp_path, monkeypatch):
     _, out = canon.to_pandas()
     assert len(out) == 4
     assert (out["_delegation_id"] == "D001").all()
-    assert (out["source"] == "agentic_demo_study").all()
+    assert (out["_source"] == "agentic_demo_study").all()
     assert out["_ts"].notna().all()
     assert "f" in out.columns
 

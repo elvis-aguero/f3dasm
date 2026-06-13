@@ -27,7 +27,7 @@ def _make_domain_with_output(output_keys=("f",), input_keys=("x0",)) -> Domain:
         d.add_float(k, 0.0, 1.0)
     for k in output_keys:
         d.add_output(k, exist_ok=True)
-    for k in ("_delegation_id", "source", "_ts"):
+    for k in ("_delegation_id", "_source", "_ts"):
         d.add_output(k, exist_ok=True)
     return d
 
@@ -46,7 +46,7 @@ def _make_sample(
     out = {
         "f": f,
         "_delegation_id": delegation_id,
-        "source": source,
+        "_source": source,
         "_ts": "2026-01-01T00:00:00+00:00",
     }
     return ExperimentSample(
@@ -62,7 +62,7 @@ def _build_store(
     fidelity_col: str | None = None,
 ) -> None:
     """Write rows to the canonical store under store_dir."""
-    output_keys = ["f", "_delegation_id", "source", "_ts"]
+    output_keys = ["f", "_delegation_id", "_source", "_ts"]
     if fidelity_col:
         input_keys = ["x0", fidelity_col]
     else:
@@ -86,7 +86,7 @@ def _build_store(
         out = {
             "f": f,
             "_delegation_id": did,
-            "source": "test",
+            "_source": "test",
             "_ts": "2026-01-01T00:00:00+00:00",
         }
         samples[i] = ExperimentSample(
@@ -180,7 +180,7 @@ class TestRunStateSummaryPopulated:
         # "f" should be in stats; provenance cols should not
         assert "f" in s.output_stats
         assert "_delegation_id" not in s.output_stats
-        assert "source" not in s.output_stats
+        assert "_source" not in s.output_stats
         assert "_ts" not in s.output_stats
         stats = s.output_stats["f"]
         assert stats["min"] == pytest.approx(1.0)

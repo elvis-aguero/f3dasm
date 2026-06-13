@@ -239,7 +239,7 @@ def _ingest_precomputed_pool(
             else {k: df_out.iloc[i][k] for k in df_out.columns}
         )
         row_out["_delegation_id"] = "D000"
-        row_out["source"] = "precomputed_pool"
+        row_out["_source"] = "precomputed_pool"
         row_out["_ts"] = ts
         batch_samples[i] = ExperimentSample(
             _input_data=row_in,
@@ -271,7 +271,7 @@ def _ingest_precomputed_pool(
             ReachMaximumTriesError,
         ):
             canon = ExperimentData(domain=batch_domain)
-        for col in ("_delegation_id", "source", "_ts"):
+        for col in ("_delegation_id", "_source", "_ts"):
             canon._domain.add_output(col, exist_ok=True)
         merged = canon + batch
         merged.store(project_dir=store_dir)

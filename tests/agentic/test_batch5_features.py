@@ -94,7 +94,7 @@ def test_no_provenance_block_means_no_extra_columns(tmp_path):
         inner=_Const(), store_dir=tmp_path / "s", delegation_id="D001")
     out = gen.execute(ExperimentSample(
         _input_data={"x": 0.0}, _output_data={}, job_status=JobStatus.OPEN))
-    assert set(out._output_data) == {"y", "_delegation_id", "source", "_ts"}
+    assert set(out._output_data) == {"y", "_delegation_id", "_source", "_ts"}
 
 
 # --- #9: EVIDENCE_NUMBERS_MATCH default-on @ 1e-3 -----------------------------
