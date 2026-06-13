@@ -52,6 +52,16 @@ Hypothesis ledger (structured scientific record):
   HypothesisList()                        — summary view: id, statement,
                                             current status. No logs.
   HypothesisGet(hypothesis_id)            — full entry with status_log.
+  LinkFalsificationAttempt(               — retroactively mark a completed
+      delegation_id, hypothesis_id)         delegation as a falsification
+                                            attempt of a hypothesis (use when
+                                            you did not set
+                                            is_falsification_attempt up front).
+                                            Links ONLY — does NOT record a
+                                            verdict; still call HypothesisUpdate
+                                            against the pre-registered
+                                            prediction. Link only if the
+                                            delegation genuinely tested it.
 
 Delegation:
   Delegate(target, intent,                — fire a task to any named agent;

@@ -417,6 +417,63 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                     result += "\n\n" + "\n".join(inline)
             return result
 
+        def LinkFalsificationAttempt(
+            delegation_id: str, hypothesis_id: str
+        ) -> str:
+            """Retroactively mark a completed delegation as a falsification
+            ATTEMPT of a registered hypothesis (the read-time safety net for
+            when the attempt was not declared up front at Delegate time).
+
+            Links ONLY — it does NOT record a verdict and CANNOT change the
+            hypothesis's pre-registered prediction. You must still call
+            HypothesisUpdate to record the verdict, judged against that
+            immutable prediction. Link only if the delegation genuinely tested
+            the prediction — never retrofit an exploratory result."""
+            if node._ledger is None:
+                return (
+                    "ERROR: hypothesis ledger not available in this run."
+                )
+            h_entry = node._ledger.get(hypothesis_id)
+            if h_entry is None:
+                return f"ERROR: hypothesis {hypothesis_id!r} not found."
+            with node._registry_lock:
+                entry = node._registry.get(delegation_id)
+                if entry is None:
+                    return (
+                        f"ERROR: unknown delegation {delegation_id!r}. "
+                        f"Known: {list(node._registry)}"
+                    )
+                if entry.get("status") != "Done":
+                    return (
+                        f"ERROR: {delegation_id} is not a completed (Done) "
+                        "delegation; cannot link it as a falsification "
+                        "attempt."
+                    )
+                entry["is_falsification_attempt"] = True
+                hids = entry.get("hypothesis_ids") or []
+                if hypothesis_id not in hids:
+                    hids = [*hids, hypothesis_id]
+                entry["hypothesis_ids"] = hids
+                entry["reconciled"] = True
+            if node._delegation_log is not None:
+                node._delegation_log.mark_attempt(
+                    delegation_id, hypothesis_id)
+            pred = (
+                h_entry.get("prediction")
+                or h_entry.get("falsification_criterion")
+                or "(no prediction on record)"
+            )
+            return (
+                f"Linked {delegation_id} as a falsification attempt of "
+                f"{hypothesis_id} (post-hoc). Pre-registered prediction: "
+                f"\"{pred}\". Now record the VERDICT: "
+                f"HypothesisUpdate('{hypothesis_id}', "
+                "status=SUPPORTED|FALSIFIED|INCONCLUSIVE, posterior=…, "
+                f"evidence={{'delegation': '{delegation_id}', "
+                "'numbers': {…}}), judging THIS report against that "
+                "prediction. Linking does NOT record a verdict."
+            )
+
         def HypothesisList() -> str:
             """List all hypotheses with id, status, belief, statement."""
             if node._ledger is None:
@@ -450,6 +507,7 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
             "HypothesisUpdate": HypothesisUpdate,
             "HypothesisList": HypothesisList,
             "HypothesisGet": HypothesisGet,
+            "LinkFalsificationAttempt": LinkFalsificationAttempt,
         }
 
     def _missing_deliverables(self, state: AgenticState) -> list[str]:

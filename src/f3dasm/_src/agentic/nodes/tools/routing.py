@@ -133,6 +133,73 @@ def build_routing_tools(node) -> dict:
         f"Available targets:\n  {_target_hints}"
     )
 
+    def _falsification_checkpoint(delegation_id: str) -> str:
+        """Read-time ritual text for a freshly-read Done report.
+
+        Forces the strategizer to classify whether this delegation was a
+        falsification ATTEMPT of a registered hypothesis and, if so, link it
+        and record the verdict against the hypothesis's pre-registered
+        (immutable) prediction. Returns "" when there is nothing to reconcile.
+        Fires once per delegation (sets reconciled=True) to avoid nagging.
+        """
+        if node._ledger is None:
+            return ""
+        try:
+            hyps = node._ledger.list_all()
+        except Exception:  # noqa: BLE001
+            return ""
+        if not hyps:
+            return ""
+
+        def _pred(hid: str) -> str:
+            e = node._ledger.get(hid) or {}
+            return (
+                e.get("prediction")
+                or e.get("falsification_criterion")
+                or "(no prediction on record)"
+            )
+
+        with node._registry_lock:
+            entry = node._registry.get(delegation_id)
+            if (
+                entry is None
+                or entry.get("status") != "Done"
+                or entry.get("reconciled")
+            ):
+                return ""
+            is_fals = bool(entry.get("is_falsification_attempt"))
+            linked = list(entry.get("hypothesis_ids") or [])
+            entry["reconciled"] = True  # fire once
+
+        if is_fals and linked:
+            tested = "; ".join(
+                f"{h} (prediction: \"{_pred(h)}\")" for h in linked)
+            return (
+                f"⚖ FALSIFICATION CHECKPOINT — {delegation_id} was declared "
+                f"a falsification attempt of {tested}. Record the VERDICT now "
+                "via HypothesisUpdate(<id>, "
+                "status=SUPPORTED|FALSIFIED|INCONCLUSIVE, "
+                f"evidence={{'delegation': '{delegation_id}', "
+                "'numbers': {…}}), judging THIS report against that "
+                "pre-registered prediction. Do not move on with the "
+                "hypothesis left OPEN."
+            )
+        open_h = [h for h in hyps if h.get("current_status") == "OPEN"]
+        if not open_h:
+            return ""  # nothing open to test → don't nag exploration
+        listing = "; ".join(
+            f"{h['id']} (prediction: \"{_pred(h['id'])}\")" for h in open_h)
+        return (
+            f"⚖ FALSIFICATION CHECKPOINT — was {delegation_id} an attempt to "
+            "test a registered hypothesis's pre-registered prediction? Open: "
+            f"{listing}. If YES: LinkFalsificationAttempt('{delegation_id}', "
+            "'<id>') then record the verdict with HypothesisUpdate against "
+            f"that prediction. Link ONLY if {delegation_id} genuinely tested "
+            "that prediction — do not retrofit an exploratory result onto a "
+            "hypothesis. If it was exploration/setup, there is no hypothesis "
+            "to attach — continue (no action needed)."
+        )
+
     def Delegate(
         target: str,
         intent: str,
@@ -248,6 +315,11 @@ def build_routing_tools(node) -> dict:
                 "followup_event": _followup_event,
                 "getstatus_count": 0,
                 "followup_count": 0,
+                # Read-time falsification ritual: flips True once the
+                # checkpoint has been shown for this delegation's report
+                # (fire-once anti-nag). The Done()-gate dangling check is
+                # content-based and independent of this flag.
+                "reconciled": False,
             }
 
         # Build task message
@@ -705,7 +777,9 @@ def build_routing_tools(node) -> dict:
                 entry = dict(node._registry.get(delegation_id, {}))
             status = entry.get("status", "Errored")
             if status == "Done":
-                return f"Done\n\n{entry['result']}"
+                cp = _falsification_checkpoint(delegation_id)
+                body = f"Done\n\n{entry['result']}"
+                return body + (("\n\n" + cp) if cp else "")
             return f"Errored:\n{entry.get('result', '(no details)')}"
 
         return (
@@ -759,7 +833,11 @@ def build_routing_tools(node) -> dict:
             ("\n\n" + prefix.rstrip()) if prefix.strip() else ""
         )
         if status == "Done":
-            return f"Done\n\n{entry['result']}" + _tail
+            cp = _falsification_checkpoint(delegation_id)
+            body = f"Done\n\n{entry['result']}"
+            if cp:
+                body += "\n\n" + cp
+            return body + _tail
         if status not in ("Working", "FollowUp"):
             return f"Errored:\n{entry['result']}" + _tail
 
@@ -969,6 +1047,32 @@ def build_routing_tools(node) -> dict:
                     f"{open_hypotheses}. "
                     "Consider updating their status before closing."
                 )
+            # Dangling falsification attempts: a delegation flagged (or
+            # post-hoc linked) as a falsification attempt whose hypothesis is
+            # still OPEN means a test ran but its verdict was never recorded.
+            # Content-based (independent of the read-time fire-once flag).
+            if open_hypotheses:
+                _open = set(open_hypotheses)
+                dangling: list[str] = []
+                with node._registry_lock:
+                    for d_id, e in node._registry.items():
+                        if (
+                            e.get("status") == "Done"
+                            and e.get("is_falsification_attempt")
+                        ):
+                            tied = [
+                                h for h in (e.get("hypothesis_ids") or [])
+                                if h in _open
+                            ]
+                            if tied:
+                                dangling.append(f"{d_id}→{tied}")
+                if dangling:
+                    warn_parts.append(
+                        "Falsification attempts whose hypotheses are still "
+                        f"OPEN (record their verdict first): {dangling}. "
+                        "Use HypothesisUpdate against each one's pre-registered "
+                        "prediction."
+                    )
             # WARNING goes first; then any pending notifications.
             return "  ".join(warn_parts) + (("\n\n" + prefix.rstrip()) if prefix.strip() else "")
         # Second call — run critic gate if critic is in the graph.
@@ -1023,6 +1127,10 @@ def build_routing_tools(node) -> dict:
                     f"hypotheses={r.get('hypothesis_ids')} "
                     f"is_falsification_attempt="
                     f"{r.get('is_falsification_attempt', False)}"
+                    + (
+                        " (linked post-hoc — scrutinise adequacy)"
+                        if r.get("attempt_linked_post_hoc") else ""
+                    )
                     for r in node._delegation_log.query_all()
                 ]
             # Budget-aware framing: tell the critic what was actually

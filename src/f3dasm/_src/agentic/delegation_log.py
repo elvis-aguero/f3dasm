@@ -121,6 +121,34 @@ class DelegationLog:
             return None
         return done[-1]["id"]
 
+    def mark_attempt(self, delegation_id: str, hypothesis_id: str) -> bool:
+        """Retroactively flag an existing record as a falsification ATTEMPT of
+        hypothesis_id (the read-time post-hoc link).
+
+        Sets is_falsification_attempt=True, adds hypothesis_id to its
+        hypothesis_ids, and stamps attempt_linked_post_hoc=True so the critic
+        scrutinises adequacy harder than a flag declared up front at delegate
+        time. Rewrites the (small) append-only log in place under the lock.
+        Returns True iff a matching record was updated.
+        """
+        with self._lock:
+            records = self._load_all()
+            updated = False
+            for r in records:
+                if r.get("id") == delegation_id:
+                    r["is_falsification_attempt"] = True
+                    hids = r.get("hypothesis_ids") or []
+                    if hypothesis_id not in hids:
+                        hids = [*hids, hypothesis_id]
+                    r["hypothesis_ids"] = hids
+                    r["attempt_linked_post_hoc"] = True
+                    updated = True
+            if updated:
+                with self._path.open("w", encoding="utf-8") as f:
+                    for r in records:
+                        f.write(json.dumps(r) + "\n")
+            return updated
+
     def query_all(self) -> list[dict]:
         """Return every record, oldest-first."""
         with self._lock:
