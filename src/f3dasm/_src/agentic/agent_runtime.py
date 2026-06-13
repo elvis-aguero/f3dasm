@@ -13,6 +13,7 @@ from typing import Any
 import yaml  # available via hydra-core
 from langchain_core.messages import HumanMessage
 
+from . import settings
 from .agent_prompts import (
     RUN_PATHS_PREAMBLE_TEMPLATE,
     WORKSPACE_PREAMBLE_TEMPLATE,
@@ -321,6 +322,10 @@ class AgenticRun:
     ) -> None:
         self.study_dir = Path(study_dir).resolve()
         cfg = _load_study_config(self.study_dir)
+        # config.yaml is the source of truth for run knobs (debug, timeouts,
+        # retry, backstop, recursion_limit, …). Install the `runtime:` block so
+        # scattered read sites resolve via settings (env still overrides).
+        settings.configure(cfg.get("runtime") or {})
 
         _backend_cfg = cfg.get("backend", "claude")
         self._backend = _backend_cfg
@@ -478,7 +483,6 @@ class AgenticRun:
         # Stable thread_id: persisted so a crashed run can be resumed against
         # the same LangGraph checkpoint. Resume reads it back; a fresh run
         # mints and stores it (own file: run_config.json is rewritten).
-        import os
         _tid_path = debug_dir / "thread_id"
         if _resume is not None:
             thread_id = _tid_path.read_text().strip()
@@ -519,12 +523,11 @@ class AgenticRun:
 
         config: dict[str, Any] = {
             "configurable": {"thread_id": thread_id},
-            "recursion_limit": int(
-                # 2000 ≈ hundreds of delegations; the old 500 (and the legacy
-                # 25 on some branches) could crash a long multi-delegation run
-                # mid-flight (GraphRecursionError). Override via env if needed.
-                os.environ.get("F3DASM_RECURSION_LIMIT", "2000")
-            ),
+            # 2000 ≈ hundreds of delegations; the old 500 (and the legacy 25 on
+            # some branches) could crash a long multi-delegation run mid-flight
+            # (GraphRecursionError). Knob: recursion_limit (config.yaml runtime
+            # block; F3DASM_RECURSION_LIMIT overrides).
+            "recursion_limit": settings.get_int("recursion_limit", 2000),
         }
 
         # Durable checkpoint to disk so the run survives a crash; resume passes

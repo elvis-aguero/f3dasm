@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 from ..delegation_log import DelegationLog
 from ..hypothesis_ledger import HypothesisLedger
 from ..science_monitor import ScienceMonitor
-from ._constants import RUN_BACKSTOP_MULTIPLE
+from ._constants import run_backstop_multiple
 from .base import AgentNode
 from .critic_gate import CriticGateMixin
 from .lifecycle import LifecycleMixin
@@ -598,7 +598,7 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                         "Wind down: finish the experiment in flight, then "
                         "wrap up and call Done(); avoid starting new "
                         "delegations. A hard cost backstop applies only at "
-                        f"{int(RUN_BACKSTOP_MULTIPLE)}x budget."
+                        f"{int(run_backstop_multiple())}x budget."
                     ),
                 })
             elif pct >= 0.95:

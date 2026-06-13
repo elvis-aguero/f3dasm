@@ -2,12 +2,11 @@
 time backstop) and the resumable checkpoint-halt. A mixin on the strategizer."""
 from __future__ import annotations
 
-import os as _os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ._constants import _BACKSTOP_ENABLED, RUN_BACKSTOP_MULTIPLE
+from ._constants import backstop_enabled, run_backstop_multiple
 
 if TYPE_CHECKING:
     from langgraph.types import Command
@@ -139,11 +138,10 @@ class LifecycleMixin:
         # strategizer at it again. The default is deliberately CONSERVATIVE: a
         # legitimate run "stuck" in the scientific process loops on critic
         # verdicts and slow delegations, none of which count here — only hard
-        # consecutive crashes do. Tune via F3DASM_MAX_CONSECUTIVE_ERRORS; set 0
-        # to disable entirely.
-        _max_err = int(
-            _os.environ.get("F3DASM_MAX_CONSECUTIVE_ERRORS", "12")
-        )
+        # consecutive crashes do. Knob: max_consecutive_errors (config.yaml
+        # runtime block; F3DASM_MAX_CONSECUTIVE_ERRORS overrides); 0 disables.
+        from ..settings import get_int
+        _max_err = get_int("max_consecutive_errors", 12)
         if _max_err > 0:
             with self._registry_lock:
                 _stuck = [
@@ -165,11 +163,12 @@ class LifecycleMixin:
                     extra_update=_halt_tallies(),
                 )
 
-        # (3) Time backstop: past RUN_BACKSTOP_MULTIPLE x the (soft) time
+        # (3) Time backstop: past run_backstop_multiple x the (soft) time
         # budget, bound runaway cost. Now resumable (raise budget + resume).
-        if _BACKSTOP_ENABLED and budget is not None and start is not None:
+        _backstop_mult = run_backstop_multiple()
+        if backstop_enabled() and budget is not None and start is not None:
             _elapsed_now = time.time() - start
-            if _elapsed_now > budget * RUN_BACKSTOP_MULTIPLE:
+            if _elapsed_now > budget * _backstop_mult:
                 with self._registry_lock:
                     _abandoned = [
                         d for d, e in self._registry.items()
@@ -179,13 +178,13 @@ class LifecycleMixin:
                     "error_type": "RUN_BACKSTOP",
                     "elapsed": _elapsed_now,
                     "budget": budget,
-                    "multiple": RUN_BACKSTOP_MULTIPLE,
+                    "multiple": _backstop_mult,
                     "abandoned": _abandoned,
                 })
                 return self._halt_resumable(
                     state,
                     reason=(
-                        f"time backstop: {int(RUN_BACKSTOP_MULTIPLE)}x budget "
+                        f"time backstop: {int(_backstop_mult)}x budget "
                         f"exceeded ({_elapsed_now:.0f}s / {budget:.0f}s)"
                     ),
                     extra_update=_halt_tallies(),

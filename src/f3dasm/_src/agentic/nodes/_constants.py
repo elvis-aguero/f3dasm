@@ -1,15 +1,21 @@
-"""Shared module-level constants for the nodes package — kept here (not in
-strategizer.py) so both strategizer.py and lifecycle.py (and routing.py) can
-import them without an import cycle."""
-import os as _os
+"""Shared run-knob accessors for the nodes package — kept here (not in
+strategizer.py) so strategizer.py, lifecycle.py and routing.py can import them
+without an import cycle.
 
-# Time budget is a SOFT constraint (warnings only). This multiple is the
-# run-level cost backstop: a run is aborted once it exceeds
-# RUN_BACKSTOP_MULTIPLE x the time budget, to bound runaway cost.
-# Wall-clock is a poor proxy for cost when a single oracle eval can take days
-# (the SOTA problems), so the cap is configurable and can be DISABLED: set
-# F3DASM_RUN_BACKSTOP_MULTIPLE <= 0 to turn the hard cap off entirely.
-RUN_BACKSTOP_MULTIPLE = float(
-    _os.environ.get("F3DASM_RUN_BACKSTOP_MULTIPLE", "2.0")
-)
-_BACKSTOP_ENABLED = RUN_BACKSTOP_MULTIPLE > 0
+Read at CALL time (not import) so they reflect config.yaml, which AgenticRun
+installs after these modules import. config.yaml's runtime block is the source
+of truth; F3DASM_RUN_BACKSTOP_MULTIPLE overrides."""
+from ..settings import get_float
+
+
+def run_backstop_multiple() -> float:
+    """Run-level cost backstop multiple: a run halts once it exceeds this ×
+    the (soft) time budget, bounding runaway cost. Wall-clock is a poor cost
+    proxy when one oracle eval can take days, so the cap is configurable and
+    DISABLED when <= 0 (knob: run_backstop_multiple, default 2.0)."""
+    return get_float("run_backstop_multiple", 2.0)
+
+
+def backstop_enabled() -> bool:
+    """True when the run-level time backstop is active (multiple > 0)."""
+    return run_backstop_multiple() > 0

@@ -100,17 +100,20 @@ def test_no_provenance_block_means_no_extra_columns(tmp_path):
 # --- #9: EVIDENCE_NUMBERS_MATCH default-on @ 1e-3 -----------------------------
 
 def test_evidence_numbers_match_default_on(monkeypatch):
+    # Now a config.yaml runtime knob (env overrides). Default ON.
     import f3dasm._src.agentic.science_monitor as sm
+    from f3dasm._src.agentic import settings
     monkeypatch.delenv("F3DASM_EVIDENCE_NUMBERS_MATCH", raising=False)
-    importlib.reload(sm)
+    settings.configure({})
     try:
-        assert sm.EVIDENCE_NUMBERS_MATCH_ENABLED is True
-        monkeypatch.setenv("F3DASM_EVIDENCE_NUMBERS_MATCH", "0")
-        importlib.reload(sm)
-        assert sm.EVIDENCE_NUMBERS_MATCH_ENABLED is False
+        assert sm._evidence_numbers_match_enabled() is True       # default
+        settings.configure({"evidence_numbers_match": False})     # config.yaml
+        assert sm._evidence_numbers_match_enabled() is False
+        monkeypatch.setenv("F3DASM_EVIDENCE_NUMBERS_MATCH", "1")   # env overrides
+        assert sm._evidence_numbers_match_enabled() is True
     finally:
         monkeypatch.delenv("F3DASM_EVIDENCE_NUMBERS_MATCH", raising=False)
-        importlib.reload(sm)  # restore default-on for the rest of the suite
+        settings.configure({})
 
 
 def test_numbers_match_1e3_tolerance(tmp_path):
@@ -130,6 +133,11 @@ def test_numbers_match_1e3_tolerance(tmp_path):
 # --- #10b: recursion_limit default raised ------------------------------------
 
 def test_recursion_limit_default_raised():
+    # Now a config.yaml runtime knob (F3DASM_RECURSION_LIMIT overrides); the
+    # default stays high (2000) so long multi-delegation runs don't crash.
+    from f3dasm._src.agentic import settings
+    settings.configure({})
+    assert settings.get_int("recursion_limit", 2000) == 2000
     rt = (_SRC / "agent_runtime.py").read_text()
-    assert 'F3DASM_RECURSION_LIMIT", "2000"' in rt
+    assert 'settings.get_int("recursion_limit", 2000)' in rt
     assert '"500"' not in rt.split("recursion_limit")[1][:200]

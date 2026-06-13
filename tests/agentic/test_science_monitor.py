@@ -82,13 +82,13 @@ def test_evidence_numbers_match(tmp_path, monkeypatch):
 
     # DEFAULT: the rule is OFF — a mismatch must NOT fire (the critic
     # catches fabricated numbers; the verbatim match stalled wrap-up).
-    monkeypatch.setattr(sm, "EVIDENCE_NUMBERS_MATCH_ENABLED", False)
+    monkeypatch.setattr(sm, "_evidence_numbers_match_enabled", lambda: False)
     rules = {v.rule for v in mon.evaluate()}
     assert "EVIDENCE_NUMBERS_MATCH" not in rules, (
         f"rule is disabled by default; got: {rules}")
 
     # When explicitly re-enabled, it still fires on a true mismatch.
-    monkeypatch.setattr(sm, "EVIDENCE_NUMBERS_MATCH_ENABLED", True)
+    monkeypatch.setattr(sm, "_evidence_numbers_match_enabled", lambda: True)
     rules = {v.rule for v in mon.evaluate()}
     assert "EVIDENCE_NUMBERS_MATCH" in rules, (
         f"Expected EVIDENCE_NUMBERS_MATCH when enabled, got: {rules}")
@@ -295,10 +295,10 @@ def test_posterior_inertia(tmp_path, monkeypatch):
         evidence={"delegation": "D001", "numbers": {"best_y": 1.47}},
         posterior=0.52, triggered_by=None)
     # DEFAULT: OFF — trust the agent to calibrate; no nag on a small move.
-    monkeypatch.setattr(sm, "POSTERIOR_INERTIA_ENABLED", False)
+    monkeypatch.setattr(sm, "_posterior_inertia_enabled", lambda: False)
     assert "POSTERIOR_INERTIA" not in {v.rule for v in mon.evaluate()}
     # When explicitly re-enabled, it still fires on a barely-moved update.
-    monkeypatch.setattr(sm, "POSTERIOR_INERTIA_ENABLED", True)
+    monkeypatch.setattr(sm, "_posterior_inertia_enabled", lambda: True)
     rules = {v.rule for v in mon.evaluate()}
     assert "POSTERIOR_INERTIA" in rules, (
         f"Expected POSTERIOR_INERTIA for 0.5→0.52 when enabled, got: {rules}")
@@ -441,7 +441,7 @@ def test_escalation_after_three_violations_one_hypothesis(tmp_path, monkeypatch)
     After 3 distinct rules for h_id → escalation_due() returns [h_id].
     """
     import f3dasm._src.agentic.science_monitor as sm
-    monkeypatch.setattr(sm, "POSTERIOR_INERTIA_ENABLED", True)  # needed as rule 2
+    monkeypatch.setattr(sm, "_posterior_inertia_enabled", lambda: True)  # needed as rule 2
     ledger, dlog, mon, _ = make_world(tmp_path)
     h_id = propose(ledger)
     # Need a second h so the ledger has room and STALE_OPEN doesn't
@@ -592,7 +592,7 @@ def test_posterior_inertia_boundary(tmp_path, monkeypatch):
     World B: prior=0.5, close at 0.56 → delta=0.06 >= 0.05 → silent.
     """
     import f3dasm._src.agentic.science_monitor as sm
-    monkeypatch.setattr(sm, "POSTERIOR_INERTIA_ENABLED", True)
+    monkeypatch.setattr(sm, "_posterior_inertia_enabled", lambda: True)
     # World A: delta = 0.04 — should fire POSTERIOR_INERTIA
     ledger_a, dlog_a, mon_a, _ = make_world(tmp_path / "a")
     h_a = propose(ledger_a)   # prior=0.5

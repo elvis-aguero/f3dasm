@@ -8,7 +8,6 @@ calls; backend-neutral.
 
 from __future__ import annotations
 
-import os
 import re
 import threading
 from collections.abc import Callable
@@ -23,10 +22,12 @@ __all__ = ["ScienceMonitor", "Violation"]
 # (see _numbers_match), which anchors the headline against the report while
 # tolerating sensible rounding. It is the only in-flight grounding check (the
 # critic gate is end-of-run). Disable with F3DASM_EVIDENCE_NUMBERS_MATCH=0.
-EVIDENCE_NUMBERS_MATCH_ENABLED = (
-    os.environ.get("F3DASM_EVIDENCE_NUMBERS_MATCH", "1").strip().lower()
-    in {"1", "true", "yes", "on"}
-)
+def _evidence_numbers_match_enabled() -> bool:
+    """Knob: evidence_numbers_match (config.yaml runtime block; default ON;
+    F3DASM_EVIDENCE_NUMBERS_MATCH overrides). Read at call time."""
+    from .settings import get_bool
+    return get_bool("evidence_numbers_match", True)
+
 
 STALE_K = 3
 POSTERIOR_EPSILON = 0.05
@@ -35,10 +36,13 @@ POSTERIOR_EPSILON = 0.05
 # 0.95→0.97 is a legitimately small move near the ceiling). Trust the agent to
 # calibrate its own beliefs; the critic judges over/under-claiming. Code kept;
 # re-enable with F3DASM_POSTERIOR_INERTIA=1.
-POSTERIOR_INERTIA_ENABLED = (
-    os.environ.get("F3DASM_POSTERIOR_INERTIA", "").strip().lower()
-    in {"1", "true", "yes", "on"}
-)
+def _posterior_inertia_enabled() -> bool:
+    """Knob: posterior_inertia (config.yaml runtime block; default OFF;
+    F3DASM_POSTERIOR_INERTIA overrides). Read at call time."""
+    from .settings import get_bool
+    return get_bool("posterior_inertia", False)
+
+
 MAX_INJECT_PER_TURN = 2
 ESCALATION_CAP = 2
 ESCALATE_AFTER_VIOLATIONS = 3
@@ -141,7 +145,7 @@ class ScienceMonitor:
                     "not a completed delegation. Cite a real D-id "
                     "from the delegation log (or D000 for the "
                     "ground-truth pool), or correct the update."))
-            elif d_id != "D000" and EVIDENCE_NUMBERS_MATCH_ENABLED:
+            elif d_id != "D000" and _evidence_numbers_match_enabled():
                 numbers = latest_ev.get("numbers") or {}
                 if numbers and not self._numbers_match(
                         numbers, by_id[d_id].get("deliverable", "")):
@@ -177,7 +181,7 @@ class ScienceMonitor:
                     prev_belief = entry["posterior"]
                     break
             post = log[-1].get("posterior")
-            if (POSTERIOR_INERTIA_ENABLED
+            if (_posterior_inertia_enabled()
                     and prev_belief is not None and post is not None
                     and abs(post - prev_belief) < POSTERIOR_EPSILON):
                 out.append(Violation(

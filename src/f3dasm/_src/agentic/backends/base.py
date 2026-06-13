@@ -31,8 +31,11 @@ _transcript_tls = threading.local()
 
 
 def debug_enabled() -> bool:
-    """Master debug switch. Off unless F3DASM_DEBUG is truthy."""
-    return os.environ.get("F3DASM_DEBUG", "").strip().lower() in _DEBUG_TRUE
+    """Master debug switch. Off unless the `debug` knob is truthy.
+
+    Source of truth is config.yaml's runtime block; F3DASM_DEBUG overrides it."""
+    from ..settings import get_bool
+    return get_bool("debug", False)
 
 
 def set_transcript_sink(path: str | None) -> None:
@@ -385,13 +388,15 @@ def retry_on_transient(
 ):
     """Call ``fn()`` retrying transient failures with backoff + jitter.
 
-    Non-transient exceptions propagate immediately. Defaults come from
-    ``F3DASM_LLM_RETRY_MAX`` (default 5) and ``F3DASM_LLM_RETRY_BASE`` (2.0s).
+    Non-transient exceptions propagate immediately. Defaults come from the
+    ``llm_retry_max`` (5) and ``llm_retry_base`` (2.0s) knobs (config.yaml
+    runtime block; F3DASM_LLM_RETRY_MAX / F3DASM_LLM_RETRY_BASE override).
     """
+    from ..settings import get_float, get_int
     if max_attempts is None:
-        max_attempts = int(os.environ.get("F3DASM_LLM_RETRY_MAX", "5"))
+        max_attempts = get_int("llm_retry_max", 5)
     if base_delay is None:
-        base_delay = float(os.environ.get("F3DASM_LLM_RETRY_BASE", "2.0"))
+        base_delay = get_float("llm_retry_base", 2.0)
     attempt = 0
     while True:
         try:

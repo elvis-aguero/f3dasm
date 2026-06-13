@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import inspect as _inspect
-import os
 import threading
 import time
 from pathlib import Path
@@ -397,7 +396,8 @@ class ClaudeAdapter:
         if _did:
             _sess_env["F3DASM_DELEGATION_ID"] = _did
 
-        _max_buf_mb = float(os.environ.get("F3DASM_LLM_MAX_BUFFER_MB", "30"))
+        from ..settings import get_float
+        _max_buf_mb = get_float("llm_max_buffer_mb", 30.0)
         _max_buf = int(_max_buf_mb * 1024 * 1024)
 
         # The SDK spawns the CLI with cwd=self.study_dir; if that directory
@@ -465,12 +465,12 @@ class ClaudeAdapter:
         # from a stall — so the default is 600s: ample margin over the measured
         # legit gaps while still catching a truly dead (silent-forever) stream in
         # ~10 min. A genuine runaway is the delegation watchdog's concern, not
-        # this window's. Tune via F3DASM_LLM_STREAM_IDLE_TIMEOUT; 0 disables.
-        # F3DASM_LLM_TOOL_IDLE_TIMEOUT caps tool execution (0 = uncapped).
-        _idle = float(os.environ.get("F3DASM_LLM_STREAM_IDLE_TIMEOUT", "600"))
-        _tool_idle = float(
-            os.environ.get("F3DASM_LLM_TOOL_IDLE_TIMEOUT", "0")
-        )
+        # this window's. Knobs (config.yaml runtime block; env overrides):
+        # llm_stream_idle_timeout (0 disables); llm_tool_idle_timeout caps tool
+        # execution (0 = uncapped).
+        from ..settings import get_float as _get_float
+        _idle = _get_float("llm_stream_idle_timeout", 600.0)
+        _tool_idle = _get_float("llm_tool_idle_timeout", 0.0)
 
         def _phase(msg: Any):
             # True: a tool is now executing → suspend the tight idle window.

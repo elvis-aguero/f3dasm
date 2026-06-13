@@ -11,7 +11,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .._constants import _BACKSTOP_ENABLED, RUN_BACKSTOP_MULTIPLE
+from .._constants import backstop_enabled, run_backstop_multiple
 from ..parsing import (
     _classify_response,
     _consult_handbook,
@@ -887,14 +887,15 @@ def build_routing_tools(node) -> dict:
                     already_sent = node._budget_notified_pcts
                     if threshold not in already_sent:
                         already_sent.add(threshold)
+                        _backstop_mult = run_backstop_multiple()
                         _over = (
-                            _BACKSTOP_ENABLED
-                            and pct >= RUN_BACKSTOP_MULTIPLE * 100
+                            backstop_enabled()
+                            and pct >= _backstop_mult * 100
                         )
                         msg = (
                             f"BACKSTOP IMMINENT: {pct:.0f}% of time "
                             "budget — past the "
-                            f"{int(RUN_BACKSTOP_MULTIPLE)}x cost "
+                            f"{int(_backstop_mult)}x cost "
                             "backstop. Stop polling and call Done() "
                             "NOW with a partial report."
                         ) if _over else (
