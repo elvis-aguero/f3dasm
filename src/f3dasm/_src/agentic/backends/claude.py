@@ -459,13 +459,15 @@ class ClaudeAdapter:
         # (Sonnet) runs captured LEGITIMATE (recovered) active-generation gaps of
         # 53.6s AND 252-256s (one mid-tool_use-block composition, one
         # tool_result→next message_start delay). So earlier 60s/180s windows
-        # would guillotine legitimate slow generations. 300s clears the observed
-        # ~256s legit gap while still catching a truly dead (silent-forever)
-        # stream in ~5 min. (256s is close to 300s — raise further if longer
-        # legit gaps appear; a runaway is the delegation watchdog's concern.)
-        # Tune via F3DASM_LLM_STREAM_IDLE_TIMEOUT; 0 disables.
+        # would guillotine legitimate slow generations. The observed ~256s legit
+        # gap left only ~44s of headroom under the prior 300s default, and with
+        # NO ping liveness signal a longer legit generation is indistinguishable
+        # from a stall — so the default is 600s: ample margin over the measured
+        # legit gaps while still catching a truly dead (silent-forever) stream in
+        # ~10 min. A genuine runaway is the delegation watchdog's concern, not
+        # this window's. Tune via F3DASM_LLM_STREAM_IDLE_TIMEOUT; 0 disables.
         # F3DASM_LLM_TOOL_IDLE_TIMEOUT caps tool execution (0 = uncapped).
-        _idle = float(os.environ.get("F3DASM_LLM_STREAM_IDLE_TIMEOUT", "300"))
+        _idle = float(os.environ.get("F3DASM_LLM_STREAM_IDLE_TIMEOUT", "600"))
         _tool_idle = float(
             os.environ.get("F3DASM_LLM_TOOL_IDLE_TIMEOUT", "0")
         )
