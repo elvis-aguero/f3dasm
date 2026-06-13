@@ -25,19 +25,12 @@ from ..parsing import (
 # "pipeline"/"pipeline_executor" for the implementer (the "pipeline executor"),
 # "data_generation" for the datagenerator — and bounce off "unknown target".
 # Resolve in order: exact node name -> normalized name (case/separator-
-# insensitive) -> normalized role -> a small curated synonym->ROLE map. The
-# synonym map targets a ROLE (not a node name) and is resolved to whichever
-# live outgoing node carries that role, so it survives node renames / topology
-# changes (forward-compatible). Returns the canonical node name, or None.
-_TARGET_ROLE_ALIASES = {
-    "pipeline": "implementer",
-    "pipelineexecutor": "implementer",
-    "pipelineexecution": "implementer",
-    "executor": "implementer",
-    "datageneration": "datagenerator",
-    "datagen": "datagenerator",
-    "oracle": "datagenerator",
-}
+# insensitive) -> normalized role. Resolution is by live node name or role
+# only — there is NO hardcoded capability-synonym table. The strategizer prompt
+# names targets by their hint/role, so it does not invent capability words like
+# 'pipeline'/'oracle'; an unresolvable target returns None and the caller errors
+# with the valid-target list (the agent then self-corrects). Resolving by role
+# (not node name) keeps it forward-compatible across node renames.
 
 
 def _norm_target(s: str) -> str:
@@ -72,8 +65,8 @@ def resolve_target(
     """Map a requested delegation target to a valid outgoing node name, or None.
 
     ``roles`` maps node name -> its configured role. Resolution is exact-name →
-    normalized-name → normalized-role → curated synonym→role. Only a unique,
-    confident match resolves; anything else returns None (caller errors)."""
+    normalized-name → normalized-role. Only a unique, confident match resolves;
+    anything else returns None (caller errors)."""
     if requested in outgoing:
         return requested
     rn = _norm_target(requested)
@@ -85,11 +78,6 @@ def resolve_target(
     for t in outgoing:  # normalized role
         if _norm_target(roles.get(t, "")) == rn:
             return t
-    role = _TARGET_ROLE_ALIASES.get(rn)  # curated synonym -> role -> live node
-    if role:
-        for t in outgoing:
-            if roles.get(t, "") == role:
-                return t
     return None
 
 

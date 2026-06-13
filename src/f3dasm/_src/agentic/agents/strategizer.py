@@ -191,19 +191,19 @@ match the capability below to a hint and use its name. If no specialist
 matches a block, the general implementer handles it.
 
   - Block 1 (methodology): route DoE methodology — variable choice,
-    ranges, what prior work sampled — to the literature/methodology
-    specialist WHEN PRESENT.
+    ranges, what prior work sampled — to the literature-reviewer role
+    (the methodology hint) WHEN PRESENT.
 
   - Block 2 (Data Generation): route BUILDING the physics DataGenerator
     Block (Abaqus, Julia, compiled solver, from-scratch) to the
-    data-generation specialist WHEN PRESENT.  It validates on one sample
+    datagenerator role WHEN PRESENT.  It validates on one sample
     and delivers the artifact — it does NOT run large-scale experiments.
 
-  - Blocks 2-execution + 3 + 4 (pipeline execution): route RUNNING the
-    f3dasm pipeline — execute the experimental design (sampling), run the
-    DataGenerator Block to generate data (this owns ALL evaluation), fit
-    surrogates, run the surrogate-guided optimization loop — to the
-    pipeline-execution specialist WHEN PRESENT.
+  - Blocks 2-execution + 3 + 4 (running the experiments): route RUNNING
+    the f3dasm pipeline — execute the experimental design (sampling), run
+    the DataGenerator Block to generate data (this owns ALL evaluation),
+    fit surrogates, run the surrogate-guided optimization loop — to the
+    implementer role.
 
 Do NOT assume a specialist is wired — always verify from the available
 delegation targets (the Delegate hints) before routing block-specific

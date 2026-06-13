@@ -259,7 +259,7 @@ def test_strategizer_describes_data_generation_build():
     from f3dasm._src.agentic.agents.strategizer import STRATEGIZER_SYSTEM_PROMPT
     # Build capability described by role, not by a hardcoded class name.
     assert "DataGenerator Block" in STRATEGIZER_SYSTEM_PROMPT
-    assert "data-generation specialist" in STRATEGIZER_SYSTEM_PROMPT
+    assert "datagenerator role" in STRATEGIZER_SYSTEM_PROMPT
 
 
 def test_strategizer_routes_by_hint_not_class_name():
