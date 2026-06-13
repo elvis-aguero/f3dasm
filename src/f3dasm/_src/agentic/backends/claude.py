@@ -212,6 +212,22 @@ class ClaudeAdapter:
         Extra Python callables exposed to the model as MCP tools.
     """
 
+    # CLI tools the Claude SDK executes natively. A node's other declared tools
+    # are injected as Python closures (MCP), not passed here.
+    NATIVE_TOOLS = frozenset({
+        "Bash", "Edit", "Read", "Write", "Glob", "Grep",
+        "Task", "WebFetch", "WebSearch", "computer",
+    })
+
+    @classmethod
+    def select_native_tools(cls, agent_tools) -> list[str]:
+        """Pick which of an agent's declared tools are native SDK CLI tools.
+
+        Mirror of OpenAICompatibleAdapter.select_native_tools so the runtime
+        can choose native tools generically for any backend (forward-compatible
+        dispatch)."""
+        return [t for t in agent_tools if t in cls.NATIVE_TOOLS]
+
     def __init__(
         self,
         model: str,

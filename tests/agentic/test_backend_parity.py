@@ -97,9 +97,14 @@ def _public_instance_attrs(instance) -> set[str]:
 
 
 def _public_methods(cls) -> set[str]:
-    """Return public non-dunder callable attributes defined on cls (not inherited from object)."""
+    """Return public non-dunder callable attributes on cls, INCLUDING inherited.
+
+    Walks the MRO (via dir) rather than only vars(cls), so a backend that
+    inherits its public surface from a shared base (e.g. the OpenAI-compatible
+    adapters) is judged on its real public API — not only the handful of
+    methods defined on the leaf class."""
     return {
-        name for name in vars(cls)
+        name for name in dir(cls)
         if not name.startswith("_")
         and callable(getattr(cls, name))
     }

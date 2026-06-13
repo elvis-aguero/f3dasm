@@ -53,7 +53,7 @@ def test_build_tools_with_extra_allowed_tools_empty():
         extra_allowed_tools=[],
     )
 
-    with patch("f3dasm._src.agentic.backends.ollama._make_literature_tools") as mock_lit:
+    with patch("f3dasm._src.agentic.backends.openai_compatible._make_literature_tools") as mock_lit:
         tools = adapter._build_tools()
 
     mock_lit.assert_not_called()
@@ -73,7 +73,7 @@ def test_build_tools_with_extra_allowed_tools_calls_literature_tools():
     )
 
     with patch(
-        "f3dasm._src.agentic.backends.ollama._make_literature_tools",
+        "f3dasm._src.agentic.backends.openai_compatible._make_literature_tools",
         return_value=[mock_tool],
     ) as mock_lit:
         tools = adapter._build_tools()
@@ -99,7 +99,7 @@ def test_build_tools_filters_to_allowed_names():
     )
 
     with patch(
-        "f3dasm._src.agentic.backends.ollama._make_literature_tools",
+        "f3dasm._src.agentic.backends.openai_compatible._make_literature_tools",
         return_value=[allowed_tool, disallowed_tool],
     ):
         tools = adapter._build_tools()
