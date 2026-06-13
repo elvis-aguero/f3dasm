@@ -209,7 +209,7 @@ def test_make_adapter_claude_extra_closures_injected(tmp_path):
 
     extra_closures = {"SpecialTool": lambda x: x}
     with patch.object(agent, "build_closure_tools", return_value=extra_closures):
-        with patch("f3dasm._src.agentic.agent_runtime.ClaudeAdapter") as MockClaude:
+        with patch("f3dasm._src.agentic.backends.claude.ClaudeAdapter") as MockClaude:
             mock_instance = MagicMock()
             mock_instance.closure_tools = {}
             MockClaude.return_value = mock_instance

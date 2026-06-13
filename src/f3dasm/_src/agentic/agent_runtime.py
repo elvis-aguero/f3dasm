@@ -19,17 +19,10 @@ from .agent_prompts import (
 )
 from .agents import ImplementerAgent, StrategizerAgent, _default_graph
 from .backends.base import Agent, Graph
-from .backends.claude import ClaudeAdapter
 from .container_runner import ContainerRunner
 from .delegation_log import DelegationLog
 from .graph_builder import build_graph
 from .graph_state import AgenticState, Delegation, Report, StudyConfig, Task
-
-# Real tool names recognised by the claude-agent-sdk as native CLI tools.
-_CLAUDE_NATIVE_TOOLS = frozenset({
-    "Bash", "Edit", "Read", "Write", "Glob", "Grep",
-    "Task", "WebFetch", "WebSearch", "computer",
-})
 
 __all__ = [
     "AgenticRun",
@@ -783,37 +776,17 @@ class AgenticRun:
             else self.study_dir / "lit_reviewer_notes"
         )
 
-        if backend == "ollama":
-            import os
+        # Registry-driven, forward-compatible dispatch: resolve the adapter
+        # class by backend name and let it choose its own native tools. Adding
+        # a backend to backends/registry.py makes it dispatchable here with no
+        # change to this method. Backend-specific endpoint/auth (base_url,
+        # api_key) is resolved inside each adapter from env/defaults, so the
+        # construction kwargs are common to every backend.
+        from .backends.registry import get_adapter_class
 
-            from .backends.ollama import OllamaAdapter
-            _closure_tool_names = {
-                "Done", "FollowUp", "WriteNote", "ReadNote", "ReportEvals"
-            }
-            ollama_native = [
-                t for t in agent.tools if t not in _closure_tool_names
-            ]
-            adapter = OllamaAdapter(
-                model=model,
-                system_prompt=system_prompt,
-                study_dir=cwd,
-                native_tools=ollama_native,
-                extra_mcp_servers=dict(getattr(agent, "mcp_servers", {})),
-                extra_allowed_tools=list(getattr(agent, "extra_allowed_tools", frozenset())),
-                base_url=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
-                persistent=_persistent,
-                max_history_pairs=_max_history_pairs,
-            )
-            extra_closures = agent.build_closure_tools(
-                self.study_dir,
-                lit_reviewer_notes_dir=lit_reviewer_notes_dir,
-            )
-            if extra_closures:
-                adapter.closure_tools.update(extra_closures)
-            return adapter
-
-        native = [t for t in agent.tools if t in _CLAUDE_NATIVE_TOOLS]
-        adapter = ClaudeAdapter(
+        adapter_cls = get_adapter_class(backend)
+        native = adapter_cls.select_native_tools(agent.tools)
+        adapter = adapter_cls(
             model=model,
             system_prompt=system_prompt,
             study_dir=cwd,

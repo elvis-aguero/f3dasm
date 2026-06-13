@@ -54,7 +54,7 @@ def test_make_adapter_orchestrating_node_uses_run_paths_preamble(tmp_path):
     agent = _agent_with_tools("Bash")
 
     # Patch ClaudeAdapter so we don't need real credentials
-    with patch("f3dasm._src.agentic.agent_runtime.ClaudeAdapter") as MockClaude:
+    with patch("f3dasm._src.agentic.backends.claude.ClaudeAdapter") as MockClaude:
         mock_instance = MagicMock()
         mock_instance.closure_tools = {}
         MockClaude.return_value = mock_instance
@@ -82,7 +82,7 @@ def test_make_adapter_worker_node_uses_workspace_preamble(tmp_path):
 
     agent = _agent_with_tools("Bash")
 
-    with patch("f3dasm._src.agentic.agent_runtime.ClaudeAdapter") as MockClaude:
+    with patch("f3dasm._src.agentic.backends.claude.ClaudeAdapter") as MockClaude:
         mock_instance = MagicMock()
         mock_instance.closure_tools = {}
         MockClaude.return_value = mock_instance
@@ -109,6 +109,8 @@ def test_make_adapter_ollama_backend_creates_ollama_adapter(tmp_path):
 
     agent = _agent_with_tools("Bash")
 
+    # Registry dispatch resolves OllamaAdapter from its source module, so
+    # patching it there is all that's needed.
     with patch("f3dasm._src.agentic.backends.ollama.OllamaAdapter") as MockOllama:
         mock_instance = MagicMock()
         mock_instance.closure_tools = {}
@@ -117,13 +119,7 @@ def test_make_adapter_ollama_backend_creates_ollama_adapter(tmp_path):
         run._graph_spec = MagicMock()
         run._graph_spec.outgoing.return_value = []
 
-        # Patch the import inside _make_adapter
-        with patch.dict("sys.modules", {"f3dasm._src.agentic.backends.ollama": MagicMock(OllamaAdapter=MockOllama)}):
-            import importlib
-            import f3dasm._src.agentic.agent_runtime as arm
-            original_backend = arm
-            with patch("f3dasm._src.agentic.agent_runtime.OllamaAdapter", MockOllama, create=True):
-                result = run._make_adapter("implementer", agent)
+        result = run._make_adapter("implementer", agent)
 
     # The result should be the mock OllamaAdapter instance
     assert result is mock_instance
@@ -141,7 +137,7 @@ def test_make_adapter_no_run_dir_returns_adapter_without_run_paths(tmp_path):
 
     agent = _agent_with_tools("Bash")
 
-    with patch("f3dasm._src.agentic.agent_runtime.ClaudeAdapter") as MockClaude:
+    with patch("f3dasm._src.agentic.backends.claude.ClaudeAdapter") as MockClaude:
         mock_instance = MagicMock()
         mock_instance.closure_tools = {}
         MockClaude.return_value = mock_instance
