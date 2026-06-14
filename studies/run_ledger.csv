@@ -1,0 +1,4 @@
+commit,study,run_id,outcome,critic_consults,delegations,ledger_rows,mean_wall_ms,input_tokens,output_tokens,cost_usd,time_used,milestones_done,milestones_skipped,milestones_pending,diagnostics
+b3799d3,agentic_modular_resonance,20260614T005949,UNGATED,8,9,2718,0.12,2097,297995,3.1634,00:54:17,1,2,0,"{""NO_SOURCE_NUDGE"": 2, ""ERROR_RETURN"": 1, ""MILESTONE_GATE"": 2, ""SCIENCE_DRIFT"": 5, ""CONSISTENCY_FLAG"": 2}"
+b3799d3,agentic_black_box_8d,20260614T015434,GATED,2,3,1560,0.049,470,76306,0.7880,00:30:12,1,2,0,"{""MILESTONE_GATE"": 1}"
+b3799d3,agentic_supercompressible_3d,20260614T022458,GATED,1,1,1000,,214,26605,0.2877,00:09:25,1,2,0,"{""NO_SOURCE_NUDGE"": 1, ""ERROR_RETURN"": 3, ""MILESTONE_GATE"": 1}"
