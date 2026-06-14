@@ -138,6 +138,12 @@ class ScriptedStrategistAdapter:
                 "# replicate.py\nprint('Optimal design confirmed.')\n",
             )
 
+        # Engage with the process backlog before closing (Spec #1 close-gate):
+        # resolve every seeded milestone — this scripted study skips them.
+        if "MilestoneList" in tools:
+            for mid in re.findall(r"M\d{3}", tools["MilestoneList"]()):
+                tools["MilestoneSkip"](mid, "not applicable to this scripted test")
+
         tools["Done"](summary="H1 falsified. H2 supported. Optimal design confirmed.")  # first: warning
         tools["Done"](summary="H1 falsified. H2 supported. Optimal design confirmed.")  # second: accepted
         return "Done."

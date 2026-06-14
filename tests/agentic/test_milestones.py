@@ -5,6 +5,7 @@ from f3dasm._src.agentic.backends.base import Agent, Edge, Graph
 from f3dasm._src.agentic.delegation_log import DelegationLog
 from f3dasm._src.agentic.milestones import (
     MilestoneLedger,
+    blocking_gate,
     milestone_gate_nudge,
 )
 from f3dasm._src.agentic.nodes import StrategizerNode
@@ -126,12 +127,69 @@ def test_milestone_closures_registered_on_strategizer(tmp_path):
         assert tool in n.adapter.closure_tools
 
 
-def test_delegate_into_phase_appends_gate_nudge(tmp_path):
+def test_blocking_gate_logic(tmp_path):
+    """A pending gate blocks at-or-after its phase; literature/setup/None exempt."""
     n = _node(tmp_path)
-    # propose a hypothesis so Delegate's hypothesis_ids requirement is met
+    led = n._milestones
+    # lit_review gates 'doe' → blocks doe AND later phases
+    assert blocking_gate(led, n, "doe") is not None
+    assert blocking_gate(led, n, "ml") is not None
+    # exempt: untagged, and the phases used to satisfy gates
+    assert blocking_gate(led, n, None) is None
+    assert blocking_gate(led, n, "literature") is None
+    assert blocking_gate(led, n, "setup") is None
+
+
+def test_delegate_into_gated_phase_is_hard_blocked(tmp_path):
+    """Fix #1: delegating gated-phase work while a gate is pending is REFUSED
+    (the delegation does not fire), not merely nudged."""
+    n = _node(tmp_path)
     hid = n.adapter.closure_tools["HypothesisPropose"](
         "stmt", "crit", "pred", 0.5)
+    before = len(n._registry)
     out = n.adapter.closure_tools["Delegate"](
         "implementer", "generate data", "report", hypothesis_ids=[hid],
         wait=True, phase="data_generation")
-    assert "MILESTONE CHECKPOINT" in out  # oracle-gold-state gate pending
+    assert out.startswith("BLOCKED")
+    assert "MilestoneSkip" in out
+    assert len(n._registry) == before  # nothing fired
+
+
+def test_milestone_skip_unblocks_delegation(tmp_path):
+    """The unilateral escape: skipping the gate (with a reason) lets the
+    delegation through — no deadlock."""
+    n = _node(tmp_path)
+    hid = n.adapter.closure_tools["HypothesisPropose"](
+        "stmt", "crit", "pred", 0.5)
+    # skip both gates that would block data_generation
+    for m in n._milestones.list_all():
+        n.adapter.closure_tools["MilestoneSkip"](m["id"], "not needed in test")
+    out = n.adapter.closure_tools["Delegate"](
+        "implementer", "generate data", "report", hypothesis_ids=[hid],
+        wait=True, phase="data_generation")
+    assert not out.startswith("BLOCKED")
+    assert out.lstrip().startswith(("Done", "Errored"))
+
+
+def test_milestone_complete_requires_a_brief(tmp_path):
+    """Fix #1: ticking needs a one-line why — no rubber-stamping."""
+    n = _node(tmp_path)
+    mid = n._milestones.propose("my own step")
+    assert "ERROR" in n.adapter.closure_tools["MilestoneComplete"](mid, "")
+    assert "ERROR" in n.adapter.closure_tools["MilestoneComplete"](mid, "   ")
+    ok = n.adapter.closure_tools["MilestoneComplete"](mid, "did the thing via D2")
+    assert "ERROR" not in ok
+    assert n._milestones.get(mid)["status"] == "DONE"
+
+
+def test_done_blocked_until_milestones_resolved(tmp_path):
+    """Fix #1 (bare minimum): Done() cannot close while any milestone is
+    PENDING; resolving (skip/complete) all of them unblocks it."""
+    n = _node(tmp_path)
+    out = n.adapter.closure_tools["Done"](summary="done")
+    assert "Cannot close yet" in out and "PENDING" in out
+    # resolve every milestone, then Done() proceeds past the close-gate
+    for m in n._milestones.list_all():
+        n.adapter.closure_tools["MilestoneSkip"](m["id"], "n/a for test")
+    out2 = n.adapter.closure_tools["Done"](summary="done")
+    assert "Cannot close yet" not in out2

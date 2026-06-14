@@ -546,10 +546,18 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                 return "ERROR: milestone ledger not available in this run."
             return node._milestones.propose(description, phase, gate)
 
-        def MilestoneComplete(milestone_id: str, note: str = "") -> str:
-            """Mark a milestone DONE with an optional note."""
+        def MilestoneComplete(milestone_id: str, note: str) -> str:
+            """Mark a milestone DONE. A brief `note` (one line on WHY it's
+            satisfied — what was done / which delegation) is REQUIRED, so
+            ticking is a deliberate, auditable act, not a rubber stamp."""
             if node._milestones is None:
                 return "ERROR: milestone ledger not available in this run."
+            if not note or not note.strip():
+                return (
+                    "ERROR: a brief note is required to complete a milestone — "
+                    "one line on why it's satisfied (what you did / which "
+                    "delegation). This keeps ticking honest and auditable."
+                )
             return node._milestones.complete(milestone_id, note)
 
         def MilestoneSkip(milestone_id: str, reason: str) -> str:

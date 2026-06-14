@@ -306,6 +306,27 @@ def build_routing_tools(node) -> dict:
         _phase_obj = resolve_phase(phase)
         _phase = _phase_obj.value if _phase_obj is not None else None
 
+        # Milestone gate (Spec #1): HARD-block this delegation if a prescribed
+        # gate guarding its phase is still pending. Escape is always available
+        # (MilestoneSkip), so this forces engagement without deadlock. The
+        # delegation does not fire; nothing is recorded.
+        _ms = getattr(node, "_milestones", None)
+        if _ms is not None and _phase:
+            from ...milestones import blocking_gate
+            _blk = blocking_gate(_ms, node, _phase)
+            if _blk is not None:
+                node._record_intervention(
+                    "MILESTONE_BLOCK", _phase,
+                    f"{_blk['id']} pending blocks phase {_phase}")
+                return (
+                    f"BLOCKED: cannot delegate phase '{_phase}' work yet — the "
+                    f"prescribed milestone {_blk['id']} is still pending: "
+                    f"\"{_blk['description']}\". Do it first (e.g. delegate the "
+                    f"step that satisfies it), or — if this study genuinely "
+                    f"doesn't need it — MilestoneSkip('{_blk['id']}', reason) "
+                    "and re-delegate. (Not a tool error; a process gate.)"
+                )
+
         start_time_mono = time.monotonic()
         started_at = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
 
@@ -785,18 +806,6 @@ def build_routing_tools(node) -> dict:
         # Reset two-shot Done() gate so the next Done() warns again.
         node._done_warned = False
 
-        # Milestone gate nudge (Spec C2): entering a phase with a pending gate
-        # gets a soft decision-point nudge + a recorded diagnostic — never a
-        # refusal. Auto-satisfies first, so a met condition doesn't nag.
-        _ms_nudge = ""
-        _ms = getattr(node, "_milestones", None)
-        if _ms is not None and _phase:
-            from ...milestones import milestone_gate_nudge
-            _ms_nudge = milestone_gate_nudge(_ms, node, _phase)
-            if _ms_nudge:
-                node._record_intervention(
-                    "MILESTONE_GATE", _phase, _ms_nudge.strip()[:200])
-
         if wait:
             # Synchronous mode: block until the delegation finishes.
             t.join()
@@ -806,13 +815,12 @@ def build_routing_tools(node) -> dict:
             if status == "Done":
                 cp = _falsification_checkpoint(delegation_id)
                 body = f"Done\n\n{entry['result']}"
-                return body + (("\n\n" + cp) if cp else "") + _ms_nudge
-            return f"Errored:\n{entry.get('result', '(no details)')}" + _ms_nudge
+                return body + (("\n\n" + cp) if cp else "")
+            return f"Errored:\n{entry.get('result', '(no details)')}"
 
         return (
             f"Delegation started. ID: {delegation_id!r}. "
             f"Use GetStatus('{delegation_id}') to poll for completion."
-            + _ms_nudge
         )
 
     Delegate.__doc__ = _delegate_doc
@@ -1055,6 +1063,40 @@ def build_routing_tools(node) -> dict:
             route["kind"] = "done"
             route["summary"] = node._final_summary
             return prefix + "Run complete."
+        # Milestone close-gate (Spec #1, HARD): every milestone must be DONE or
+        # SKIPPED before the run can close. Auto-satisfy first (met gates tick
+        # themselves). Forces engagement; MilestoneSkip(id, reason) is the
+        # escape so it never deadlocks. Checked on every Done() call (the agent
+        # can't bypass via the two-shot).
+        _ms = getattr(node, "_milestones", None)
+        if _ms is not None:
+            _ms.auto_satisfy(node)
+            _pend = [m for m in _ms.list_all() if m.get("status") == "PENDING"]
+            if _pend:
+                node._milestone_block_count = getattr(
+                    node, "_milestone_block_count", 0) + 1
+                if node._milestone_block_count <= 3:
+                    items = "; ".join(
+                        f"{m['id']} ({m['description']})" for m in _pend)
+                    return (
+                        prefix + "Cannot close yet — these milestones are "
+                        f"still PENDING: {items}. For each: "
+                        "MilestoneComplete(id, brief) with a one-line why, or "
+                        "MilestoneSkip(id, reason) if this study doesn't need "
+                        "it. Then re-call Done(). (Process gate, not a tool "
+                        "error.)"
+                    )
+                # Bounded escape (mirrors the 3-strikes UNGATED gate): after 3
+                # blocked closes, auto-skip the rest so the run can never
+                # deadlock. Recorded — the critic sees the forced skips and can
+                # flag them.
+                for m in _pend:
+                    _ms.skip(m["id"],
+                             "auto-skipped: unresolved after 3 close attempts")
+                node._record_intervention(
+                    "MILESTONE_AUTO_SKIP", "",
+                    f"{len(_pend)} milestone(s) auto-skipped after 3 close "
+                    "attempts")
         # Two-shot gate: first call warns, second call closes.
         if not node._done_warned:
             node._done_warned = True
@@ -1101,21 +1143,8 @@ def build_routing_tools(node) -> dict:
                         "Use HypothesisUpdate against each one's pre-registered "
                         "prediction."
                     )
-            # Pending milestone gates (Spec C2): a process step the run was
-            # supposed to hit (e.g. lit review, oracle gold-state) that's still
-            # PENDING. Auto-satisfy first so met ones drop off; surface the rest
-            # as a soft reminder (skip with MilestoneSkip if truly N/A).
-            _ms = getattr(node, "_milestones", None)
-            if _ms is not None:
-                _ms.auto_satisfy(node)
-                pend = _ms.pending_gates()
-                if pend:
-                    items = ", ".join(
-                        f"{m['id']} ({m['description']})" for m in pend)
-                    warn_parts.append(
-                        f"Pending process milestones: {items}. Complete or "
-                        "MilestoneSkip(<id>, reason) before closing."
-                    )
+            # (Pending milestones are now a HARD close-gate handled above — by
+            # the time we reach this two-shot warn, all milestones are resolved.)
             # WARNING goes first; then any pending notifications.
             return "  ".join(warn_parts) + (("\n\n" + prefix.rstrip()) if prefix.strip() else "")
         # Second call — run critic gate if critic is in the graph.
@@ -1197,9 +1226,24 @@ def build_routing_tools(node) -> dict:
                 )
             _bud = getattr(node, "_eval_budget", None)
             _exhausted = _bud is not None and _spent >= _bud
+            # Milestones: show the critic each process milestone's resolution +
+            # note/reason, so it can flag a hollow SKIP (a study that skipped a
+            # gate it actually needed) — skips are unilateral, audited here.
+            _ms_lines = []
+            _ms_obj = getattr(node, "_milestones", None)
+            if _ms_obj is not None:
+                for m in _ms_obj.list_all():
+                    _ms_lines.append(
+                        f"{m['id']} [{m['status']}]"
+                        f"{' gate' if m.get('gate') else ''}: "
+                        f"{m['description']}"
+                        + (f" — note: {m['note']}" if m.get('note') else ""))
+            _ms_block = "\n".join(_ms_lines) or "(none)"
             task_msg += (
                 "\n\n<hypothesis_ledger>\n" + ledger_dump
                 + "\n</hypothesis_ledger>\n\n"
+                "<milestones>\n" + _ms_block
+                + "\n</milestones>\n\n"
                 "<delegation_flags>\n"
                 + "\n".join(attempts)
                 + "\n</delegation_flags>\n\n"

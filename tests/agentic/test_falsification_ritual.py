@@ -199,6 +199,11 @@ def test_done_gate_warns_on_dangling_falsification(tmp_path):
     n._registry["D001"] = {
         "status": "Done", "result": "r", "is_falsification_attempt": True,
         "hypothesis_ids": [hid], "reconciled": True}
+    # clear the (orthogonal) milestone close-gate so we reach the falsification
+    # warn this test is about
+    if n._milestones is not None:
+        for m in n._milestones.list_all():
+            n._milestones.skip(m["id"], "n/a")
     out = n.adapter.closure_tools["Done"](summary="done")
     assert not out.lstrip().startswith("ERROR:")
     assert "D001" in out

@@ -254,6 +254,37 @@ class MilestoneLedger:
         )
 
 
+# Canonical pipeline order. A pending gate guarding phase G blocks a delegation
+# whose phase is at-or-after G. literature/setup are EXEMPT (they're how gates
+# get satisfied — e.g. you must be able to delegate a literature task to tick
+# the lit-review gate, and register the oracle to tick the gold-state gate).
+_PHASE_ORDER = ["literature", "setup", "doe", "data_generation", "ml",
+                "optimization"]
+_EXEMPT_PHASES = frozenset({None, "literature", "setup"})
+
+
+def _phase_rank(p: str | None) -> int:
+    try:
+        return _PHASE_ORDER.index(p)
+    except ValueError:
+        return -1
+
+
+def blocking_gate(ledger: MilestoneLedger, node, phase: str | None) -> dict | None:
+    """Return the pending gate that should HARD-BLOCK a delegation of ``phase``,
+    or None. Auto-satisfies first (a met gate never blocks). Untagged,
+    literature, and setup delegations are exempt."""
+    if phase in _EXEMPT_PHASES:
+        return None
+    ledger.auto_satisfy(node)
+    drank = _phase_rank(phase)
+    for m in ledger.pending_gates():
+        grank = _phase_rank(m.get("phase"))
+        if grank >= 0 and drank >= grank:
+            return m
+    return None
+
+
 def milestone_gate_nudge(ledger: MilestoneLedger, node, phase: str) -> str:
     """Decision-point nudge text when entering ``phase`` with pending gates.
 

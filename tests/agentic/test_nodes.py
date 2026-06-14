@@ -2969,6 +2969,12 @@ def test_done_critic_gate_embeds_ledger_and_falsification_flags(tmp_path):
             self.closure_tools["WriteDeliverable"](
                 "replicate.py", "# replicate\nprint('done')"
             )
+            # 4b. Resolve process milestones (orthogonal to this test) so the
+            # Done() close-gate lets us reach the critic gate under test.
+            import re as _re
+            for _mid in _re.findall(
+                    r"M\d{3}", self.closure_tools["MilestoneList"]()):
+                self.closure_tools["MilestoneSkip"](_mid, "n/a for this test")
             # 5. Two-shot Done()
             self.closure_tools["Done"](summary="H1 is supported; below 1.0.")
             self.closure_tools["Done"](summary="H1 is supported; below 1.0.")
