@@ -128,14 +128,15 @@ def test_strategizer_xml_sections_appear_exactly_once():
         STRATEGIZER_SYSTEM_PROMPT,
     )
 
+    # tool_usage / output_format / examples were removed: per-tool usage rules
+    # and worked examples now live ON the tool definitions (docstrings +
+    # @tool_examples) and are injected via the generated <tools> catalog, so
+    # they're DRY and shared, not hand-maintained in the prompt.
     required_tags = [
         "role",
         "deliverables",
         "operating_principles",
         "failure_modes_to_avoid",
-        "tool_usage",
-        "output_format",
-        "examples",
     ]
     for tag in required_tags:
         _assert_tag_once(STRATEGIZER_SYSTEM_PROMPT, tag)

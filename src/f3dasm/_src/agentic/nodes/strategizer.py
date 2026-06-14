@@ -344,6 +344,13 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         """Build HypothesisPropose/Update/List/Get closures."""
         node = self
 
+        from ..tool_catalog import tool_examples
+
+        @tool_examples(
+            "HypothesisPropose('Optimal t/L is near 0.08 — thin walls maximise "
+            "buckling', 'a point with t/L in [0.10,0.14] beats "
+            "buckling_load_norm 1.47', 'best at t/L ~ 0.08 ± 0.02', 0.55)",
+        )
         def HypothesisPropose(
             statement: str,
             falsification_criterion: str,
@@ -368,6 +375,11 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                 proposed_by=node._name,
             )
 
+        @tool_examples(
+            "HypothesisUpdate('H1', 'SUPPORTED', 'sweep top t/L=0.09 beats "
+            "threshold', 0.80, evidence={'delegation': 'D001', 'numbers': "
+            "{'top_tL': 0.09, 'buckling_load_norm': 1.47}})",
+        )
         def HypothesisUpdate(
             hypothesis_id: str,
             status: str,

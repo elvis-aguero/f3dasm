@@ -11,6 +11,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ...tool_catalog import tool_examples
 from .._constants import backstop_enabled, run_backstop_multiple
 from ..parsing import (
     _classify_response,
@@ -204,6 +205,17 @@ def build_routing_tools(node) -> dict:
             "to attach — continue (no action needed)."
         )
 
+    @tool_examples(
+        "Delegate('implementer', 'Run a 50-pt Latin sweep of t/L in "
+        "[0.02,0.20]; evaluate via get_evaluator(); report top-5 by "
+        "buckling_load_norm + the results CSV path + feasible count.', "
+        "'top-5 t/L, their values, CSV path, n feasible', "
+        "hypothesis_ids=['H1','H2'])",
+        "Delegate('implementer', 'Falsification probe: dense grid n=20 of "
+        "t/L in [0.10,0.14]; does any point beat buckling_load_norm 1.47?', "
+        "'best value in range + pass/fail', hypothesis_ids=['H1'], "
+        "is_falsification_attempt=True, phase='optimization')",
+    )
     def Delegate(
         target: str,
         intent: str,
@@ -1025,6 +1037,12 @@ def build_routing_tools(node) -> dict:
     def Done(summary: str) -> str:
         """Signal end of run with a summary of findings (two-shot).
 
+        Call only when: a best design is in hand with numerical support from
+        Reports; at least one falsification attempt has been carried out; and
+        replicate.py has been written via WriteDeliverable("replicate.py", …).
+        summary should state the best design + supporting numbers + the
+        falsification outcome + remaining uncertainty.
+
         First call: issues a WARNING and lists any open delegations or
         unmet conditions; does NOT close.
         Second call: closes the run.
@@ -1328,6 +1346,9 @@ def build_routing_tools(node) -> dict:
         the entry node, or the agent that delegated to you if you are a worker.
         One FollowUp per delegation.  The answer is injected directly into
         your context.  If no answer is available, proceed with best judgment.
+        Use it only for genuine briefing ambiguities (or a result so
+        surprising it may signal a bug) — never for rhetorical/confirmatory
+        questions or to replace your own reasoning.
         """
         if node._ask_count >= node._max_ask:
             return (
@@ -1346,7 +1367,11 @@ def build_routing_tools(node) -> dict:
         )
 
     def WriteNote(path: str, body: str) -> str:
-        """Write a Markdown (.md) note to strategizer_notes/."""
+        """Write a Markdown (.md) note to strategizer_notes/ — free-form
+        reasoning: why you chose each Delegate, interim findings, open issues.
+        Do NOT write code in notes (embed it in Delegate().intent as plain
+        text), and do NOT record priors/posteriors here — those live ONLY in
+        the hypothesis ledger (HypothesisPropose/Update)."""
         prefix = node._drain_notifications()
         notes_dir = node._current_notes_dir
         if notes_dir is None:
@@ -1360,7 +1385,10 @@ def build_routing_tools(node) -> dict:
         return prefix + f"Written: {target}"
 
     def ReadNote(path: str) -> str:
-        """Read a file from the study directory."""
+        """Read a file from the study directory. Use it to load
+        PROBLEM_STATEMENT.md before forming a strategy, spot-check
+        Implementer-generated files, and review prior notes — read what you
+        need, not every file speculatively."""
         prefix = node._drain_notifications()
         if study_dir is None:
             return "ERROR: study_dir not set."
