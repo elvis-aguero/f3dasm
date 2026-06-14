@@ -410,8 +410,10 @@ class ClaudeAdapter:
             except Exception:  # noqa: BLE001 — best-effort; spawn surfaces real errors
                 pass
 
+        from ..tool_catalog import system_prompt_with_catalog
         options = ClaudeAgentOptions(
-            system_prompt=self.system_prompt,
+            system_prompt=system_prompt_with_catalog(
+                self.system_prompt, self.closure_tools),
             model=self.model,
             cwd=str(self.study_dir) if self.study_dir else None,
             tools=self.native_tools or [],

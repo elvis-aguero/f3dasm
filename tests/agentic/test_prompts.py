@@ -120,13 +120,46 @@ def test_no_two_agent_framing_in_any_prompt():
         )
 
 
-def test_strategizer_ledger_read_tools_documented():
-    """RecallStore, QueryStore, RecallHistory are documented in the
-    strategizer prompt."""
+def test_strategizer_ledger_read_tools_documented(tmp_path):
+    """RecallStore, QueryStore, RecallHistory are documented to the strategizer.
+
+    Post-Spec-B these live in the GENERATED <tools> catalog (the single source
+    of truth, derived from the live closures), not the static base prompt — so
+    assert the catalog of a real strategizer node, which is what the model
+    actually receives appended to its system prompt."""
+    from f3dasm._src.agentic.backends.base import Agent, Edge, Graph
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    from f3dasm._src.agentic.tool_catalog import render_tool_catalog
+
+    class _Stub:
+        def __init__(self):
+            self.closure_tools: dict = {}
+            self.last_usage: dict = {}
+            self.model = "m"
+
+        def invoke(self, messages):
+            return ""
+
+    class A(Agent):
+        role = "strategizer"
+        tools = frozenset({"Done"})
+        description = "strategizer"
+
+    class B(Agent):
+        role = "implementer"
+        description = "implementer"
+
+    spec = Graph(
+        nodes={"strategizer": A(), "implementer": B()},
+        edges=(Edge("strategizer", "implementer"),), entry="strategizer")
+    from f3dasm._src.agentic.delegation_log import DelegationLog
+    n = StrategizerNode(
+        _Stub(), name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": _Stub()},
+        delegation_log=DelegationLog(tmp_path / "dlog.jsonl"))  # → RecallHistory
+    cat = render_tool_catalog(n.adapter.closure_tools)
     for tool in ("RecallStore", "QueryStore", "RecallHistory"):
-        assert tool in STRATEGIZER_SYSTEM_PROMPT, (
-            f"STRATEGIZER_SYSTEM_PROMPT missing tool '{tool}'"
-        )
+        assert tool in cat, f"generated tool catalog missing '{tool}'"
 
 
 def test_strategizer_ledger_is_ground_truth():

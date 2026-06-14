@@ -463,13 +463,15 @@ class OpenAICompatibleAdapter:
         from langchain_openai import ChatOpenAI
         from langgraph.prebuilt import create_react_agent
 
+        from ..tool_catalog import system_prompt_with_catalog
         llm = ChatOpenAI(
             model=self.model, base_url=self._base_url, api_key=self._api_key
         )
         return create_react_agent(
             llm,
             self._build_tools(),
-            prompt=SystemMessage(content=self.system_prompt),
+            prompt=SystemMessage(content=system_prompt_with_catalog(
+                self.system_prompt, self.closure_tools)),
         )
 
     def invoke(self, messages: list[dict]) -> str:
