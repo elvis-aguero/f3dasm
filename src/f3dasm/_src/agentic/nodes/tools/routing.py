@@ -130,6 +130,10 @@ def build_routing_tools(node) -> dict:
         "in debug/delegations/).\n\n"
         "Set is_falsification_attempt=True when this delegation attacks"
         " a hypothesis's stated falsification criterion.\n\n"
+        "phase (optional): the f3dasm process stage this delegation advances —"
+        " one of literature, doe, data_generation, ml, optimization, setup."
+        " Tags the work's intent in the larger data-driven process; used by"
+        " milestone gates, timing, and the critic.\n\n"
         f"Available targets:\n  {_target_hints}"
     )
 
@@ -207,6 +211,7 @@ def build_routing_tools(node) -> dict:
         hypothesis_ids: list | None = None,
         wait: bool = False,
         is_falsification_attempt: bool = False,
+        phase: str | None = None,
     ) -> str:
         _resolved = resolve_target(
             target, outgoing,
@@ -294,6 +299,13 @@ def build_routing_tools(node) -> dict:
                 node._delegation_seq += 1
                 delegation_id = f"D{node._delegation_seq:03d}"
 
+        # Resolve the optional process-phase tag (DoE/DataGeneration/ML/…).
+        # Unknown/None → None (soft; never refuses), stored as the canonical
+        # value string for the log + critic flags + downstream grouping.
+        from ...phases import resolve_phase
+        _phase_obj = resolve_phase(phase)
+        _phase = _phase_obj.value if _phase_obj is not None else None
+
         start_time_mono = time.monotonic()
         started_at = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
 
@@ -308,6 +320,7 @@ def build_routing_tools(node) -> dict:
                 "is_falsification_attempt": bool(
                     is_falsification_attempt
                 ),
+                "phase": _phase,
                 "started_at": started_at,
                 "target": target,
                 "followup_question": None,
@@ -654,6 +667,7 @@ def build_routing_tools(node) -> dict:
                             is_falsification_attempt
                         ),
                         evals=_evals,
+                        phase=_phase,
                     )
                     if node._science_monitor is not None:
                         try:
@@ -760,6 +774,7 @@ def build_routing_tools(node) -> dict:
                         is_falsification_attempt=bool(
                             is_falsification_attempt
                         ),
+                        phase=_phase,
                     )
 
         t = threading.Thread(target=_run, daemon=True, name=delegation_id)
@@ -1125,6 +1140,7 @@ def build_routing_tools(node) -> dict:
             if node._delegation_log is not None:
                 attempts = [
                     f"{r['id']}: "
+                    f"phase={r.get('phase')} "
                     f"hypotheses={r.get('hypothesis_ids')} "
                     f"is_falsification_attempt="
                     f"{r.get('is_falsification_attempt', False)}"

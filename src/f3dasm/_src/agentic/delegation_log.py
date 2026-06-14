@@ -65,10 +65,13 @@ class DelegationLog:
         cost_usd: float | None = None,
         is_falsification_attempt: bool = False,
         evals: int = 0,
+        phase: str | None = None,
     ) -> None:
         """Append one delegation record.
 
-        task and deliverable are stored in full.
+        task and deliverable are stored in full. ``phase`` is the optional
+        f3dasm process phase this delegation belongs to (DoE / DataGeneration /
+        ML / Optimization / …); additive, default None for old/untagged records.
         """
         record: dict[str, Any] = {
             "id": id,
@@ -85,6 +88,7 @@ class DelegationLog:
             "cost_usd": cost_usd,
             "is_falsification_attempt": is_falsification_attempt,
             "evals": evals,
+            "phase": phase,
         }
         with self._lock:
             with self._path.open("a", encoding="utf-8") as f:
