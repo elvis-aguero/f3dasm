@@ -75,3 +75,22 @@ def test_premature_done_is_a_soft_three_option_nudge():
 def test_cancel_delegation_tool_is_registered():
     n = _node()
     assert "CancelDelegation" in n.adapter.closure_tools
+
+
+def test_poll_escalation_offers_the_three_options():
+    """Fix #5: a repeatedly-polled delegation gets the same 3 options as the
+    premature-Done nudge (do other work / cancel / just wait), not just a
+    'poll less' nag — so the agent never grinds out 30 status checks."""
+    import time as _t
+    n = _node()
+    n._registry["D001"] = {
+        "status": "Working", "result": None,
+        "start_time": _t.monotonic(), "getstatus_count": 0}
+    out = ""
+    for _ in range(6):  # cross the >=5 escalation
+        out = n.adapter.closure_tools["GetStatus"]("D001")
+    assert out.lstrip().startswith("Working")
+    assert "CancelDelegation('D001')" in out      # (b) cancel, real id
+    assert "do other work" in out.lower()          # (a) do something else
+    assert "just wait" in out.lower()              # (c) wait it out
+    assert "wait=True" in out                       # future-proofing tip

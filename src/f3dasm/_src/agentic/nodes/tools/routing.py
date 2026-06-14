@@ -882,24 +882,23 @@ def build_routing_tools(node) -> dict:
                 "meantime."
             )
 
-        # Poll-count escalation.
-        if poll_count >= 30:
-            hints.append(
-                f"WARNING: polled {poll_count} times ({elapsed}s elapsed). "
-                "This delegation is taking very long. Strongly consider "
-                "proceeding without this result or using Delegate(wait=True) "
-                "for future sequential tasks."
+        # Poll-count escalation. Polling does NOT make the worker finish
+        # sooner, so from the first escalation we spell out the three real
+        # ways forward (same options as the premature-Done nudge) — so the
+        # agent never grinds out 30 status checks when it could just wait.
+        if poll_count >= 5:
+            firmness = (
+                "STOP polling in a tight loop. " if poll_count >= 15
+                else ""
             )
-        elif poll_count >= 15:
             hints.append(
-                f"This delegation has been polled {poll_count} times "
-                f"({elapsed}s elapsed). Consider working on other tasks "
-                "rather than polling in a tight loop."
-            )
-        elif poll_count >= 5:
-            hints.append(
-                f"Still running after {poll_count} polls ({elapsed}s). "
-                "Work on other tasks and poll less frequently."
+                f"{firmness}Polled {poll_count}× ({elapsed}s) — polling does "
+                "NOT make it finish faster. Three options: (a) do other work "
+                "now (start another delegation, write notes, analyse results "
+                "so far); (b) CancelDelegation('" + delegation_id + "') if you "
+                "no longer need it; (c) just wait — stop polling and it'll be "
+                "ready when ready (poll once, occasionally). For future "
+                "sequential tasks, Delegate(wait=True) blocks with zero polling."
             )
 
         # Budget broadcast: check if a new 10%-overbudget threshold is reached.
@@ -1129,6 +1128,10 @@ def build_routing_tools(node) -> dict:
                 if _notes_dir is not None else None
             )
             notes_path = str(_notes_dir or "")
+            _store_dir = (
+                str(_debug_dir.parent / "experiment_data")
+                if _debug_dir is not None else "(unknown)"
+            )
             task_msg = (
                 "<mode>GATE</mode>\n\n"
                 "Final gate check before run closes. PASS to accept the "
@@ -1137,6 +1140,10 @@ def build_routing_tools(node) -> dict:
                 "<paths>\n"
                 f"study_dir             = {_study_dir}\n"
                 f"debug_dir             = {_debug_dir}\n"
+                f"canonical_store       = {_store_dir}\n"
+                "  ^ audit the ledger yourself: ExperimentData.from_file("
+                f"project_dir=\"{_store_dir}\") (CSVs are one level under it). "
+                "Do NOT rely solely on the strategizer's self-reported numbers.\n"
                 "delegation_log        = "
                 f"{_debug_dir}/delegation_log.jsonl\n"
                 f"diagnostics           = "
