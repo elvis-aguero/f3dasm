@@ -72,6 +72,17 @@ def _canonical_source_ready(node) -> bool:
         return False
 
 
+def _pipeline_drafted(node) -> bool:
+    """A candidate pipeline.py deliverable exists in the study dir."""
+    sd = getattr(node, "_study_dir", None)
+    if sd is None:
+        return False
+    try:
+        return (Path(sd) / "pipeline.py").exists()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 @dataclass(frozen=True)
 class DefaultMilestone:
     key: str
@@ -94,7 +105,22 @@ DEFAULT_MILESTONES: list[DefaultMilestone] = [
     ),
 ]
 
-_PREDICATES: dict[str, Callable] = {d.key: d.predicate for d in DEFAULT_MILESTONES}
+# Spec C3: seeded ONLY when runtime.pipeline_deliverable is on (switchable).
+# Kept separate from the C2 process gates above so C3 is a clean opt-out.
+PIPELINE_MILESTONE = DefaultMilestone(
+    "draft_pipeline",
+    "Draft a candidate f3dasm Pipeline (stub blocks / fake data OK) as a "
+    "BASELINE TO BEAT; refine it by swapping blocks — treat each block-swap as "
+    "a hypothesis (propose it, test it, keep it only if it survives "
+    "falsification). It coexists with replicate.py; write it via "
+    "WriteDeliverable('pipeline.py', ...).",
+    "optimization", _pipeline_drafted,
+)
+
+_PREDICATES: dict[str, Callable] = {
+    d.key: d.predicate
+    for d in [*DEFAULT_MILESTONES, PIPELINE_MILESTONE]
+}
 
 
 class MilestoneLedger:
@@ -128,11 +154,17 @@ class MilestoneLedger:
         return f"M{n + 1:03d}"
 
     # -- seeding + authoring ----------------------------------------------
-    def seed_defaults(self, disabled: frozenset[str] = frozenset()) -> None:
+    def seed_defaults(self, disabled: frozenset[str] = frozenset(),
+                      include_pipeline: bool = False) -> None:
+        """Seed the C2 process gates, plus the C3 pipeline gate iff
+        ``include_pipeline`` (runtime.pipeline_deliverable). Idempotent."""
+        defaults = list(DEFAULT_MILESTONES)
+        if include_pipeline:
+            defaults.append(PIPELINE_MILESTONE)
         with self._lock:
             data = self._load()
             existing_keys = {m.get("key") for m in data.values()}
-            for d in DEFAULT_MILESTONES:
+            for d in defaults:
                 if d.key in disabled or d.key in existing_keys:
                     continue
                 mid = self._next_id(data)

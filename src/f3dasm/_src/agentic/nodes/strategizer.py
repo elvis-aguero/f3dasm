@@ -92,7 +92,10 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         self._milestones: MilestoneLedger | None = None
         if notes_dir is not None and get_bool("milestones_enabled", True):
             self._milestones = MilestoneLedger(Path(notes_dir))
-            self._milestones.seed_defaults()
+            # C3 switchable: the draft-pipeline gate seeds only when the
+            # pipeline-deliverable knob is on (off = byte-identical to today).
+            self._milestones.seed_defaults(
+                include_pipeline=get_bool("pipeline_deliverable", True))
         # Graph-wide delegation log (demand-driven episodic memory)
         self._delegation_log: DelegationLog | None = delegation_log
         # Science drift monitor — active when both ledger and log present
