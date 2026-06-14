@@ -66,8 +66,10 @@ def test_run_paths_preamble_has_experiment_data_dir():
         notes_dir="/s/runs/T/debug/strategizer_notes",
         experiment_data_dir="/s/runs/T/experiment_data",
     )
-    assert "experiment_data_dir" in out
+    # exposed as the canonical-store project_dir with an explicit from_file call
+    assert "canonical_store" in out
     assert "/s/runs/T/experiment_data" in out
+    assert "from_file(project_dir=" in out
 
 
 def test_replicate_deliverable_consumes_ledger_and_asserts():
