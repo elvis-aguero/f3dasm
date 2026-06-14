@@ -6,6 +6,32 @@ from __future__ import annotations
 import traceback
 from pathlib import Path
 
+# Bound on how many earlier reviews are echoed back to the critic, and the
+# total char budget for the digest — injected context must be current and
+# bounded, not an ever-growing transcript.
+_MAX_PRIOR_REVIEWS = 6
+_PRIOR_REVIEWS_CHAR_BUDGET = 6000
+
+
+def _extract_md_section(text: str, header: str) -> str:
+    """Return the body under a `### Header` up to the next `### ` heading.
+
+    Used to pull just the Verdict and Findings out of a persisted review,
+    dropping Actions/Numbers/Retrospective noise. Empty string if absent.
+    """
+    lines = text.splitlines()
+    out: list[str] = []
+    capturing = False
+    for line in lines:
+        if line.strip() == header:
+            capturing = True
+            continue
+        if capturing and line.lstrip().startswith("### "):
+            break
+        if capturing:
+            out.append(line)
+    return "\n".join(out).strip()
+
 
 class CriticGateMixin:
     """Mixin carrying the four critic-consultation helpers for StrategizerNode.
@@ -32,6 +58,66 @@ class CriticGateMixin:
                 return target
         return None
 
+    def _prior_reviews_digest(self) -> str:
+        """A bounded `<prior_reviews_this_run>` block of THIS run's earlier
+        critic reviews (verdict + findings only), or "" if none.
+
+        The critic is invoked one-shot per gate with no live session and no
+        RecallHistory, so without this it cannot see what it already ruled and
+        can silently contradict an earlier verdict (the H1 SUPPORTED->FALSIFIED
+        ->back whipsaw that drove the REVISE-spin). Echoing its standing
+        objections back forces consistency: it may still reverse, but only by
+        saying so and citing new evidence — never silently.
+        """
+        notes = self._current_notes_dir
+        if notes is None:
+            return ""
+        review_dir = Path(notes).parent / "critic_reviews"
+        if not review_dir.is_dir():
+            return ""
+        files = sorted(review_dir.glob("call_*.md"))
+        if not files:
+            return ""
+        elided = max(0, len(files) - _MAX_PRIOR_REVIEWS)
+        kept = files[-_MAX_PRIOR_REVIEWS:]
+        blocks: list[str] = []
+        for f in kept:
+            try:
+                text = f.read_text(encoding="utf-8")
+            except Exception:  # noqa: BLE001
+                continue
+            n = f.stem.replace("call_", "")
+            verdict = _extract_md_section(text, "### Verdict") or "(unparsed)"
+            findings = _extract_md_section(text, "### Findings") or "(none)"
+            blocks.append(
+                f"--- call_{n} ---\n"
+                f"Verdict: {verdict}\n"
+                f"Findings:\n{findings}"
+            )
+        # Char budget: drop oldest kept blocks until under budget.
+        while blocks and sum(len(b) for b in blocks) > _PRIOR_REVIEWS_CHAR_BUDGET:
+            blocks.pop(0)
+            elided += 1
+        if not blocks:
+            return ""
+        elided_note = (
+            f"\n({elided} earlier review(s) elided for brevity.)"
+            if elided else ""
+        )
+        return (
+            "<prior_reviews_this_run>\n"
+            "You have already reviewed this run. Your standing verdicts and "
+            "objections are below. Be CONSISTENT with them: do not silently "
+            "contradict a verdict you reached earlier, and do not re-raise an "
+            "objection the strategizer has since resolved. You MAY reverse a "
+            "prior position, but only by stating which call you are reversing "
+            "and citing the Charter clause and the NEW evidence that justifies "
+            "it.\n"
+            + "\n\n".join(blocks)
+            + elided_note
+            + "\n</prior_reviews_this_run>\n\n"
+        )
+
     def _invoke_critic(self, task_msg: str) -> str:
         """Synchronously invoke the connected critic; returns its
         text or an ERROR string.
@@ -45,6 +131,9 @@ class CriticGateMixin:
         critic_name = self._find_critic_name()
         if critic_name is None:
             return "ERROR: no critic connected."
+        # Cross-round memory: prepend this run's earlier reviews so the critic
+        # stays consistent instead of whipsawing its own verdicts (Fix A).
+        task_msg = self._prior_reviews_digest() + task_msg
         adapter = self._worker_adapters[critic_name]
         worker = (
             adapter.copy() if hasattr(adapter, "copy") else adapter
