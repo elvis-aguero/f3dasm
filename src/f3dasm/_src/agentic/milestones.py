@@ -25,7 +25,7 @@ from pathlib import Path
 __all__ = [
     "MilestoneLedger",
     "DEFAULT_MILESTONES",
-    "milestone_gate_nudge",
+    "blocking_gate",
     "VALID_STATUSES",
 ]
 
@@ -217,6 +217,11 @@ class MilestoneLedger:
     def get(self, mid: str) -> dict | None:
         return self._load().get(mid)
 
+    def pending(self) -> list[dict]:
+        """All milestones still PENDING (gate or not)."""
+        return [m for m in self._load().values()
+                if m.get("status") == "PENDING"]
+
     def pending_gates(self, phase: str | None = None) -> list[dict]:
         out = []
         for m in self._load().values():
@@ -283,24 +288,3 @@ def blocking_gate(ledger: MilestoneLedger, node, phase: str | None) -> dict | No
         if grank >= 0 and drank >= grank:
             return m
     return None
-
-
-def milestone_gate_nudge(ledger: MilestoneLedger, node, phase: str) -> str:
-    """Decision-point nudge text when entering ``phase`` with pending gates.
-
-    Auto-satisfies first (so a met condition never nags), then reports the
-    still-pending gates for this phase. Returns "" when nothing is pending.
-    Soft: the caller appends this to the tool return; it never refuses.
-    """
-    ledger.auto_satisfy(node)
-    pend = ledger.pending_gates(phase)
-    if not pend:
-        return ""
-    items = "; ".join(f"{m['id']} ({m['description']})" for m in pend)
-    return (
-        f"\n\n⚖ MILESTONE CHECKPOINT — you're entering phase '{phase}' but "
-        f"these gate milestones are still pending: {items}. Do them first, or "
-        "MilestoneSkip('<id>', reason) if this study legitimately doesn't need "
-        "one. (Advisory — the delegation still ran; this is recorded for the "
-        "gate.)"
-    )

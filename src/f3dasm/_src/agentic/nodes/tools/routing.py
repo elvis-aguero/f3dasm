@@ -1071,7 +1071,7 @@ def build_routing_tools(node) -> dict:
         _ms = getattr(node, "_milestones", None)
         if _ms is not None:
             _ms.auto_satisfy(node)
-            _pend = [m for m in _ms.list_all() if m.get("status") == "PENDING"]
+            _pend = _ms.pending()
             if _pend:
                 node._milestone_block_count = getattr(
                     node, "_milestone_block_count", 0) + 1

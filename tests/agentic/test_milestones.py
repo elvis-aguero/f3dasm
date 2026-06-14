@@ -6,7 +6,6 @@ from f3dasm._src.agentic.delegation_log import DelegationLog
 from f3dasm._src.agentic.milestones import (
     MilestoneLedger,
     blocking_gate,
-    milestone_gate_nudge,
 )
 from f3dasm._src.agentic.nodes import StrategizerNode
 
@@ -102,20 +101,17 @@ def _node(tmp_path):
     return n
 
 
-def test_gate_nudges_then_auto_satisfies_after_lit_review(tmp_path):
+def test_gate_blocks_then_auto_satisfies_after_lit_review(tmp_path):
     n = _node(tmp_path)
     led = n._milestones
-    # entering DoE with no lit review yet → nudge fires
-    nudge = milestone_gate_nudge(led, n, "doe")
-    assert "MILESTONE CHECKPOINT" in nudge
-    assert "literature review" in nudge.lower()
+    # entering DoE with no lit review yet → the gate blocks
+    assert blocking_gate(led, n, "doe") is not None
     # a completed literature_reviewer delegation satisfies the predicate
     n._delegation_log.record(
         id="D001", from_node="strategizer", to_node="literature_reviewer",
         task="survey", deliverable="done", hypothesis_ids=[],
         started_at="t0", completed_at="t1", status="DONE")
-    nudge2 = milestone_gate_nudge(led, n, "doe")
-    assert nudge2 == ""  # auto-satisfied → no nag
+    assert blocking_gate(led, n, "doe") is None  # auto-satisfied → no block
     assert led.get([m["id"] for m in led.list_all()
                     if m["key"] == "lit_review_before_doe"][0])["status"] == "DONE"
 
