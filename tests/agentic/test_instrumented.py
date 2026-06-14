@@ -83,6 +83,34 @@ def test_execute_stamps_provenance(tmp_path):
     assert isinstance(row["_ts"], str) and len(row["_ts"]) > 0
 
 
+def test_execute_stamps_wall_ms(tmp_path):
+    """Spec A: each eval carries its own wall-time (_wall_ms), generically."""
+    import time as _time
+
+    from f3dasm._src.agentic.instrumented import (
+        _PROVENANCE_COLS,
+        InstrumentedDataGenerator,
+    )
+
+    class _Slow(DataGenerator):
+        def execute(self, experiment_sample, **kwargs):
+            _time.sleep(0.03)
+            experiment_sample._output_data["f"] = 1.0
+            experiment_sample.job_status = JobStatus.FINISHED
+            return experiment_sample
+
+    gen = InstrumentedDataGenerator(
+        inner=_Slow(), store_dir=tmp_path, delegation_id="D001",
+        source="t", flush_every=1)
+    out = gen.execute(_make_sample(0.3))
+
+    assert "_wall_ms" in out._output_data
+    assert isinstance(out._output_data["_wall_ms"], float)
+    assert out._output_data["_wall_ms"] >= 20.0  # slept ~30ms, allow slack
+    # provenance convention: counted as metadata, excluded from value stats
+    assert "_wall_ms" in _PROVENANCE_COLS
+
+
 def test_to_numpy_excludes_underscore_provenance(tmp_path):
     """All provenance columns are now underscore-prefixed (_delegation_id,
     _source, _ts), so core to_numpy() drops them and returns a clean numeric

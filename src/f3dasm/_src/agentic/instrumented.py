@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -133,7 +134,9 @@ class InstrumentedDataGenerator(DataGenerator):
             The evaluated sample (with provenance stamped into
             ``_output_data``).
         """
+        _t0 = time.perf_counter()
         out = self.inner.execute(experiment_sample, **kwargs)
+        _wall_ms = (time.perf_counter() - _t0) * 1000.0
 
         # Stamp provenance into the output dict.
         ts = datetime.now(tz=timezone.utc).isoformat(
@@ -142,6 +145,11 @@ class InstrumentedDataGenerator(DataGenerator):
         out._output_data["_delegation_id"] = self.delegation_id
         out._output_data["_source"] = self.source
         out._output_data["_ts"] = ts
+        # Generic per-eval wall-time (ms). A plain underscore-prefixed column:
+        # to_numpy() drops it and it's excluded from value stats. Any grouping
+        # (per-phase, per-fidelity) is df.groupby(col)["_wall_ms"] downstream —
+        # no timing-specific code special-cases a dimension here.
+        out._output_data["_wall_ms"] = round(_wall_ms, 3)
         # Extensible declared provenance (oracle-stamped, not agent-authored).
         for _col, _val in self.extra_provenance.items():
             out._output_data[_col] = _val
@@ -199,7 +207,7 @@ class InstrumentedDataGenerator(DataGenerator):
 
             # Ensure provenance columns are declared on the canon domain
             # (fixed three + any extensible declared columns).
-            for col in ("_delegation_id", "_source", "_ts",
+            for col in ("_delegation_id", "_source", "_ts", "_wall_ms",
                         *self.extra_provenance):
                 canon._domain.add_output(col, exist_ok=True)
 
@@ -509,7 +517,7 @@ _RSS_CACHE: dict[str, tuple[float, RunStateSummary]] = {}
 # the lock makes it correct on free-threaded builds too.
 _RSS_CACHE_LOCK = __import__("threading").Lock()
 
-_PROVENANCE_COLS = frozenset({"_delegation_id", "_source", "_ts"})
+_PROVENANCE_COLS = frozenset({"_delegation_id", "_source", "_ts", "_wall_ms"})
 
 
 class RunStateSummary:
@@ -528,12 +536,14 @@ class RunStateSummary:
         n_per_source: dict,
         n_per_fidelity: dict | None,
         output_stats: dict,
+        mean_eval_wall_ms: float | None = None,
     ) -> None:
         self.n_rows = n_rows
         self.n_per_delegation = n_per_delegation
         self.n_per_source = n_per_source
         self.n_per_fidelity = n_per_fidelity
         self.output_stats = output_stats
+        self.mean_eval_wall_ms = mean_eval_wall_ms
 
     # ------------------------------------------------------------------
 
@@ -628,12 +638,27 @@ class RunStateSummary:
                 "mean": float(numeric.mean()),
             }
 
+        # Mean per-eval wall-time (ms), overall. Generic: just average the
+        # _wall_ms column over real eval rows, dropping NaN and the D000
+        # precomputed pool (not real evals). Any per-group breakdown is a
+        # groupby on this same column downstream — none is computed here.
+        mean_eval_wall_ms: float | None = None
+        if "_wall_ms" in df_out.columns:
+            import pandas as _pd
+            wall = _pd.to_numeric(df_out["_wall_ms"], errors="coerce")
+            if "_source" in df_out.columns:
+                wall = wall[df_out["_source"] != "precomputed_pool"]
+            wall = wall.dropna()
+            if not wall.empty:
+                mean_eval_wall_ms = float(wall.mean())
+
         summary = cls(
             n_rows=n_rows,
             n_per_delegation=n_per_delegation,
             n_per_source=n_per_source,
             n_per_fidelity=n_per_fidelity,
             output_stats=output_stats,
+            mean_eval_wall_ms=mean_eval_wall_ms,
         )
         with _RSS_CACHE_LOCK:
             _RSS_CACHE[key] = (mtime, summary)
@@ -666,6 +691,12 @@ class RunStateSummary:
                 )
             )
             lines.append(f"  rows per fidelity: {parts}")
+        if self.mean_eval_wall_ms is not None:
+            lines.append(
+                f"  mean eval wall-time: {self.mean_eval_wall_ms / 1000:.3g}s "
+                f"({self.mean_eval_wall_ms:.0f}ms) — use for time-budget "
+                "planning (≈ remaining_seconds / this = evals that still fit)"
+            )
         if self.output_stats:
             lines.append("  output ranges:")
             for col, stats in sorted(self.output_stats.items()):

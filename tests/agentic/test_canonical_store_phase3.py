@@ -205,6 +205,42 @@ class TestRunStateSummaryPopulated:
         assert s.n_per_fidelity[1.0] == 2
         assert s.n_per_fidelity[2.0] == 1
 
+    def test_mean_eval_wall_ms_excludes_pool_and_nan(self, tmp_path):
+        """Spec A: overall mean per-eval wall-time, dropping D000/pool rows."""
+        from f3dasm._src.agentic.instrumented import RunStateSummary
+        dom = Domain()
+        dom.add_float("x0", 0.0, 1.0)
+        for k in ("f", "_delegation_id", "_source", "_ts", "_wall_ms"):
+            dom.add_output(k, exist_ok=True)
+        rows = [
+            (1.0, "D001", "eval", 10.0),
+            (2.0, "D001", "eval", 30.0),
+            (9.0, "D000", "precomputed_pool", 0.0),  # pool → excluded
+        ]
+        samples = {}
+        for i, (f, did, src, wall) in enumerate(rows):
+            samples[i] = ExperimentSample(
+                _input_data={"x0": 0.1 * i},
+                _output_data={
+                    "f": f, "_delegation_id": did, "_source": src,
+                    "_ts": "2026-01-01T00:00:00+00:00", "_wall_ms": wall,
+                },
+                job_status=JobStatus.FINISHED,
+            )
+        data = ExperimentData.from_data(data=samples, domain=dom)
+        data.store(project_dir=tmp_path)
+
+        s = RunStateSummary.from_store(tmp_path)
+        assert s.mean_eval_wall_ms == pytest.approx(20.0)  # (10+30)/2; pool out
+        assert "mean eval wall-time" in s.format()
+
+    def test_mean_eval_wall_ms_none_without_column(self, tmp_path):
+        from f3dasm._src.agentic.instrumented import RunStateSummary
+        _build_store(tmp_path, [(0.1, 1.0, "D001")])  # no _wall_ms column
+        s = RunStateSummary.from_store(tmp_path)
+        assert s.mean_eval_wall_ms is None
+        assert "mean eval wall-time" not in s.format()
+
     def test_fidelity_ignored_when_not_in_input_columns(self, tmp_path):
         from f3dasm._src.agentic.instrumented import RunStateSummary
         # Store has no fidelity column in inputs
