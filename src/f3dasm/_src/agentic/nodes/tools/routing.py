@@ -785,6 +785,18 @@ def build_routing_tools(node) -> dict:
         # Reset two-shot Done() gate so the next Done() warns again.
         node._done_warned = False
 
+        # Milestone gate nudge (Spec C2): entering a phase with a pending gate
+        # gets a soft decision-point nudge + a recorded diagnostic — never a
+        # refusal. Auto-satisfies first, so a met condition doesn't nag.
+        _ms_nudge = ""
+        _ms = getattr(node, "_milestones", None)
+        if _ms is not None and _phase:
+            from ...milestones import milestone_gate_nudge
+            _ms_nudge = milestone_gate_nudge(_ms, node, _phase)
+            if _ms_nudge:
+                node._record_intervention(
+                    "MILESTONE_GATE", _phase, _ms_nudge.strip()[:200])
+
         if wait:
             # Synchronous mode: block until the delegation finishes.
             t.join()
@@ -794,12 +806,13 @@ def build_routing_tools(node) -> dict:
             if status == "Done":
                 cp = _falsification_checkpoint(delegation_id)
                 body = f"Done\n\n{entry['result']}"
-                return body + (("\n\n" + cp) if cp else "")
-            return f"Errored:\n{entry.get('result', '(no details)')}"
+                return body + (("\n\n" + cp) if cp else "") + _ms_nudge
+            return f"Errored:\n{entry.get('result', '(no details)')}" + _ms_nudge
 
         return (
             f"Delegation started. ID: {delegation_id!r}. "
             f"Use GetStatus('{delegation_id}') to poll for completion."
+            + _ms_nudge
         )
 
     Delegate.__doc__ = _delegate_doc
@@ -1088,6 +1101,21 @@ def build_routing_tools(node) -> dict:
                         f"OPEN (record their verdict first): {dangling}. "
                         "Use HypothesisUpdate against each one's pre-registered "
                         "prediction."
+                    )
+            # Pending milestone gates (Spec C2): a process step the run was
+            # supposed to hit (e.g. lit review, oracle gold-state) that's still
+            # PENDING. Auto-satisfy first so met ones drop off; surface the rest
+            # as a soft reminder (skip with MilestoneSkip if truly N/A).
+            _ms = getattr(node, "_milestones", None)
+            if _ms is not None:
+                _ms.auto_satisfy(node)
+                pend = _ms.pending_gates()
+                if pend:
+                    items = ", ".join(
+                        f"{m['id']} ({m['description']})" for m in pend)
+                    warn_parts.append(
+                        f"Pending process milestones: {items}. Complete or "
+                        "MilestoneSkip(<id>, reason) before closing."
                     )
             # WARNING goes first; then any pending notifications.
             return "  ".join(warn_parts) + (("\n\n" + prefix.rstrip()) if prefix.strip() else "")
@@ -1559,6 +1587,8 @@ def build_routing_tools(node) -> dict:
     # Hypothesis closures: always built but functionally inert without a
     # ledger (notes_dir only provided to the entry node).
     closures.update(node._build_hypothesis_closures())
+    if hasattr(node, "_build_milestone_closures"):
+        closures.update(node._build_milestone_closures())
 
     # AskForFeedback is only injected when a critic node is
     # connected AND this is the entry node (only the entry node

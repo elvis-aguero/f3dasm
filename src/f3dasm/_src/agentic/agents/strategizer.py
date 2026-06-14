@@ -30,6 +30,10 @@ prompt, generated from the live tool set so it never drifts):
     and call Done() to run the final acceptance gate.
   - Canonical ledger (read-only) — recall / query the authoritative evaluation
     store, recall delegation history, and consult the handbook.
+  - Process milestones — list / propose / complete / skip process steps (e.g.
+    "lit review before DoE", "oracle in gold state"). Some are prescribed gates
+    that softly nudge when you enter their phase; they never block — skip one
+    with a reason if your study legitimately doesn't need it.
 Call tools by the exact names in the <tools> catalog.
 
 The canonical ExperimentData ledger (via RecallStore/QueryStore) is the

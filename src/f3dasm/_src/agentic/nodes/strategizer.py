@@ -84,6 +84,15 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         self._ledger: HypothesisLedger | None = (
             HypothesisLedger(Path(notes_dir)) if notes_dir is not None else None
         )
+        # Milestone ledger (process policy) — persists milestones.json. Seeded
+        # with the config default gates unless disabled. DISTINCT from the
+        # hypothesis ledger (epistemics): process vs what's-true.
+        from ..milestones import MilestoneLedger
+        from ..settings import get_bool
+        self._milestones: MilestoneLedger | None = None
+        if notes_dir is not None and get_bool("milestones_enabled", True):
+            self._milestones = MilestoneLedger(Path(notes_dir))
+            self._milestones.seed_defaults()
         # Graph-wide delegation log (demand-driven episodic memory)
         self._delegation_log: DelegationLog | None = delegation_log
         # Science drift monitor — active when both ledger and log present
@@ -508,6 +517,50 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
             "HypothesisList": HypothesisList,
             "HypothesisGet": HypothesisGet,
             "LinkFalsificationAttempt": LinkFalsificationAttempt,
+        }
+
+    def _build_milestone_closures(self) -> dict:
+        """Build MilestoneList/Propose/Complete/Skip closures (process policy)."""
+        node = self
+
+        def MilestoneList() -> str:
+            """List process milestones with id, status, gate/phase, description.
+
+            Milestones are PROCESS steps (do X before Y; get Z ready), distinct
+            from hypotheses (epistemics). Default gates self-resolve when their
+            condition is met; you author your own with MilestonePropose."""
+            if node._milestones is None:
+                return "Milestone ledger not available in this run."
+            return node._milestones.format()
+
+        def MilestonePropose(description: str, phase: str | None = None,
+                             gate: bool = False) -> str:
+            """Add your own process milestone. Returns its id (M1, M2, …).
+
+            phase: optional f3dasm phase it relates to. gate=True makes it nudge
+            when that phase is entered while still pending."""
+            if node._milestones is None:
+                return "ERROR: milestone ledger not available in this run."
+            return node._milestones.propose(description, phase, gate)
+
+        def MilestoneComplete(milestone_id: str, note: str = "") -> str:
+            """Mark a milestone DONE with an optional note."""
+            if node._milestones is None:
+                return "ERROR: milestone ledger not available in this run."
+            return node._milestones.complete(milestone_id, note)
+
+        def MilestoneSkip(milestone_id: str, reason: str) -> str:
+            """Skip a milestone this study legitimately doesn't need (give a
+            reason). The escape hatch so soft gates never deadlock you."""
+            if node._milestones is None:
+                return "ERROR: milestone ledger not available in this run."
+            return node._milestones.skip(milestone_id, reason)
+
+        return {
+            "MilestoneList": MilestoneList,
+            "MilestonePropose": MilestonePropose,
+            "MilestoneComplete": MilestoneComplete,
+            "MilestoneSkip": MilestoneSkip,
         }
 
     def _missing_deliverables(self, state: AgenticState) -> list[str]:
