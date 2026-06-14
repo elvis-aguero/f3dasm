@@ -2,6 +2,8 @@ model: claude-sonnet-4-6
 backend: claude
 budget: "03:00:00"
 checkpoint_every: 30
+runtime:
+  debug: true
 
 # No live oracle: new finite-element simulations cannot be run. The 1000
 # pre-computed designs are TRAINING DATA, ingested as D000 ground truth. The

@@ -3,6 +3,11 @@ backend: claude
 budget: "00:15:00"
 eval_budget: 1000
 
+# Run knobs live here now (config.yaml is the source of truth; F3DASM_* env
+# vars override). debug=true captures per-turn strategizer/critic transcripts.
+runtime:
+  debug: true
+
 evaluator:
   entrypoint: "workspace/evaluator.py:evaluate_kw"
   output_names: [f]
