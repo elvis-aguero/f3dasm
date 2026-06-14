@@ -744,9 +744,21 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                 notice=self._no_source_nudges, cap=3,
             )
 
+        # Announce the process backlog ONCE, at the start, as a conversation
+        # message — so the agent cannot claim it didn't know these gate the
+        # implementer. Injected the first time the strategizer is invoked.
+        backlog_announce: list = []
+        if (self._milestones is not None
+                and not getattr(self, "_backlog_announced", False)):
+            from ..milestones import render_backlog
+            _bl = render_backlog(self._milestones)
+            if _bl:
+                backlog_announce = [{"role": "user", "content": _bl}]
+            self._backlog_announced = True
+
         messages = (
             _to_adapter_messages(state["messages"])
-            + budget_warnings + registration_nudge
+            + budget_warnings + registration_nudge + backlog_announce
         )
         # DEBUG: stream this strategizer turn's full reasoning + tool-calls
         # to debug/transcripts/strategizer/turn_NNN.jsonl.

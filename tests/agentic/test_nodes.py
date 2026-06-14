@@ -13,6 +13,18 @@ from langgraph.types import Command
 from f3dasm._src.agentic.backends.base import Agent, Edge, Graph
 
 
+@pytest.fixture(autouse=True)
+def _isolate_from_milestone_gate():
+    """These tests exercise delegation/hypothesis/Done MECHANICS, not the
+    process backlog (which has its own coverage in test_milestones.py). Disable
+    the backlog so the milestone gate doesn't block implementer delegations
+    under test. Reset after each test."""
+    from f3dasm._src.agentic import settings
+    settings.configure({"milestones_enabled": False})
+    yield
+    settings.configure({})
+
+
 # ---------------------------------------------------------------------------
 # Stub adapter
 # ---------------------------------------------------------------------------

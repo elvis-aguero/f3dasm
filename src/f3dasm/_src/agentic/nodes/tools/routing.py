@@ -306,25 +306,30 @@ def build_routing_tools(node) -> dict:
         _phase_obj = resolve_phase(phase)
         _phase = _phase_obj.value if _phase_obj is not None else None
 
-        # Milestone gate (Spec #1): HARD-block this delegation if a prescribed
-        # gate guarding its phase is still pending. Escape is always available
-        # (MilestoneSkip), so this forces engagement without deadlock. The
-        # delegation does not fire; nothing is recorded.
+        # Milestone gate: the process backlog blocks ONLY delegations to the
+        # f3dasm implementer (the agent that runs experiments) — never the
+        # literature_reviewer/datagenerator that satisfy a milestone. Keyed on
+        # the resolved TARGET ROLE (reliable), not the agent's self-declared
+        # phase. Escape is always available (MilestoneSkip), so it forces
+        # engagement without deadlock; the delegation does not fire.
         _ms = getattr(node, "_milestones", None)
-        if _ms is not None and _phase:
-            from ...milestones import blocking_gate
-            _blk = blocking_gate(_ms, node, _phase)
-            if _blk is not None:
+        _target_role = getattr(
+            node._spec.nodes.get(target), "role", "") if node._spec else ""
+        if _ms is not None and _target_role == "implementer":
+            from ...milestones import implementer_block
+            _pend = implementer_block(_ms, node)
+            if _pend:
+                _ids = ", ".join(f"{m['id']} ({m['description'][:50]}…)"
+                                 for m in _pend)
                 node._record_intervention(
-                    "MILESTONE_BLOCK", _phase,
-                    f"{_blk['id']} pending blocks phase {_phase}")
+                    "MILESTONE_BLOCK", target,
+                    f"{len(_pend)} backlog item(s) block the implementer")
                 return (
-                    f"BLOCKED: cannot delegate phase '{_phase}' work yet — the "
-                    f"prescribed milestone {_blk['id']} is still pending: "
-                    f"\"{_blk['description']}\". Do it first (e.g. delegate the "
-                    f"step that satisfies it), or — if this study genuinely "
-                    f"doesn't need it — MilestoneSkip('{_blk['id']}', reason) "
-                    "and re-delegate. (Not a tool error; a process gate.)"
+                    "BLOCKED: cannot delegate to the f3dasm implementer yet — "
+                    f"resolve the process backlog first: {_ids}. Do each "
+                    "(MilestoneComplete(id, brief)) or MilestoneSkip(id, "
+                    "reason) if your study doesn't need it, then re-delegate. "
+                    "(Not a tool error; a process gate.)"
                 )
 
         start_time_mono = time.monotonic()
@@ -1234,9 +1239,7 @@ def build_routing_tools(node) -> dict:
             if _ms_obj is not None:
                 for m in _ms_obj.list_all():
                     _ms_lines.append(
-                        f"{m['id']} [{m['status']}]"
-                        f"{' gate' if m.get('gate') else ''}: "
-                        f"{m['description']}"
+                        f"{m['id']} [{m['status']}]: {m['description']}"
                         + (f" — note: {m['note']}" if m.get('note') else ""))
             _ms_block = "\n".join(_ms_lines) or "(none)"
             task_msg += (

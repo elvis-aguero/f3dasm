@@ -1,11 +1,12 @@
-"""Milestone ledger (Spec C2): process policy, soft-enforced, auto-satisfying."""
+"""Milestone backlog: target-keyed gating (blocks only the implementer)."""
 from __future__ import annotations
 
 from f3dasm._src.agentic.backends.base import Agent, Edge, Graph
 from f3dasm._src.agentic.delegation_log import DelegationLog
 from f3dasm._src.agentic.milestones import (
     MilestoneLedger,
-    blocking_gate,
+    implementer_block,
+    render_backlog,
 )
 from f3dasm._src.agentic.nodes import StrategizerNode
 
@@ -24,51 +25,52 @@ class _Stub:
 # Ledger unit behaviour
 # --------------------------------------------------------------------------
 
-def test_seed_defaults_creates_pending_gates(tmp_path):
+def test_seed_defaults_without_pipeline(tmp_path):
     led = MilestoneLedger(tmp_path)
-    led.seed_defaults()
+    led.seed_defaults(include_pipeline=False)
     keys = {m["key"] for m in led.list_all()}
-    assert {"lit_review_before_doe", "datagenerator_gold_state"} <= keys
-    assert all(m["status"] == "PENDING" and m["gate"] for m in led.list_all())
+    assert keys == {"assess_literature_need", "oracle_gold_state"}
+    assert all(m["status"] == "PENDING" for m in led.list_all())
+
+
+def test_seed_defaults_with_pipeline_puts_it_first(tmp_path):
+    led = MilestoneLedger(tmp_path)
+    led.seed_defaults(include_pipeline=True)
+    items = led.list_all()
+    assert items[0]["key"] == "craft_pipeline"  # M001, read first
+    assert {m["key"] for m in items} == {
+        "craft_pipeline", "assess_literature_need", "oracle_gold_state"}
 
 
 def test_seed_is_idempotent(tmp_path):
     led = MilestoneLedger(tmp_path)
-    led.seed_defaults()
-    led.seed_defaults()
-    assert len(led.list_all()) == 2  # not duplicated
+    led.seed_defaults(include_pipeline=True)
+    led.seed_defaults(include_pipeline=True)
+    assert len(led.list_all()) == 3
 
 
-def test_seed_respects_disabled(tmp_path):
+def test_assess_literature_is_manual_no_predicate(tmp_path):
     led = MilestoneLedger(tmp_path)
-    led.seed_defaults(disabled=frozenset({"lit_review_before_doe"}))
-    keys = {m["key"] for m in led.list_all()}
-    assert "lit_review_before_doe" not in keys
-    assert "datagenerator_gold_state" in keys
+    led.seed_defaults(include_pipeline=True)
+    assess = [m for m in led.list_all() if m["key"] == "assess_literature_need"][0]
+    assert assess["manual"] is True
+    craft = [m for m in led.list_all() if m["key"] == "craft_pipeline"][0]
+    assert craft["manual"] is False  # auto via pipeline.py
 
 
 def test_propose_complete_skip(tmp_path):
     led = MilestoneLedger(tmp_path)
-    mid = led.propose("draft the candidate pipeline", phase="optimization")
-    assert mid.startswith("M")
+    mid = led.propose("my own step")
     assert led.get(mid)["source"] == "agent"
-    led.complete(mid, "done it")
+    led.complete(mid, "did it")
     assert led.get(mid)["status"] == "DONE"
-    mid2 = led.propose("optional thing")
-    led.skip(mid2, "not needed here")
+    mid2 = led.propose("optional")
+    led.skip(mid2, "n/a")
     assert led.get(mid2)["status"] == "SKIPPED"
 
 
-def test_pending_gates_filtered_by_phase(tmp_path):
-    led = MilestoneLedger(tmp_path)
-    led.seed_defaults()
-    doe = led.pending_gates("doe")
-    assert len(doe) == 1 and doe[0]["key"] == "lit_review_before_doe"
-    assert led.pending_gates("ml") == []
-
-
 # --------------------------------------------------------------------------
-# Auto-satisfy + gate nudge against a real strategizer node
+# Auto-satisfy + implementer block (against a real node)
 # --------------------------------------------------------------------------
 
 def _node(tmp_path):
@@ -92,100 +94,84 @@ def _node(tmp_path):
                Edge("strategizer", "implementer")), entry="strategizer")
     notes = tmp_path / "debug" / "strategizer_notes"
     notes.mkdir(parents=True)
-    dlog = DelegationLog(tmp_path / "debug" / "delegation_log.jsonl")
-    n = StrategizerNode(
+    return StrategizerNode(
         _Stub(), name="strategizer",
         outgoing=["literature_reviewer", "implementer"], spec=spec,
         worker_adapters={"literature_reviewer": _Stub(), "implementer": _Stub()},
-        notes_dir=notes, delegation_log=dlog)
-    return n
+        study_dir=tmp_path, notes_dir=notes,
+        delegation_log=DelegationLog(tmp_path / "debug" / "dlog.jsonl"))
 
 
-def test_gate_blocks_then_auto_satisfies_after_lit_review(tmp_path):
+def test_implementer_block_lists_all_pending(tmp_path):
     n = _node(tmp_path)
-    led = n._milestones
-    # entering DoE with no lit review yet → the gate blocks
-    assert blocking_gate(led, n, "doe") is not None
-    # a completed literature_reviewer delegation satisfies the predicate
-    n._delegation_log.record(
-        id="D001", from_node="strategizer", to_node="literature_reviewer",
-        task="survey", deliverable="done", hypothesis_ids=[],
-        started_at="t0", completed_at="t1", status="DONE")
-    assert blocking_gate(led, n, "doe") is None  # auto-satisfied → no block
-    assert led.get([m["id"] for m in led.list_all()
-                    if m["key"] == "lit_review_before_doe"][0])["status"] == "DONE"
+    pend = implementer_block(n._milestones, n)
+    assert {m["key"] for m in pend} == {
+        "craft_pipeline", "assess_literature_need", "oracle_gold_state"}
 
 
-def test_milestone_closures_registered_on_strategizer(tmp_path):
+def test_craft_pipeline_auto_satisfies_when_pipeline_exists(tmp_path):
     n = _node(tmp_path)
-    for tool in ("MilestoneList", "MilestonePropose", "MilestoneComplete",
-                 "MilestoneSkip"):
-        assert tool in n.adapter.closure_tools
+    (tmp_path / "pipeline.py").write_text("# candidate\n")
+    pend_keys = {m["key"] for m in implementer_block(n._milestones, n)}
+    assert "craft_pipeline" not in pend_keys      # auto-satisfied
+    assert "assess_literature_need" in pend_keys   # manual, still pending
 
 
-def test_blocking_gate_logic(tmp_path):
-    """A pending gate blocks at-or-after its phase; literature/setup/None exempt."""
-    n = _node(tmp_path)
-    led = n._milestones
-    # lit_review gates 'doe' → blocks doe AND later phases
-    assert blocking_gate(led, n, "doe") is not None
-    assert blocking_gate(led, n, "ml") is not None
-    # exempt: untagged, and the phases used to satisfy gates
-    assert blocking_gate(led, n, None) is None
-    assert blocking_gate(led, n, "literature") is None
-    assert blocking_gate(led, n, "setup") is None
-
-
-def test_delegate_into_gated_phase_is_hard_blocked(tmp_path):
-    """Fix #1: delegating gated-phase work while a gate is pending is REFUSED
-    (the delegation does not fire), not merely nudged."""
+def test_delegate_to_implementer_is_blocked_then_skip_unblocks(tmp_path):
     n = _node(tmp_path)
     hid = n.adapter.closure_tools["HypothesisPropose"](
         "stmt", "crit", "pred", 0.5)
     before = len(n._registry)
     out = n.adapter.closure_tools["Delegate"](
-        "implementer", "generate data", "report", hypothesis_ids=[hid],
-        wait=True, phase="data_generation")
-    assert out.startswith("BLOCKED")
-    assert "MilestoneSkip" in out
+        "implementer", "run experiments", "report", hypothesis_ids=[hid],
+        wait=True)
+    assert out.startswith("BLOCKED") and "implementer" in out
     assert len(n._registry) == before  # nothing fired
-
-
-def test_milestone_skip_unblocks_delegation(tmp_path):
-    """The unilateral escape: skipping the gate (with a reason) lets the
-    delegation through — no deadlock."""
-    n = _node(tmp_path)
-    hid = n.adapter.closure_tools["HypothesisPropose"](
-        "stmt", "crit", "pred", 0.5)
-    # skip both gates that would block data_generation
+    # delegating to the literature_reviewer is NEVER blocked (satisfies a gate)
+    out_lit = n.adapter.closure_tools["Delegate"](
+        "literature_reviewer", "survey", "report", hypothesis_ids=[hid],
+        wait=True)
+    assert not out_lit.startswith("BLOCKED")
+    # resolve the backlog → implementer unblocks
     for m in n._milestones.list_all():
-        n.adapter.closure_tools["MilestoneSkip"](m["id"], "not needed in test")
-    out = n.adapter.closure_tools["Delegate"](
-        "implementer", "generate data", "report", hypothesis_ids=[hid],
-        wait=True, phase="data_generation")
-    assert not out.startswith("BLOCKED")
-    assert out.lstrip().startswith(("Done", "Errored"))
+        n.adapter.closure_tools["MilestoneSkip"](m["id"], "n/a for test")
+    out2 = n.adapter.closure_tools["Delegate"](
+        "implementer", "run experiments", "report", hypothesis_ids=[hid],
+        wait=True)
+    assert not out2.startswith("BLOCKED")
 
 
 def test_milestone_complete_requires_a_brief(tmp_path):
-    """Fix #1: ticking needs a one-line why — no rubber-stamping."""
     n = _node(tmp_path)
-    mid = n._milestones.propose("my own step")
+    mid = n._milestones.propose("my step")
     assert "ERROR" in n.adapter.closure_tools["MilestoneComplete"](mid, "")
-    assert "ERROR" in n.adapter.closure_tools["MilestoneComplete"](mid, "   ")
-    ok = n.adapter.closure_tools["MilestoneComplete"](mid, "did the thing via D2")
-    assert "ERROR" not in ok
-    assert n._milestones.get(mid)["status"] == "DONE"
+    ok = n.adapter.closure_tools["MilestoneComplete"](mid, "done via D2")
+    assert "ERROR" not in ok and n._milestones.get(mid)["status"] == "DONE"
 
 
-def test_done_blocked_until_milestones_resolved(tmp_path):
-    """Fix #1 (bare minimum): Done() cannot close while any milestone is
-    PENDING; resolving (skip/complete) all of them unblocks it."""
+def test_done_blocked_until_backlog_resolved(tmp_path):
     n = _node(tmp_path)
     out = n.adapter.closure_tools["Done"](summary="done")
-    assert "Cannot close yet" in out and "PENDING" in out
-    # resolve every milestone, then Done() proceeds past the close-gate
+    assert "Cannot close yet" in out
     for m in n._milestones.list_all():
-        n.adapter.closure_tools["MilestoneSkip"](m["id"], "n/a for test")
+        n.adapter.closure_tools["MilestoneSkip"](m["id"], "n/a")
     out2 = n.adapter.closure_tools["Done"](summary="done")
     assert "Cannot close yet" not in out2
+
+
+def test_render_backlog_announcement(tmp_path):
+    n = _node(tmp_path)
+    bl = render_backlog(n._milestones)
+    assert "<process_backlog>" in bl
+    assert "f3dasm implementer" in bl
+    assert "MilestoneSkip" in bl
+    # the three milestones are listed
+    for kw in ("Pipeline", "literature review", "oracle"):
+        assert kw.lower() in bl.lower()
+
+
+def test_milestone_closures_registered(tmp_path):
+    n = _node(tmp_path)
+    for tool in ("MilestoneList", "MilestonePropose", "MilestoneComplete",
+                 "MilestoneSkip"):
+        assert tool in n.adapter.closure_tools

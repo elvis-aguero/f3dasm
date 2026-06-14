@@ -27,15 +27,15 @@ class _Stub:
 def test_seed_includes_pipeline_only_when_requested(tmp_path):
     led = MilestoneLedger(tmp_path)
     led.seed_defaults(include_pipeline=False)
-    assert "draft_pipeline" not in {m["key"] for m in led.list_all()}
+    assert "craft_pipeline" not in {m["key"] for m in led.list_all()}
 
     led2 = MilestoneLedger(tmp_path / "b")
     led2.seed_defaults(include_pipeline=True)
     keys = {m["key"] for m in led2.list_all()}
-    assert "draft_pipeline" in keys
-    dp = [m for m in led2.list_all() if m["key"] == "draft_pipeline"][0]
+    assert "craft_pipeline" in keys
+    dp = [m for m in led2.list_all() if m["key"] == "craft_pipeline"][0]
     assert "baseline to beat" in dp["description"].lower()
-    assert "hypothesis" in dp["description"].lower()
+    assert "engage deeply" in dp["description"].lower()
 
 
 def test_pipeline_milestone_auto_satisfies_when_file_exists(tmp_path):
@@ -75,7 +75,7 @@ def test_knob_on_seeds_pipeline_gate(tmp_path):
     try:
         n = _node(tmp_path)
         keys = {m["key"] for m in n._milestones.list_all()}
-        assert "draft_pipeline" in keys
+        assert "craft_pipeline" in keys
     finally:
         settings.configure({})
 
@@ -85,8 +85,8 @@ def test_knob_off_is_byte_identical_no_pipeline_gate(tmp_path):
     try:
         n = _node(tmp_path)
         keys = {m["key"] for m in n._milestones.list_all()}
-        assert "draft_pipeline" not in keys
-        # the C2 process gates are unaffected by the C3 knob
-        assert {"lit_review_before_doe", "datagenerator_gold_state"} <= keys
+        assert "craft_pipeline" not in keys
+        # the always-on backlog gates are unaffected by the C3 knob
+        assert {"assess_literature_need", "oracle_gold_state"} <= keys
     finally:
         settings.configure({})

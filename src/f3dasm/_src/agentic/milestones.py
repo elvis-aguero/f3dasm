@@ -1,16 +1,18 @@
-"""Milestone ledger (Spec C2): the strategizer's process-policy tracker.
+"""Milestone ledger (process policy): the strategizer's backlog.
 
 DISTINCT from the hypothesis ledger (epistemics — what's true, closed by
-evidence). Milestones are PROCESS steps — prescribed defaults or agent-authored
-— closed by COMPLETION, and SOFT-enforced: a decision-point nudge + a recorded
-diagnostic when you enter a phase with a pending gate, never a refusal. The
-proven pattern (mirrors the falsification checkpoint), not a buried prompt
-caveat.
+evidence). Milestones are PROCESS steps — engage with the task, assess where you
+might be wrong, get the oracle right — closed by COMPLETION. They are
+SOFT-escapable (MilestoneSkip with a reason) but HARD on one thing: you cannot
+delegate to the f3dasm implementer (the agent that runs experiments) until the
+backlog is resolved. The three are independent and may be done concurrently;
+they block ONLY the implementer, never the literature_reviewer or datagenerator
+(so a delegation that SATISFIES a milestone is never itself blocked).
 
-Config-seeded default GATES carry an auto-satisfy PREDICATE (code, keyed by the
-milestone's ``key``) so they self-resolve the moment their structural condition
-holds — no busywork, no advisory drift. Agent-authored milestones have no
-predicate and are completed/skipped explicitly.
+Auto-satisfy predicates (code, keyed by the milestone's ``key``) tick a
+milestone the moment its structural condition holds — no busywork. A milestone
+with no predicate (the literature assessment) is a deliberate reflection and is
+ticked by hand with a required brief.
 """
 
 from __future__ import annotations
@@ -25,7 +27,8 @@ from pathlib import Path
 __all__ = [
     "MilestoneLedger",
     "DEFAULT_MILESTONES",
-    "blocking_gate",
+    "implementer_block",
+    "render_backlog",
     "VALID_STATUSES",
 ]
 
@@ -37,29 +40,9 @@ def _now() -> str:
 
 
 # --------------------------------------------------------------------------
-# Default milestones: built-in gates with auto-satisfy predicates (node->bool).
-# Predicates live in code (they can't serialise); the ledger tracks only status.
+# Default backlog. Auto-satisfy predicates (node -> bool) live in code; a
+# predicate of None means the milestone is ticked by hand (with a brief).
 # --------------------------------------------------------------------------
-
-def _lit_review_done(node) -> bool:
-    """A completed literature_reviewer delegation exists."""
-    log = getattr(node, "_delegation_log", None)
-    if log is None:
-        return False
-    spec = getattr(node, "_spec", None)
-    outgoing = getattr(node, "_outgoing", []) or []
-    lit_targets = set()
-    for t in outgoing:
-        role = ""
-        if spec is not None and hasattr(spec, "nodes"):
-            role = getattr(spec.nodes.get(t), "role", "") or ""
-        if role == "literature_reviewer" or "literature" in t.lower():
-            lit_targets.add(t)
-    return any(
-        r.get("status") == "DONE" and r.get("to_node") in lit_targets
-        for r in log.query_all()
-    )
-
 
 def _canonical_source_ready(node) -> bool:
     """A canonical ground-truth oracle is registered/validated."""
@@ -87,39 +70,43 @@ def _pipeline_drafted(node) -> bool:
 class DefaultMilestone:
     key: str
     description: str
-    phase: str | None        # the Phase value this gate guards
-    predicate: Callable      # (node) -> bool, auto-satisfy condition
+    predicate: Callable | None   # None => manual tick (with a brief)
 
 
-DEFAULT_MILESTONES: list[DefaultMilestone] = [
-    DefaultMilestone(
-        "lit_review_before_doe",
-        "Run a literature review before designing the experiment (DoE).",
-        "doe", _lit_review_done,
-    ),
-    DefaultMilestone(
-        "datagenerator_gold_state",
-        "Get the datagenerator/oracle registered and validated before "
-        "generating data.",
-        "data_generation", _canonical_source_ready,
-    ),
-]
-
-# Spec C3: seeded ONLY when runtime.pipeline_deliverable is on (switchable).
-# Kept separate from the C2 process gates above so C3 is a clean opt-out.
-PIPELINE_MILESTONE = DefaultMilestone(
-    "draft_pipeline",
-    "Draft a candidate f3dasm Pipeline (stub blocks / fake data OK) as a "
-    "BASELINE TO BEAT; refine it by swapping blocks — treat each block-swap as "
-    "a hypothesis (propose it, test it, keep it only if it survives "
-    "falsification). It coexists with replicate.py; write it via "
-    "WriteDeliverable('pipeline.py', ...).",
-    "optimization", _pipeline_drafted,
+# Order = the order the agent reads them (natural workflow); none gates another.
+# M1 (pipeline) seeds only when runtime.pipeline_deliverable is on (switchable);
+# M2 + M3 always seed.
+CRAFT_PIPELINE = DefaultMilestone(
+    "craft_pipeline",
+    "Engage deeply with the scientific task. Craft a reasonable f3dasm "
+    "Pipeline object (stub blocks / fake data are fine) as a baseline to "
+    "beat — this is your top-down plan, not a throwaway.",
+    _pipeline_drafted,
 )
+ASSESS_LITERATURE = DefaultMilestone(
+    "assess_literature_need",
+    "Identify any elements of the problem that could require a literature "
+    "review. Agents are notoriously prone to memory bias, and scientific "
+    "quality degrades exponentially the closer a decision sits to the mean — "
+    "be sharp about where you might be wrong.",
+    None,  # manual: a reflection (its honest outcome may be 'no review needed')
+)
+ORACLE_GOLD_STATE = DefaultMilestone(
+    "oracle_gold_state",
+    "Get the datagenerator/oracle into gold state — registered and "
+    "validated — before generating any data; the ledger is only as "
+    "trustworthy as the oracle behind it.",
+    _canonical_source_ready,
+)
+
+# Always-seeded backlog (M2, M3). The pipeline milestone is added by
+# seed_defaults(include_pipeline=True), seeded FIRST so it reads as M1.
+DEFAULT_MILESTONES: list[DefaultMilestone] = [ASSESS_LITERATURE, ORACLE_GOLD_STATE]
 
 _PREDICATES: dict[str, Callable] = {
     d.key: d.predicate
-    for d in [*DEFAULT_MILESTONES, PIPELINE_MILESTONE]
+    for d in (CRAFT_PIPELINE, *DEFAULT_MILESTONES)
+    if d.predicate is not None
 }
 
 
@@ -156,28 +143,25 @@ class MilestoneLedger:
     # -- seeding + authoring ----------------------------------------------
     def seed_defaults(self, disabled: frozenset[str] = frozenset(),
                       include_pipeline: bool = False) -> None:
-        """Seed the C2 process gates, plus the C3 pipeline gate iff
+        """Seed the backlog. The pipeline milestone (M1) is included only when
         ``include_pipeline`` (runtime.pipeline_deliverable). Idempotent."""
-        defaults = list(DEFAULT_MILESTONES)
-        if include_pipeline:
-            defaults.append(PIPELINE_MILESTONE)
+        ordered = ([CRAFT_PIPELINE] if include_pipeline else []) + DEFAULT_MILESTONES
         with self._lock:
             data = self._load()
             existing_keys = {m.get("key") for m in data.values()}
-            for d in defaults:
+            for d in ordered:
                 if d.key in disabled or d.key in existing_keys:
                     continue
                 mid = self._next_id(data)
                 data[mid] = {
                     "id": mid, "key": d.key, "description": d.description,
-                    "phase": d.phase, "source": "default", "gate": True,
-                    "status": "PENDING", "note": "", "opened_at": _now(),
-                    "closed_at": None,
+                    "source": "default", "status": "PENDING", "note": "",
+                    "opened_at": _now(), "closed_at": None,
+                    "manual": d.predicate is None,
                 }
             self._save(data)
 
-    def propose(self, description: str, phase: str | None = None,
-                gate: bool = False) -> str:
+    def propose(self, description: str) -> str:
         if not description or not description.strip():
             return "ERROR: milestone description must be non-empty."
         with self._lock:
@@ -185,9 +169,8 @@ class MilestoneLedger:
             mid = self._next_id(data)
             data[mid] = {
                 "id": mid, "key": None, "description": description.strip(),
-                "phase": phase, "source": "agent", "gate": bool(gate),
-                "status": "PENDING", "note": "", "opened_at": _now(),
-                "closed_at": None,
+                "source": "agent", "status": "PENDING", "note": "",
+                "opened_at": _now(), "closed_at": None, "manual": True,
             }
             self._save(data)
         return mid
@@ -204,7 +187,7 @@ class MilestoneLedger:
             self._save(data)
         return f"{mid} marked {status}."
 
-    def complete(self, mid: str, note: str = "") -> str:
+    def complete(self, mid: str, note: str) -> str:
         return self._close(mid, "DONE", note)
 
     def skip(self, mid: str, reason: str) -> str:
@@ -218,20 +201,12 @@ class MilestoneLedger:
         return self._load().get(mid)
 
     def pending(self) -> list[dict]:
-        """All milestones still PENDING (gate or not)."""
+        """All milestones still PENDING."""
         return [m for m in self._load().values()
                 if m.get("status") == "PENDING"]
 
-    def pending_gates(self, phase: str | None = None) -> list[dict]:
-        out = []
-        for m in self._load().values():
-            if m.get("gate") and m.get("status") == "PENDING":
-                if phase is None or m.get("phase") == phase:
-                    out.append(m)
-        return out
-
     def auto_satisfy(self, node) -> None:
-        """Flip default gates to DONE whose structural predicate now holds."""
+        """Tick default milestones whose structural predicate now holds."""
         with self._lock:
             data = self._load()
             changed = False
@@ -252,39 +227,39 @@ class MilestoneLedger:
         if not items:
             return "No milestones."
         return "\n".join(
-            f"- {m['id']} [{m['status']}]"
-            f"{' (gate, phase=' + str(m['phase']) + ')' if m['gate'] else ''}"
-            f": {m['description']}"
+            f"- {m['id']} [{m['status']}]: {m['description']}"
             for m in items
         )
 
 
-# Canonical pipeline order. A pending gate guarding phase G blocks a delegation
-# whose phase is at-or-after G. literature/setup are EXEMPT (they're how gates
-# get satisfied — e.g. you must be able to delegate a literature task to tick
-# the lit-review gate, and register the oracle to tick the gold-state gate).
-_PHASE_ORDER = ["literature", "setup", "doe", "data_generation", "ml",
-                "optimization"]
-_EXEMPT_PHASES = frozenset({None, "literature", "setup"})
+def implementer_block(ledger: MilestoneLedger, node) -> list[dict]:
+    """Pending milestones that block delegating to the f3dasm implementer.
 
-
-def _phase_rank(p: str | None) -> int:
-    try:
-        return _PHASE_ORDER.index(p)
-    except ValueError:
-        return -1
-
-
-def blocking_gate(ledger: MilestoneLedger, node, phase: str | None) -> dict | None:
-    """Return the pending gate that should HARD-BLOCK a delegation of ``phase``,
-    or None. Auto-satisfies first (a met gate never blocks). Untagged,
-    literature, and setup delegations are exempt."""
-    if phase in _EXEMPT_PHASES:
-        return None
+    Auto-satisfies first (a met milestone never blocks). The whole backlog
+    gates the implementer, so this is simply the still-pending set. Returns []
+    when the implementer is clear to run.
+    """
     ledger.auto_satisfy(node)
-    drank = _phase_rank(phase)
-    for m in ledger.pending_gates():
-        grank = _phase_rank(m.get("phase"))
-        if grank >= 0 and drank >= grank:
-            return m
-    return None
+    return ledger.pending()
+
+
+def render_backlog(ledger: MilestoneLedger) -> str:
+    """The backlog announcement injected once at the start of the run, so the
+    agent cannot claim it didn't know these gate the implementer."""
+    items = ledger.list_all()
+    if not items:
+        return ""
+    lines = "\n".join(
+        f"  {m['id']} [{m['status']}]: {m['description']}" for m in items)
+    return (
+        "<process_backlog>\n"
+        "Before you delegate ANY work to the f3dasm implementer (the agent "
+        "that runs experiments), resolve this backlog — do each, or "
+        "MilestoneSkip(id, reason) if your study genuinely doesn't need it. "
+        "They're independent (do them in any order, even concurrently) and "
+        "block ONLY the implementer; delegating to the literature_reviewer or "
+        "datagenerator to satisfy one is never blocked. Tick with "
+        "MilestoneComplete(id, brief).\n\n"
+        f"{lines}\n"
+        "</process_backlog>"
+    )
