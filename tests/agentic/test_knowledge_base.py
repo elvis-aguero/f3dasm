@@ -36,10 +36,10 @@ class TestSearch:
         assert hits
         assert hits[0].id == "evaluate-through-get-evaluator"
 
-    def test_finds_replicate_entry(self):
+    def test_finds_pipeline_entry(self):
         kb = KnowledgeBase.load()
-        hits = kb.search("replicate reproducibility headline from store")
-        assert any(h.id == "replicate-reproduces-from-store" for h in hits)
+        hits = kb.search("pipeline reproducibility headline from store")
+        assert any(h.id == "pipeline-reproduces-from-store" for h in hits)
 
     def test_respects_k(self):
         kb = KnowledgeBase.load()

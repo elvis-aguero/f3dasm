@@ -60,7 +60,7 @@ def _make_state(study_dir=None, messages=None, **kwargs):
 
     if study_dir is None:
         d = Path(tempfile.mkdtemp(prefix="f3dasm_rat_"))
-        (d / "replicate.py").write_text("# test replicate\n")
+        (d / "pipeline.py").write_text("# test pipeline\n")
         study_dir = d
     return AgenticState(
         messages=messages or [HumanMessage(content="Test problem")],
@@ -90,9 +90,9 @@ def test_unaccepted_termination_reprompts():
         adapter, name="strategizer", outgoing=["implementer"], spec=spec,
     )
 
-    # Create study_dir with replicate.py so missing-deliverables is NOT the issue
+    # Create study_dir with pipeline.py so missing-deliverables is NOT the issue
     study_dir = Path(tempfile.mkdtemp(prefix="f3dasm_rat_"))
-    (study_dir / "replicate.py").write_text("# test\n")
+    (study_dir / "pipeline.py").write_text("# test\n")
     state = _make_state(study_dir=study_dir)
 
     cmd = node(state)
@@ -114,9 +114,9 @@ def test_ungated_finish_after_three_attempts():
     """After 3 loopbacks, 4th call terminates with UNGATED banner."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
-    # Adapter never calls Done; replicate.py present so only Done is missing
+    # Adapter never calls Done; pipeline.py present so only Done is missing
     study_dir = Path(tempfile.mkdtemp(prefix="f3dasm_rat_"))
-    (study_dir / "replicate.py").write_text("# test\n")
+    (study_dir / "pipeline.py").write_text("# test\n")
 
     adapter = StubAdapter(response="Final analysis complete.")
     spec = _minimal_spec()
@@ -153,7 +153,7 @@ def test_accepted_done_no_banner():
     from f3dasm._src.agentic.nodes import StrategizerNode
 
     study_dir = Path(tempfile.mkdtemp(prefix="f3dasm_rat_"))
-    (study_dir / "replicate.py").write_text("# test\n")
+    (study_dir / "pipeline.py").write_text("# test\n")
 
     class DoneCallingAdapter(StubAdapter):
         def invoke(self, messages):
@@ -192,7 +192,7 @@ def test_run_backstop_halts_resumable_past_multiple(tmp_path):
 
     study_dir = tmp_path / "study"
     study_dir.mkdir()
-    (study_dir / "replicate.py").write_text("# test\n")
+    (study_dir / "pipeline.py").write_text("# test\n")
     run_dir = study_dir / "runs" / "T"
     (run_dir / "debug").mkdir(parents=True)
     (run_dir / "debug" / "thread_id").write_text("tid-xyz")
@@ -237,7 +237,7 @@ def test_usd_budget_exhausted_halts_resumable(tmp_path):
 
     study_dir = tmp_path / "study"
     study_dir.mkdir()
-    (study_dir / "replicate.py").write_text("# test\n")
+    (study_dir / "pipeline.py").write_text("# test\n")
     run_dir = study_dir / "runs" / "T"
     (run_dir / "debug").mkdir(parents=True)
     (run_dir / "debug" / "thread_id").write_text("tid-usd")
@@ -272,7 +272,7 @@ def test_usd_budget_inactive_under_ollama_does_not_halt(tmp_path):
 
     study_dir = tmp_path / "study"
     study_dir.mkdir()
-    (study_dir / "replicate.py").write_text("# test\n")
+    (study_dir / "pipeline.py").write_text("# test\n")
 
     adapter = StubAdapter(response="ollama answer")
     node = StrategizerNode(
@@ -300,7 +300,7 @@ def test_repeated_errors_halt_resumable(tmp_path, monkeypatch):
     monkeypatch.setenv("F3DASM_MAX_CONSECUTIVE_ERRORS", "3")
     study_dir = tmp_path / "study"
     study_dir.mkdir()
-    (study_dir / "replicate.py").write_text("# test\n")
+    (study_dir / "pipeline.py").write_text("# test\n")
     run_dir = study_dir / "runs" / "T"
     (run_dir / "debug").mkdir(parents=True)
     (run_dir / "debug" / "thread_id").write_text("tid-err")
@@ -327,7 +327,7 @@ def test_soft_budget_does_not_terminate_below_backstop():
     from f3dasm._src.agentic.nodes import StrategizerNode
 
     study_dir = Path(tempfile.mkdtemp(prefix="f3dasm_rat_"))
-    (study_dir / "replicate.py").write_text("# test\n")
+    (study_dir / "pipeline.py").write_text("# test\n")
 
     adapter = StubAdapter(response="Continuing despite soft warning.")
     spec = _minimal_spec()
@@ -357,7 +357,7 @@ def test_working_delegations_survive_loopback():
     from f3dasm._src.agentic.nodes import StrategizerNode
 
     study_dir = Path(tempfile.mkdtemp(prefix="f3dasm_rat_"))
-    (study_dir / "replicate.py").write_text("# test\n")
+    (study_dir / "pipeline.py").write_text("# test\n")
 
     # Adapter does NOT call Done → triggers loopback
     adapter = StubAdapter(response="Still thinking.")
@@ -469,7 +469,7 @@ def test_readnote_directory_returns_error(tmp_path):
     """ReadNote on a directory path returns an error string instead of raising."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
-    (tmp_path / "replicate.py").write_text("# test\n")
+    (tmp_path / "pipeline.py").write_text("# test\n")
     # Create a subdirectory to pass as the ReadNote path
     subdir = tmp_path / "subdir"
     subdir.mkdir()

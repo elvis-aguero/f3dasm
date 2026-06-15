@@ -94,3 +94,54 @@ def test_poll_escalation_offers_the_three_options():
     assert "do other work" in out.lower()          # (a) do something else
     assert "just wait" in out.lower()              # (c) wait it out
     assert "wait=True" in out                       # future-proofing tip
+
+
+def _seed_store(store_dir, delegation_id):
+    from f3dasm._src.agentic.instrumented import InstrumentedDataGenerator
+    from f3dasm._src.core import DataGenerator
+    from f3dasm._src.experimentsample import ExperimentSample, JobStatus
+
+    class _Sum(DataGenerator):
+        def execute(self, s, **k):
+            s._output_data["f"] = sum(s._input_data.values())
+            s.job_status = JobStatus.FINISHED
+            return s
+
+    gen = InstrumentedDataGenerator(
+        inner=_Sum(), store_dir=store_dir, delegation_id=delegation_id,
+        flush_every=1)
+    gen.execute(ExperimentSample(
+        _input_data={"x0": 1.0}, _output_data={}, job_status=JobStatus.OPEN))
+    gen.flush()
+
+
+def test_cancel_is_two_shot_for_progressing_delegation(tmp_path):
+    """A delegation already writing ledgered evals is progressing, not stuck:
+    the first cancel is HELD, a deliberate second call confirms."""
+    run_dir = tmp_path / "runs" / "T0"
+    (run_dir / "debug" / "strategizer_notes").mkdir(parents=True)
+    _seed_store(run_dir / "experiment_data", "D004")
+    n = _node()
+    n._current_notes_dir = run_dir / "debug" / "strategizer_notes"
+    n._registry["D004"] = {"status": "Working", "result": None, "evals": 0}
+
+    out1 = n.adapter.closure_tools["CancelDelegation"]("D004")
+    assert "HOLD" in out1
+    assert n._registry["D004"]["status"] == "Working"   # NOT cancelled yet
+    out2 = n.adapter.closure_tools["CancelDelegation"]("D004")
+    assert "cancelled" in out2.lower()
+    assert n._registry["D004"]["status"] == "Cancelled"
+
+
+def test_cancel_single_shot_when_no_ledgered_evals(tmp_path):
+    """No ledgered evals → cancel is immediate (the impatience guard only
+    trips for delegations actually producing evaluations)."""
+    run_dir = tmp_path / "runs" / "T1"
+    (run_dir / "debug" / "strategizer_notes").mkdir(parents=True)
+    (run_dir / "experiment_data").mkdir()
+    n = _node()
+    n._current_notes_dir = run_dir / "debug" / "strategizer_notes"
+    n._registry["D003"] = {"status": "Working", "result": None, "evals": 0}
+    out = n.adapter.closure_tools["CancelDelegation"]("D003")
+    assert n._registry["D003"]["status"] == "Cancelled"
+    assert "HOLD" not in out

@@ -250,13 +250,24 @@ def test_get_evaluator_binds_delegation_id_from_cwd(
     store_dir = tmp_path / "store"
     store_dir.mkdir()
 
+    # Register a tiny entrypoint so get_evaluator() (no inner) resolves the
+    # source and we can still assert delegation_id derivation from cwd.
+    study_dir = tmp_path / "study"
+    study_dir.mkdir()
+    (study_dir / "sum_eval.py").write_text(
+        "def evaluate_kw(**kwargs):\n"
+        "    return float(sum(kwargs.values()))\n"
+    )
+
     run_config = {
         "store_dir": str(store_dir),
         "lock_path": str(store_dir / "experiment_data" / ".lock"),
         "source": "test_eval",
         "evaluator_name": "test_eval",
+        "study_dir": str(study_dir),
         "fidelity_column": None,
-        "evaluator_entrypoint": None,
+        "evaluator_entrypoint": "sum_eval.py:evaluate_kw",
+        "evaluator_output_names": ["f"],
     }
     run_config_path = debug_dir / "run_config.json"
     run_config_path.write_text(json.dumps(run_config))
@@ -264,7 +275,7 @@ def test_get_evaluator_binds_delegation_id_from_cwd(
     monkeypatch.chdir(delegation_dir)
     monkeypatch.delenv("F3DASM_DELEGATION_ID", raising=False)
 
-    gen = get_evaluator(inner=_SumGenerator())
+    gen = get_evaluator()
     assert gen.delegation_id == "D007"
 
 
@@ -285,7 +296,7 @@ def test_get_evaluator_raises_outside_delegation(
     monkeypatch.delenv("F3DASM_DELEGATION_ID", raising=False)
 
     with pytest.raises(ValueError, match="get_evaluator"):
-        get_evaluator(inner=_SumGenerator())
+        get_evaluator()
 
 
 # ---------------------------------------------------------------------------
@@ -335,9 +346,17 @@ def test_flush_every_batches(tmp_path):
 
 
 def test_public_api_importable():
-    from f3dasm.agentic import (  # noqa: F401
+    # get_evaluator() is the ONE agent-facing door.
+    from f3dasm.agentic import get_evaluator  # noqa: F401
+    import f3dasm.agentic as _agentic
+
+    # InstrumentedDataGenerator is deliberately NOT public — it stays internal
+    # so agents cannot construct a store-redirected evaluator (§1 seal).
+    assert "InstrumentedDataGenerator" not in _agentic.__all__
+    assert not hasattr(_agentic, "InstrumentedDataGenerator")
+    # ...but it remains importable internally for the runtime and tests.
+    from f3dasm._src.agentic.instrumented import (  # noqa: F401
         InstrumentedDataGenerator,
-        get_evaluator,
     )
 
 

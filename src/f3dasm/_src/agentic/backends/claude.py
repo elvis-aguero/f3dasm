@@ -352,7 +352,18 @@ class ClaudeAdapter:
             mcp_servers.update(self.extra_mcp_servers)
 
         _base_disallowed = ["WebSearch", "WebFetch", "Task", "ExitPlanMode", "computer"]
-        _effective_disallowed = [t for t in _base_disallowed if t not in self.extra_allowed_tools]
+        # Under permission_mode="bypassPermissions" the allowed_tools allowlist
+        # is NOT enforced — disallowed_tools is the only thing that binds. So a
+        # native tool the agent never declared (e.g. Bash/Write for a read-only
+        # reviewer) would otherwise be silently usable. Disallow every native
+        # tool this agent did not declare, making its declared toolset binding.
+        _ungranted_native = [
+            t for t in self.NATIVE_TOOLS if t not in self.native_tools
+        ]
+        _effective_disallowed = [
+            t for t in dict.fromkeys([*_base_disallowed, *_ungranted_native])
+            if t not in self.extra_allowed_tools
+        ]
 
         # Non-blocking raw-oracle nudge: a PostToolUse hook that injects a
         # reminder (capped per delegation = per ainvoke) when a Bash/Write
@@ -362,8 +373,11 @@ class ClaudeAdapter:
         try:
             from claude_agent_sdk import HookMatcher
 
-            from .base import OracleNudgeBudget
-            _nudge = OracleNudgeBudget()
+            from .base import OracleNudgeBudget, oracle_registered
+            # Silent until an oracle is registered: pre-registration work (the
+            # datagenerator wrapping/validating its raw source) has no
+            # get_evaluator() to use, so nudging it is a false positive.
+            _nudge = OracleNudgeBudget(enabled=oracle_registered())
             # Expose on the adapter so the runtime can drain + log its
             # firings as direct evidence (see _record_intervention).
             self._oracle_nudge = _nudge

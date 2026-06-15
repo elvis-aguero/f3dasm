@@ -36,7 +36,7 @@ def _make_state(study_dir=None, **kwargs):
     from f3dasm._src.agentic.graph_state import AgenticState
     if study_dir is None:
         d = Path(tempfile.mkdtemp(prefix="f3dasm_nodes_cov_"))
-        (d / "replicate.py").write_text("# test\n")
+        (d / "pipeline.py").write_text("# test\n")
         study_dir = d
     return AgenticState(
         messages=[HumanMessage(content="Test problem")],
@@ -77,7 +77,7 @@ def test_worker_node_returns_command(tmp_path):
     from f3dasm._src.agentic.nodes import WorkerNode
     from langgraph.types import Command
 
-    (tmp_path / "replicate.py").write_text("# r\n")
+    (tmp_path / "pipeline.py").write_text("# r\n")
     report = (
         "## Report\n### Actions taken\nComputed stuff.\n"
         "### Files touched\n(none)\n### Conclusions\nOK\n### Numbers\nn: 5"
@@ -96,7 +96,7 @@ def test_worker_node_retry_on_malformed_response(tmp_path):
     """WorkerNode retries once when response is malformed."""
     from f3dasm._src.agentic.nodes import WorkerNode
 
-    (tmp_path / "replicate.py").write_text("# r\n")
+    (tmp_path / "pipeline.py").write_text("# r\n")
     good_report = (
         "## Report\n### Actions taken\nDone.\n"
         "### Files touched\n(none)\n### Conclusions\nOK\n### Numbers\nn: 0"
@@ -124,7 +124,7 @@ def test_worker_node_reports_evals(tmp_path):
     """WorkerNode.ReportEvals closure records evaluation count."""
     from f3dasm._src.agentic.nodes import WorkerNode
 
-    (tmp_path / "replicate.py").write_text("# r\n")
+    (tmp_path / "pipeline.py").write_text("# r\n")
     good_report = (
         "## Report\n### Actions taken\nDone.\n"
         "### Files touched\n(none)\n### Conclusions\nOK\n### Numbers\nn: 42"
@@ -286,7 +286,7 @@ def test_write_deliverable_creates_file(tmp_path):
     """WriteDeliverable writes a .py file to study_dir."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
-    (tmp_path / "replicate.py").write_text("# existing\n")
+    (tmp_path / "pipeline.py").write_text("# existing\n")
 
     write_results = []
 
@@ -319,7 +319,7 @@ def test_write_deliverable_rejects_bad_extension(tmp_path):
     """WriteDeliverable rejects files that don't end in .py or .md."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
-    (tmp_path / "replicate.py").write_text("# r\n")
+    (tmp_path / "pipeline.py").write_text("# r\n")
 
     results = []
 
@@ -350,7 +350,7 @@ def test_write_deliverable_rejects_path_separators(tmp_path):
     """WriteDeliverable rejects filenames with path separators."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
-    (tmp_path / "replicate.py").write_text("# r\n")
+    (tmp_path / "pipeline.py").write_text("# r\n")
 
     results = []
 
@@ -387,7 +387,7 @@ def test_strategizer_recall_history_with_log(tmp_path):
     from f3dasm._src.agentic.nodes import StrategizerNode
     from f3dasm._src.agentic.delegation_log import DelegationLog
 
-    (tmp_path / "replicate.py").write_text("# r\n")
+    (tmp_path / "pipeline.py").write_text("# r\n")
     log_path = tmp_path / "delegation_log.jsonl"
     log = DelegationLog(log_path)
     # RecallHistory for strategizer queries records where to_node == "strategizer"
@@ -488,7 +488,7 @@ def test_hypothesis_propose_with_ledger(tmp_path):
     """HypothesisPropose returns H-id when ledger is active."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
-    (tmp_path / "replicate.py").write_text("# r\n")
+    (tmp_path / "pipeline.py").write_text("# r\n")
     notes_dir = tmp_path / "notes"
     notes_dir.mkdir()
 
@@ -525,7 +525,7 @@ def test_hypothesis_list_with_entries(tmp_path):
     """HypothesisList returns hypothesis entries when ledger has items."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
-    (tmp_path / "replicate.py").write_text("# r\n")
+    (tmp_path / "pipeline.py").write_text("# r\n")
     notes_dir = tmp_path / "notes"
     notes_dir.mkdir()
 
@@ -574,7 +574,7 @@ def test_hypothesis_update_coerces_json_string_evidence(tmp_path):
     """Backends may pass evidence as a JSON string; closure coerces."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
-    (tmp_path / "replicate.py").write_text("# r\n")
+    (tmp_path / "pipeline.py").write_text("# r\n")
     notes_dir = tmp_path / "notes"
     notes_dir.mkdir()
 
@@ -616,7 +616,7 @@ def test_hypothesis_get_not_found(tmp_path):
     """HypothesisGet returns ERROR for unknown hypothesis id."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
-    (tmp_path / "replicate.py").write_text("# r\n")
+    (tmp_path / "pipeline.py").write_text("# r\n")
     notes_dir = tmp_path / "notes"
     notes_dir.mkdir()
 
@@ -714,7 +714,7 @@ def test_wrap_closure_counts_error_returns(tmp_path):
     """_wrap_closure increments error_counts when closure returns ERROR:."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
-    (tmp_path / "replicate.py").write_text("# r\n")
+    (tmp_path / "pipeline.py").write_text("# r\n")
 
     class ErrorClosureAdapter(StubAdapter):
         def invoke(self, messages):
@@ -829,7 +829,7 @@ def test_done_with_pending_delegations_returns_error(tmp_path):
     """Done() is refused when delegations are still Working."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
-    (tmp_path / "replicate.py").write_text("# r\n")
+    (tmp_path / "pipeline.py").write_text("# r\n")
 
     done_results = []
     delegation_started = threading.Event()

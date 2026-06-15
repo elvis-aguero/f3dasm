@@ -62,6 +62,22 @@ def get_delegation_id() -> str | None:
     return getattr(_transcript_tls, "delegation_id", None)
 
 
+def set_oracle_registered(registered: bool) -> None:
+    """Bind whether a canonical oracle is registered for this thread's worker.
+
+    Thread-local, mirroring ``set_delegation_id``. The raw-oracle nudge keys on
+    this: until an oracle is registered, ``get_evaluator()`` resolves nothing,
+    so "use get_evaluator() instead" is non-advice — the nudge stays silent.
+    This exempts the datagenerator (which works BEFORE registration, by state
+    not by role name) and re-arms automatically once the oracle is live.
+    """
+    _transcript_tls.oracle_registered = bool(registered)
+
+
+def oracle_registered() -> bool:
+    return getattr(_transcript_tls, "oracle_registered", False)
+
+
 def append_transcript(record: dict) -> None:
     """Best-effort append one JSON record to the active transcript.
 
@@ -416,7 +432,7 @@ def retry_on_transient(
 # When a worker reaches the ground-truth oracle directly (e.g. `from evaluator
 # import evaluate`, or loading evaluator.dylib) instead of via get_evaluator(),
 # its evaluations are NOT stamped into the canonical ExperimentData ledger — so
-# any headline they back cannot be reproduced by replicate.py. This is a
+# any headline they back cannot be reproduced by pipeline.py. This is a
 # best-effort regex NUDGE, not a sandbox: it exists to save a worker from
 # burning a whole phase off-ledger, not to stop a determined bypass (the
 # reproducibility gate in the critic is the real backstop). Deliberately does
@@ -435,7 +451,7 @@ _ORACLE_NUDGE_MESSAGE = (
     "[ORACLE ACCESS] This reaches the ground-truth evaluator directly. "
     "Evaluations run this way are NOT written to the canonical ExperimentData "
     "ledger, so any number they produce cannot anchor the headline — "
-    "replicate.py will fail to reproduce it and the critic will reject the "
+    "pipeline.py will fail to reproduce it and the critic will reject the "
     "run. Reach the true oracle ONLY via:  from f3dasm.agentic import "
     "get_evaluator; gen = get_evaluator(); data = data.run(data_generator="
     "gen); gen.flush().  Surrogates/optimisers/acquisition models you build "
@@ -476,8 +492,13 @@ class OracleNudgeBudget:
     ``cap`` times, then stays silent so it never becomes nagging.
     """
 
-    def __init__(self, cap: int = ORACLE_NUDGE_CAP) -> None:
+    def __init__(self, cap: int = ORACLE_NUDGE_CAP,
+                 enabled: bool = True) -> None:
         self.cap = cap
+        # When False, the nudge never fires: there is no registered oracle to
+        # bypass, so reaching the raw source directly is the only option (this
+        # is the datagenerator's situation during pre-registration validation).
+        self.enabled = enabled
         self.used = 0
         # Firings since the last reset, so the runtime can LOG them as direct
         # evidence the nudge acted (not just infer it). Each: {"tool", "snip"}.
@@ -488,7 +509,7 @@ class OracleNudgeBudget:
         self.events = []
 
     def check(self, tool_name: str, tool_input: dict) -> str | None:
-        if self.used >= self.cap:
+        if not self.enabled or self.used >= self.cap:
             return None
         msg = detect_raw_oracle_access(tool_name, tool_input)
         if msg is None:

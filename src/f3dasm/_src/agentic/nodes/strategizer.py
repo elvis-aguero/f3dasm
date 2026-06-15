@@ -589,16 +589,19 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
     def _missing_deliverables(self, state: AgenticState) -> list[str]:
         """Return required deliverable paths not present at study_dir yet.
 
-        replicate.py is always required — it must be written via
-        WriteDeliverable() before Done() is accepted.  Additional paths
-        can be declared in state['required_deliverables'].
+        pipeline.py is always required — the single deliverable, written via
+        WriteDeliverable() before Done() is accepted. It is the human-readable
+        f3dasm Pipeline AND the reproduction: the runtime executes it lazily
+        (see _reproduction_gate) to verify the headline re-derives from the
+        ledger with zero new evals. Additional paths can be declared in
+        state['required_deliverables'].
         """
         study_dir = Path(state.get("study_dir", "."))
         # WriteDeliverable writes BARE names to study_dir/ (it rejects path
         # separators), and solution.md lands at study_dir/ too. Normalise any
         # configured path to its basename so a stray 'workspace/…' prefix in a
         # study config can't spuriously flag a present deliverable as missing.
-        required = ["replicate.py"] + list(
+        required = ["pipeline.py"] + list(
             state.get("required_deliverables") or [])
         seen: set[str] = set()
         missing: list[str] = []
@@ -610,6 +613,77 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
             if not (study_dir / name).exists():
                 missing.append(name)
         return missing
+
+    def _reproduction_gate(self, state: AgenticState) -> str | None:
+        """Execute pipeline.py LAZILY against the canonical ledger.
+
+        The binding reproducibility check: run the deliverable and require it to
+        (a) finish cleanly — its own derive-from-ledger ``assert`` held — and
+        (b) add ZERO new oracle rows to the canonical store (lazy: a
+        reproduction must skip already-FINISHED evals, never re-evaluate). A
+        non-zero eval delta means the pipeline re-sampled/re-evaluated instead
+        of loading the ledger. Returns None on PASS, else a problem string for
+        the bounded re-prompt. Skips silently when there is no run context.
+        """
+        import os
+        import subprocess
+        import sys
+
+        study_dir = Path(state.get("study_dir", "."))
+        pipeline_py = study_dir / "pipeline.py"
+        if not pipeline_py.exists():
+            return None  # absence is handled by _missing_deliverables
+        notes = self._current_notes_dir
+        if notes is None:
+            return None  # no run dir context (e.g. non-debug) — skip the gate
+        run_dir = notes.parent.parent              # …/runs/<id>
+        store_dir = run_dir / "experiment_data"
+        run_config = run_dir / "debug" / "run_config.json"
+
+        def _rows() -> int:
+            try:
+                from ..instrumented import RunStateSummary
+                s = RunStateSummary.from_store(store_dir)
+                return sum(s.n_per_delegation.values()) if s else 0
+            except Exception:  # noqa: BLE001
+                return 0
+
+        before = _rows()
+        env = dict(os.environ)
+        # Decouple from cwd/__file__ fragility: the pipeline reads the ledger
+        # from this env var; get_evaluator() resolves run_config by walking up
+        # from cwd (set to the dir holding run_config.json) and the delegation
+        # id from F3DASM_DELEGATION_ID.
+        env["F3DASM_CANONICAL_STORE"] = str(store_dir)
+        env.setdefault("F3DASM_DELEGATION_ID", "D999")
+        _cwd = run_config.parent if run_config.exists() else study_dir
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(pipeline_py)],
+                cwd=str(_cwd), env=env,
+                capture_output=True, text=True, timeout=300,
+            )
+        except subprocess.TimeoutExpired:
+            return (
+                "pipeline.py did not finish within 300s. A reproduction must "
+                "be lightweight — load the ledger and skip finished evals and "
+                "heavy refits (cache-or-load surrogates). Make it lazy.")
+        after = _rows()
+
+        if proc.returncode != 0:
+            return (
+                f"pipeline.py failed when the runtime ran it (exit "
+                f"{proc.returncode}). Its derive-from-ledger assert must hold "
+                "against the shipped store. Stderr tail:\n"
+                + (proc.stderr or "")[-800:])
+        if after != before:
+            return (
+                f"pipeline.py is NOT lazy: re-running it added {after - before} "
+                "oracle evaluation(s) to the canonical store. It must LOAD the "
+                "ledger (ExperimentData.from_file) and reach the oracle only "
+                "via get_evaluator() so finished rows are skipped — "
+                "reproduction must add ZERO evals.")
+        return None
 
     def __call__(self, state: AgenticState) -> Any:
         import time
@@ -799,9 +873,15 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         route = self._route
         accepted = route.get("kind") == "done"
         missing = self._missing_deliverables(state)
+        # Binding reproducibility check: only meaningful once Done() is accepted
+        # and pipeline.py is present — the runtime executes it lazily.
+        repro_problem = (
+            self._reproduction_gate(state)
+            if (accepted and not missing) else None
+        )
 
         # ── Bounded re-prompt on unaccepted termination ───────────────────────
-        if (not accepted or missing) and self._finish_attempts < 3:
+        if (not accepted or missing or repro_problem) and self._finish_attempts < 3:
             self._finish_attempts += 1
             problems: list[str] = []
             if missing:
@@ -811,6 +891,14 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                     f" study directory:\n{missing_list}\n"
                     "Write them via WriteDeliverable() before"
                     " calling Done()."
+                )
+            if repro_problem:
+                problems.append(
+                    "pipeline.py did not pass the reproduction gate (the "
+                    "runtime executed it against the shipped ledger):\n"
+                    + repro_problem
+                    + "\nFix pipeline.py via WriteDeliverable() and call "
+                    "Done() again."
                 )
             if not accepted:
                 with self._registry_lock:
@@ -856,7 +944,7 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         summary = route.get("summary") or text
 
         # Prepend UNGATED banner if the run ends without an accepted Done().
-        if not accepted or missing:
+        if not accepted or missing or repro_problem:
             flags = []
             if not accepted:
                 flags.append(
@@ -867,6 +955,11 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
             if missing:
                 flags.append(
                     f"required deliverables missing: {missing}"
+                )
+            if repro_problem:
+                flags.append(
+                    "pipeline.py did not reproduce the headline from the "
+                    "ledger (lazy execution gate failed)"
                 )
             summary = (
                 "## ⚠ UNGATED RUN\n\n"

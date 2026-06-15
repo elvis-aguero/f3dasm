@@ -296,7 +296,7 @@ def test_execute_creates_canonical_store_dirs_and_state(tmp_path):
     from f3dasm._src.agentic.graph_builder import build_graph
 
     (tmp_path / "PROBLEM_STATEMENT.md").write_text("Find min of f(x)=x^2")
-    (tmp_path / "replicate.py").write_text("# test\n")
+    (tmp_path / "pipeline.py").write_text("# test\n")
 
     state_snapshots: list[dict] = []
 
@@ -476,7 +476,7 @@ def test_execute_with_lookup_config_ingests_d000(tmp_path):
     _make_pool(pool_dir, n=4)
 
     (tmp_path / "PROBLEM_STATEMENT.md").write_text("Find min")
-    (tmp_path / "replicate.py").write_text("# test\n")
+    (tmp_path / "pipeline.py").write_text("# test\n")
     (tmp_path / "config.yaml").write_text(_yaml.dump({
         "evaluator": {
             "lookup": {
@@ -555,7 +555,7 @@ def test_execute_with_training_data_ingests_d000_no_oracle(tmp_path):
     _make_pool(pool_dir, n=4)
 
     (tmp_path / "PROBLEM_STATEMENT.md").write_text("Surrogate study")
-    (tmp_path / "replicate.py").write_text("# test\n")
+    (tmp_path / "pipeline.py").write_text("# test\n")
     (tmp_path / "config.yaml").write_text(
         _yaml.dump({"training_data": "pool"})
     )

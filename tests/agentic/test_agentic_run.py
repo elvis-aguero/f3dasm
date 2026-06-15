@@ -23,7 +23,7 @@ def make_stub_run(tmp_path, strat_responses=None, impl_responses=None):
     from f3dasm._src.agentic.graph_builder import build_graph
 
     (tmp_path / "PROBLEM_STATEMENT.md").write_text("Solve: find minimum of f(x)=x^2")
-    (tmp_path / "replicate.py").write_text("# test replicate\n")
+    (tmp_path / "pipeline.py").write_text("# test pipeline\n")
 
     strat_resps = strat_responses or ["Done."]
     impl_resps = impl_responses or ["## Report\nDone."]
@@ -92,7 +92,7 @@ def test_agentic_run_reads_problem_statement(tmp_path):
         def invoke(self, messages):
             messages_seen.extend(messages)
             if "WriteDeliverable" in self.closure_tools:
-                self.closure_tools["WriteDeliverable"]("replicate.py", "# test\n")
+                self.closure_tools["WriteDeliverable"]("pipeline.py", "# test\n")
             self.closure_tools["Done"](summary="Captured")  # first: warning
             self.closure_tools["Done"](summary="Captured")  # second: close
             return "Done."

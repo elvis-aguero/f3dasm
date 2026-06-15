@@ -104,6 +104,12 @@ PREFER f3dasm primitives over raw numpy/scipy equivalents.
   merged = data + data2
 
 ─── THE CANONICAL ORACLE — get_evaluator() is the ONLY way to evaluate ──
+  # The shared picture: the pipeline is the deliverable (a recipe whose
+  # ground-truth run step is get_evaluator()); your delegation is one bounded
+  # experiment on it — often swapping a block (sampler/surrogate/optimizer) to
+  # test a hypothesis, sometimes just running more samples or a falsification
+  # probe. Whatever you do, true-oracle evaluations go through ONE door:
+  #
   # The ground-truth oracle is already registered by the runtime (whether it
   # was shipped with the study or built by the DataGeneratorAgent). You reach
   # it through ONE call — no imports, no paths, no arguments:

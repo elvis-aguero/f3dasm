@@ -67,14 +67,35 @@ Only delegate if a literature_reviewer is listed in your available targets:
           sample.store("y", result)
           return sample
 
-─── VALIDATION REQUIREMENT ──────────────────────────────────────────────────
-  # Always run one sample before delivering the artifact:
+─── execute() CONTRACT (Pattern B — NON-NEGOTIABLE) ──────────────────────────
+  # A DataGenerator subclass's execute() has EXACTLY this shape. The runtime's
+  # driver (gen.call → execute) passes ONE positional ExperimentSample. There
+  # is no other valid signature.
+  #   def execute(self, experiment_sample: ExperimentSample, **kwargs) -> ExperimentSample:
+  #       x = experiment_sample.input_data        # read inputs from the sample
+  #       experiment_sample.store("<out>", value) # write outputs onto the sample
+  #       return experiment_sample                # return the SAME sample
+  #
+  # ANTI-PATTERN — DO NOT do this in a subclass (it silently breaks the
+  # canonical pipeline; the driver passes a SAMPLE, not your kwargs):
+  #   def execute(self, x1=None, x2=None, ...) -> float:   # ✗ per-dim kwargs
+  #       return float(raw(x1, ...))                        # ✗ returns a scalar
+  # If your source is a plain function of named scalars, use PATTERN A (the
+  # decorator) — it does the sample↔kwargs marshalling for you. A subclass does
+  # NOT: you must read from experiment_sample and store back onto it yourself.
+
+─── VALIDATION REQUIREMENT (through the canonical driver) ────────────────────
+  # Validate by driving the generator the SAME way the implementer will —
+  # via .call() (NOT by calling your raw function directly). This is what
+  # catches a wrong execute() signature; a direct call would not.
   from f3dasm import ExperimentData
   from f3dasm.design import Domain
   test_data = ExperimentData(domain=domain)
   test_data.sample(sampler="random", n_samples=1, seed=0)
-  test_result = my_gen.call(test_data, mode="sequential")
-  assert not test_result.to_pandas()["y"].isna().any(), "output is NaN"
+  test_result = my_gen.call(test_data, mode="sequential")   # canonical driver
+  out = test_result.to_pandas()[1]            # output frame
+  assert not out.isna().any().any(), "output is NaN — execute() likely has the wrong signature"
+  # validate_{name}.json MUST record that validation went through .call().
 
 ─── OUTPUT CONTRACT ─────────────────────────────────────────────────────────
   # Save THREE files to your generators subfolder:

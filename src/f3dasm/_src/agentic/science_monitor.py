@@ -289,7 +289,7 @@ class ScienceMonitor:
                 "wrote none to the canonical ledger — it bypassed "
                 "get_evaluator(). Fine for throwaway exploration, but any "
                 "number that feeds the HEADLINE must come from ledgered "
-                "rows or replicate.py cannot reproduce it. If this "
+                "rows or pipeline.py cannot reproduce it. If this "
                 "delegation's results back a conclusion, re-run them via "
                 "get_evaluator().",
             ))

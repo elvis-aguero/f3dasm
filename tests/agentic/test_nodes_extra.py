@@ -54,7 +54,7 @@ def _make_state(study_dir=None, **kwargs):
     import tempfile
     if study_dir is None:
         d = Path(tempfile.mkdtemp(prefix="f3dasm_nodes_extra_"))
-        (d / "replicate.py").write_text("# test\n")
+        (d / "pipeline.py").write_text("# test\n")
         study_dir = d
     return AgenticState(
         messages=[HumanMessage(content="Test problem")],
@@ -345,7 +345,7 @@ def test_writenote_and_readnote(tmp_path):
     """WriteNote writes a file to strategizer_notes/; the file should be created."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
-    (tmp_path / "replicate.py").write_text("# r\n")
+    (tmp_path / "pipeline.py").write_text("# r\n")
     # run_dir/debug/strategizer_notes is where WriteNote will write
     run_dir = tmp_path / "run"
     notes_dir = run_dir / "debug" / "strategizer_notes"

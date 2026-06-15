@@ -509,55 +509,6 @@ def test_reset_template_structure_after_formatting():
 
 
 # ---------------------------------------------------------------------------
-# Test 15 — Runtime integration: agent_runtime imports all four constants
-# ---------------------------------------------------------------------------
-
-@pytest.mark.skip(
-    reason="agent_runtime.py no longer imports all prompt constants directly "
-    "(LangGraph port moved them to nodes.py); scheduled for review in Task 10"
-)
-def test_runtime_imports_all_four_constants():
-    """``agent_runtime.py`` imports all four prompt constants from
-    ``agent_prompts``.
-
-    Notes
-    -----
-    This is a textual grep check; it does not execute the runtime module
-    (which requires the Claude Agent SDK).  The check is intentionally
-    lightweight: we verify the source file references the names, not that
-    the import succeeds at runtime.
-    """
-    import pathlib
-
-    runtime_path = pathlib.Path(
-        "src/f3dasm/_src/agentic/agent_runtime.py"
-    )
-    # Resolve relative to the repo root (two parents above tests/).
-    if not runtime_path.is_absolute():
-        repo_root = (
-            pathlib.Path(__file__).parent.parent.parent
-        )
-        runtime_path = repo_root / runtime_path
-
-    assert runtime_path.exists(), (
-        f"agent_runtime.py not found at {runtime_path}"
-    )
-
-    source = runtime_path.read_text(encoding="utf-8")
-
-    required_names = [
-        "STRATEGIZER_SYSTEM_PROMPT",
-        "IMPLEMENTER_SYSTEM_PROMPT",
-        "CHECKPOINT_STRATEGIZER_PROMPT",
-        "IMPLEMENTER_RESET_PROMPT_TEMPLATE",
-    ]
-    for name in required_names:
-        assert name in source, (
-            f"agent_runtime.py does not reference '{name}'"
-        )
-
-
-# ---------------------------------------------------------------------------
 # NEW Test 16 — Piece A: hypothesis_log tag appears exactly once
 # ---------------------------------------------------------------------------
 
@@ -1016,52 +967,6 @@ def test_reflect_diagnosis_default_exists_and_keyword():
     assert "malformed" in REFLECT_DIAGNOSIS_DEFAULT.lower(), (
         "REFLECT_DIAGNOSIS_DEFAULT does not mention 'malformed'"
     )
-
-
-# ---------------------------------------------------------------------------
-# NEW Test 35 — Runtime integration: agent_runtime imports all 11 constants
-# ---------------------------------------------------------------------------
-
-@pytest.mark.skip(
-    reason="agent_runtime.py no longer imports all prompt constants directly "
-    "(LangGraph port moved them to nodes.py); scheduled for review in Task 10"
-)
-def test_runtime_imports_all_new_constants():
-    """``agent_runtime.py`` imports all seven new prompt constants.
-
-    Notes
-    -----
-    Textual grep check — same lightweight approach as Test 15.
-    """
-    import pathlib
-
-    runtime_path = pathlib.Path(
-        "src/f3dasm/_src/agentic/agent_runtime.py"
-    )
-    if not runtime_path.is_absolute():
-        repo_root = pathlib.Path(__file__).parent.parent.parent
-        runtime_path = repo_root / runtime_path
-
-    assert runtime_path.exists(), (
-        f"agent_runtime.py not found at {runtime_path}"
-    )
-
-    source = runtime_path.read_text(encoding="utf-8")
-
-    new_names = [
-        "RUN_PATHS_PREAMBLE_TEMPLATE",
-        "WORKSPACE_PREAMBLE_TEMPLATE",
-        "IMPLEMENTER_REPORT_RETRY_PROMPT",
-        "REFLECT_DIAGNOSIS_SHORT",
-        "REFLECT_DIAGNOSIS_CAPABILITY_LIMIT",
-        "REFLECT_DIAGNOSIS_MISSING_SUBSECTIONS_TEMPLATE",
-        "REFLECT_DIAGNOSIS_NO_REPORT_HEADING",
-        "REFLECT_DIAGNOSIS_DEFAULT",
-    ]
-    for name in new_names:
-        assert name in source, (
-            f"agent_runtime.py does not reference '{name}'"
-        )
 
 
 # ---------------------------------------------------------------------------

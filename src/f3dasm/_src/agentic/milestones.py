@@ -78,9 +78,11 @@ class DefaultMilestone:
 # M2 + M3 always seed.
 CRAFT_PIPELINE = DefaultMilestone(
     "craft_pipeline",
-    "Engage deeply with the scientific task. Craft a reasonable f3dasm "
-    "Pipeline object (stub blocks / fake data are fine) as a baseline to "
-    "beat — this is your top-down plan, not a throwaway.",
+    "Engage deeply with the scientific task and draft pipeline.py — the f3dasm "
+    "Pipeline that is your top-down plan AND your single deliverable. Start "
+    "with stub blocks; grow it into the real, lazy create→run→analyze pipeline "
+    "(loads the ledger, oracle via get_evaluator(), caches heavy blocks) that "
+    "the runtime executes to reproduce the headline. Not a throwaway.",
     _pipeline_drafted,
 )
 ASSESS_LITERATURE = DefaultMilestone(
@@ -258,7 +260,10 @@ def render_backlog(ledger: MilestoneLedger) -> str:
         "MilestoneSkip(id, reason) if your study genuinely doesn't need it. "
         "They're independent (do them in any order, even concurrently) and "
         "block ONLY the implementer; delegating to the literature_reviewer or "
-        "datagenerator to satisfy one is never blocked. Tick with "
+        "datagenerator to satisfy one is never blocked. Use the proper agent "
+        "for each delegation — match the task to the role built for it (oracle "
+        "standardization belongs to a dedicated oracle/datagenerator agent when "
+        "your graph has one, not the generic implementer). Tick with "
         "MilestoneComplete(id, brief).\n\n"
         f"{lines}\n"
         "</process_backlog>"

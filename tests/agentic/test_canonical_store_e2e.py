@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from f3dasm import ExperimentData, datagenerator
+from f3dasm import ExperimentData
 from f3dasm._src.samplers import RandomUniform
 from f3dasm.design import Domain
 from f3dasm._src.agentic.agent_runtime import _init_canonical_store
@@ -21,16 +21,24 @@ def test_runtime_config_to_store_roundtrip(tmp_path, monkeypatch):
     (run_dir / "debug" / "delegations" / "D001").mkdir(parents=True)
     study_dir = tmp_path / "agentic_demo_study"
     study_dir.mkdir()
-    cfg = _init_canonical_store(run_dir, study_dir)
+    # Register the oracle as a study entrypoint (the runtime's job); the worker
+    # then reaches it through the ONE door, get_evaluator(), with no overrides.
+    (study_dir / "bb_eval.py").write_text(
+        "def evaluate_kw(**kwargs):\n"
+        "    return float(sum(kwargs.values()))\n"
+    )
+    cfg = _init_canonical_store(
+        run_dir, study_dir,
+        evaluator_config={
+            "entrypoint": "bb_eval.py:evaluate_kw",
+            "output_names": ["f"],
+        },
+    )
 
     # 2. a worker, cwd == its delegation folder, obtains the evaluator
     monkeypatch.chdir(run_dir / "debug" / "delegations" / "D001")
 
-    @datagenerator(output_names=["f"])
-    def black_box(**kw):
-        return float(sum(kw.values()))
-
-    gen = get_evaluator(inner=black_box)
+    gen = get_evaluator()
     assert gen.delegation_id == "D001"
     assert gen.source == "agentic_demo_study"  # evaluator_name → source
 

@@ -82,6 +82,40 @@ def _stamped_eval_count(store_dir: Path | None, delegation_id: str) -> int:
     return 0
 
 
+def _reconcile_delegation_evals(
+    store_dir: Path | None,
+    delegation_id: str,
+    claimed: int,
+    source_registered: bool,
+) -> tuple[int, bool, int]:
+    """Reconcile a worker's claimed eval count against the canonical store.
+
+    The canonical store is the single source of truth. When a ground-truth
+    source is registered and the worker CLAIMED evaluations but NONE are
+    provenance-stamped in the store, the delegation evaluated off-ledger: the
+    truthful count is 0. Otherwise fall back to the usual resolution (ledger
+    rows if any, else the honour-system claim — e.g. lookup-direct studies).
+
+    Used on BOTH the normal-return and the cancel/detach path so an off-ledger
+    delegation cannot silently keep a claimed-but-unledgered eval count.
+
+    Returns
+    -------
+    (evals, off_ledger, stamped)
+        ``evals`` — the truthful count to record; ``off_ledger`` — True when the
+        claim could not be backed by stamped rows; ``stamped`` — stamped row
+        count (for diagnostics).
+    """
+    stamped = _stamped_eval_count(store_dir, delegation_id)
+    if source_registered and claimed > 0 and stamped == 0:
+        return 0, True, stamped
+    return (
+        _resolve_delegation_evals(store_dir, delegation_id, claimed),
+        False,
+        stamped,
+    )
+
+
 def _parse_verdict(text: str) -> str:
     """Extract the critic's GATE verdict (PASS/REVISE/REJECT/…) from its text.
 

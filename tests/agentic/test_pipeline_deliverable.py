@@ -34,7 +34,7 @@ def test_seed_includes_pipeline_only_when_requested(tmp_path):
     keys = {m["key"] for m in led2.list_all()}
     assert "craft_pipeline" in keys
     dp = [m for m in led2.list_all() if m["key"] == "craft_pipeline"][0]
-    assert "baseline to beat" in dp["description"].lower()
+    assert "single deliverable" in dp["description"].lower()
     assert "engage deeply" in dp["description"].lower()
 
 

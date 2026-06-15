@@ -36,7 +36,7 @@ def _graph_study_dir():
         import tempfile
         from pathlib import Path
         d = Path(tempfile.mkdtemp(prefix="f3dasm_graph_test_"))
-        (d / "replicate.py").write_text("# test replicate\n")
+        (d / "pipeline.py").write_text("# test pipeline\n")
         _GRAPH_TEST_STUDY_DIR = d
     return _GRAPH_TEST_STUDY_DIR
 

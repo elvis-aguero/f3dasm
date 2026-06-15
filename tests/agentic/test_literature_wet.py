@@ -138,10 +138,10 @@ def test_literature_review_wet(tmp_path):
                     _time.sleep(0.5)
 
             summary = worker_report or "Literature review complete."
-            # replicate.py is a hard Done() requirement.
+            # pipeline.py is a hard Done() requirement.
             if "WriteDeliverable" in self.closure_tools:
                 self.closure_tools["WriteDeliverable"](
-                    "replicate.py",
+                    "pipeline.py",
                     "# Reproduce: re-run the literature review "
                     "delegation in this test.\n",
                 )

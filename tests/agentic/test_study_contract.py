@@ -58,7 +58,8 @@ def test_documented_config_keys_resolve_through_agenticrun():
     assert run._backend == "claude"
     assert "haiku" in run._model
     assert run._eval_budget == 200
-    assert run._required_deliverables == ["replicate.py", "solution.md"]
+    # pipeline.py is auto-required (not listed); solution.md is auto-written.
+    assert run._required_deliverables == []
 
 
 def test_example_evaluator_resolves_and_runs(tmp_path, monkeypatch):

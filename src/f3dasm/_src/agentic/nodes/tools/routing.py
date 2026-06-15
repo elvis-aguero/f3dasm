@@ -17,9 +17,20 @@ from ..parsing import (
     _classify_response,
     _consult_handbook,
     _parse_verdict,
-    _resolve_delegation_evals,
+    _reconcile_delegation_evals,
     _stamped_eval_count,
 )
+
+# Roles whose delegations actually reach the ground-truth oracle and so are
+# subject to the eval-ledger guards (raw-oracle nudge, unledgered bounce,
+# off-ledger reconciliation). Role-based (not node-name-based) so it stays
+# forward-compatible across node renames. The literature_reviewer (no oracle),
+# datagenerator (legitimately builds/validates the oracle), and critic/
+# strategizer are NOT evaluators and must be exempt — else they get bounced /
+# nudged for work that never touches get_evaluator(). DebuggerAgent inherits
+# role "implementer"; "debugger" is listed too for when it carries its own.
+_LEDGER_GUARD_ROLES = frozenset({"implementer", "debugger"})
+
 
 # Forward-compatible delegation-target resolution. Agents repeatedly name a
 # target by CAPABILITY rather than the exact graph node name — e.g.
@@ -505,6 +516,9 @@ def build_routing_tools(node) -> dict:
                     set_delegation_id as _set_did,
                 )
                 from ...backends.base import (
+                    set_oracle_registered as _set_oracle_reg,
+                )
+                from ...backends.base import (
                     set_transcript_sink as _set_sink,
                 )
 
@@ -513,6 +527,22 @@ def build_routing_tools(node) -> dict:
                 # env → get_evaluator() resolves without a mandatory cd
                 # into D### (audit Finding 2).
                 _set_did(delegation_id)
+
+                # The eval-ledger guards apply ONLY to evaluator roles
+                # (implementer/debugger) AND only once a canonical oracle is
+                # registered. Non-evaluator roles (literature_reviewer,
+                # datagenerator, critic) never reach get_evaluator(), so
+                # nudging/bouncing them is a false positive. This one flag
+                # gates all three guards below.
+                _guard_agent = (
+                    node._spec.nodes.get(target) if node._spec else None
+                )
+                _target_role = getattr(_guard_agent, "role", None)
+                _enforce_ledger = (
+                    node._canonical_source_registered()
+                    and _target_role in _LEDGER_GUARD_ROLES
+                )
+                _set_oracle_reg(_enforce_ledger)
 
                 # DEBUG: stream this worker's full reasoning + tool-calls
                 # to debug/transcripts/{delegation_id}.jsonl (thread-local;
@@ -552,16 +582,17 @@ def build_routing_tools(node) -> dict:
                 # bypassed get_evaluator(), so its numbers can't anchor a
                 # headline. Bounce it back to re-run through get_evaluator,
                 # in-place, instead of making the strategizer spend a whole
-                # new delegation re-ledgering. ONLY when a canonical source
-                # is registered (else get_evaluator can't work and the fix
-                # is upstream — the strategizer source nudge handles that).
+                # new delegation re-ledgering. ONLY for evaluator roles with a
+                # registered source (a non-evaluator like the literature
+                # reviewer never reaches get_evaluator, so bouncing it is
+                # pointless — see _enforce_ledger above).
                 # Soft: after 3 tries, accept anyway.
                 _bounce_store = (
                     node._current_notes_dir.parent.parent
                     / "experiment_data"
                     if node._current_notes_dir is not None else None
                 )
-                if node._canonical_source_registered():
+                if _enforce_ledger:
                     from ...agent_prompts import (
                         UNLEDGERED_EVALS_RETRY_PROMPT,
                     )
@@ -648,10 +679,21 @@ def build_routing_tools(node) -> dict:
                     _notes.parent.parent / "experiment_data"
                     if _notes is not None else None
                 )
-                _evals = _resolve_delegation_evals(
-                    _store_dir,
-                    delegation_id,
-                    evals_box["count"],
+                # Honesty reconciliation (runs on BOTH the normal-return and
+                # the cancel/detach path): the canonical store is the single
+                # source of truth for the eval count. If a source is registered
+                # and the worker CLAIMED evals but NONE are provenance-stamped
+                # in the store, trust the store (count 0), not the claim — and
+                # flag it loudly below so the strategizer re-runs through
+                # get_evaluator() instead of re-wording the conclusion.
+                _claimed_evals = evals_box["count"]
+                _evals, _off_ledger, _stamped_evals = (
+                    _reconcile_delegation_evals(
+                        _store_dir,
+                        delegation_id,
+                        _claimed_evals,
+                        _enforce_ledger,
+                    )
                 )
                 with node._registry_lock:
                     _detached = (
@@ -679,6 +721,25 @@ def build_routing_tools(node) -> dict:
                         f"[Delegation {delegation_id} "
                         + ("completed after cancellation — result discarded]"
                            if _detached else "Done]")
+                    )
+                # Loud, single record of the off-ledger condition — on the
+                # cancel/detach path too (which the bounce above never reaches),
+                # so a cancelled delegation that evaluated off-ledger can no
+                # longer vanish silently.
+                if _off_ledger:
+                    node._record_intervention(
+                        "OFF_LEDGER_EVALS", target,
+                        f"{delegation_id} claimed {_claimed_evals} evals but 0 "
+                        "are provenance-stamped in the canonical store — "
+                        "counted as 0"
+                        + (" (delegation was cancelled/detached)"
+                           if _detached else "")
+                        + ". The ground-truth evaluations did not go through "
+                        "get_evaluator(); re-run them so the headline is "
+                        "reproducible from the store.",
+                        claimed=_claimed_evals,
+                        stamped=_stamped_evals,
+                        detached=_detached,
                     )
                 # Write delegation record to graph-wide delegation log
                 if node._delegation_log is not None:
@@ -918,12 +979,15 @@ def build_routing_tools(node) -> dict:
             )
             hints.append(
                 f"{firmness}Polled {poll_count}× ({elapsed}s) — polling does "
-                "NOT make it finish faster. Three options: (a) do other work "
-                "now (start another delegation, write notes, analyse results "
-                "so far); (b) CancelDelegation('" + delegation_id + "') if you "
-                "no longer need it; (c) just wait — stop polling and it'll be "
-                "ready when ready (poll once, occasionally). For future "
-                "sequential tasks, Delegate(wait=True) blocks with zero polling."
+                "NOT make it finish faster, and slow is NOT stuck (a long "
+                "campaign is still producing ledgered evals). Best move: (a) do "
+                "other work now (start another delegation, write notes, analyse "
+                "results so far); (b) just wait — poll once, occasionally, and "
+                "it'll be ready when ready. Only CancelDelegation('"
+                + delegation_id + "') if you genuinely no longer WANT its result "
+                "(wrong approach / superseded) — never just because it's slow; "
+                "cancelling throws away its findings. For future sequential "
+                "tasks, Delegate(wait=True) blocks with zero polling."
             )
 
         # Budget broadcast: check if a new 10%-overbudget threshold is reached.
@@ -978,13 +1042,17 @@ def build_routing_tools(node) -> dict:
         )
 
     def CancelDelegation(delegation_id: str) -> str:
-        """Detach a still-running delegation so it no longer blocks Done().
+        """Detach a delegation whose RESULT you no longer want.
 
-        Marks it Cancelled: it is excluded from the active-delegation check and
-        its eventual result is discarded, though its token usage is still
-        accounted. The background worker is not force-killed (it finishes on
-        its own and is ignored). Use when a delegation is no longer needed —
-        e.g. it has run long enough, or you want to conclude without it."""
+        Cancel ONLY when the output is genuinely unwanted — a wrong approach, a
+        superseded plan, a true dead-end. Do NOT cancel a delegation because it
+        is slow: a Working delegation is almost always still producing real,
+        ledgered evaluations (the worker runs in a background thread — slow is
+        not stuck). Cancelling discards its REPORT, so its findings never reach
+        your conclusion; its already-written ledger rows remain (and still
+        count). If you just want to make progress meanwhile, do other work in
+        parallel and let it finish. A delegation that has already produced
+        ledgered evals is two-shot: call twice to confirm."""
         prefix = node._drain_notifications()
         with node._registry_lock:
             entry = node._registry.get(delegation_id)
@@ -999,11 +1067,31 @@ def build_routing_tools(node) -> dict:
                     prefix + f"Delegation {delegation_id} is {st!r}, not "
                     "running — nothing to cancel."
                 )
+            # Harden against impatience: a delegation already writing ledgered
+            # evals is progressing, not stuck. Require a deliberate second call
+            # so a slow-but-healthy campaign can't be discarded on a whim.
+            _store = (
+                node._current_notes_dir.parent.parent / "experiment_data"
+                if node._current_notes_dir is not None else None
+            )
+            _stamped = _stamped_eval_count(_store, delegation_id) if _store else 0
+            if _stamped > 0 and not entry.get("cancel_pending"):
+                entry["cancel_pending"] = True
+                return (
+                    prefix + f"HOLD: {delegation_id} has already written "
+                    f"{_stamped} provenance-stamped evaluation(s) to the "
+                    "canonical ledger — it is progressing, not stuck. "
+                    "Cancelling discards its REPORT (its findings won't reach "
+                    "your conclusion); the evals remain. If it is merely slow, "
+                    "do other work in parallel and let it finish. If its result "
+                    "is genuinely unwanted, call CancelDelegation('"
+                    + delegation_id + "') again to confirm."
+                )
             entry["status"] = "Cancelled"
         with node._notifications_lock:
             node._notifications.append(
                 f"[Delegation {delegation_id} cancelled — detached; its "
-                "result will be ignored]"
+                "report is discarded (its ledgered evals remain)]"
             )
         return (
             prefix + f"Delegation {delegation_id} cancelled (detached): "
@@ -1039,7 +1127,7 @@ def build_routing_tools(node) -> dict:
 
         Call only when: a best design is in hand with numerical support from
         Reports; at least one falsification attempt has been carried out; and
-        replicate.py has been written via WriteDeliverable("replicate.py", …).
+        pipeline.py has been written via WriteDeliverable("pipeline.py", …).
         summary should state the best design + supporting numbers + the
         falsification outcome + remaining uncertainty.
 
@@ -1069,8 +1157,10 @@ def build_routing_tools(node) -> dict:
                 "start another delegation while these finish;\n"
                 "  (b) wait, then GetStatus(<id>) on each and interpret its "
                 "results before you conclude;\n"
-                "  (c) CancelDelegation(<id>) if a delegation is no longer "
-                "needed — it detaches and stops blocking Done().\n"
+                "  (c) CancelDelegation(<id>) ONLY if you genuinely no longer "
+                "want that delegation's result — not to close faster; a "
+                "running delegation is usually still producing ledgered evals, "
+                "and cancelling discards its findings.\n"
                 "Re-call Done() once none are still running. "
                 "(Tip: Delegate(wait=True) avoids this for sequential tasks.)"
             )
@@ -1203,9 +1293,11 @@ def build_routing_tools(node) -> dict:
                 f"strategizer_notes     = {notes_path}\n"
                 "delegations_workspace = "
                 f"{_debug_dir}/delegations/\n"
-                f"deliverable           = {_study_dir}/replicate.py "
-                "(solution.md is written by the runtime AFTER this gate, "
-                "from the accepted summary — do NOT flag it as missing)\n"
+                f"deliverable           = {_study_dir}/pipeline.py "
+                "(the runtime EXECUTES it lazily after this gate to verify the "
+                "headline re-derives from the ledger with zero new evals; "
+                "solution.md is written by the runtime AFTER this gate, from "
+                "the accepted summary — do NOT flag it as missing)\n"
                 "</paths>\n\n"
                 # FULL conclusion — never truncate what the adversarial gate
                 # must validate (a head-excerpt would let an over-claim in
@@ -1634,7 +1726,7 @@ def build_routing_tools(node) -> dict:
     def WriteDeliverable(filename: str, content: str) -> str:
         """Write a final deliverable file to runs/<timestamp>/ (alongside solution.md).
 
-        Use to produce replicate.py or other top-level artifacts.
+        Use to produce pipeline.py or other top-level artifacts.
         filename must end in .py or .md. Content is written verbatim.
         """
         prefix = node._drain_notifications()

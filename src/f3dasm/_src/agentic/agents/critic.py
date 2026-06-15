@@ -66,13 +66,17 @@ For every claim or conclusion in the document, ask:
    outputs?  Flag any discrepancy between claimed and observed values.
 
 6. REPRODUCIBILITY GATE (binding)
-   replicate.py must exist AND re-derive the headline by loading the
-   canonical ExperimentData store and computing the value from ledgered
-   rows — NOT by hardcoding the number.  Read it and judge: would a clean
-   run reproduce the headline from the store alone?  Absence, a hardcoded
-   headline, or a headline that cannot be reconstructed from ledgered
-   rows is a CRITICAL finding — the run is not reproducible.  This gate
-   — provenance + replicability of the headline — is how scientific
+   pipeline.py must exist AND, read as a human would, be a faithful f3dasm
+   Pipeline of the whole process that re-derives the headline FROM the
+   canonical ledger — loading it (ExperimentData.from_file), reaching the
+   oracle only via get_evaluator(), computing the value from ledgered rows,
+   NOT hardcoding it. Absence, a hardcoded headline, a headline that cannot
+   be reconstructed from ledgered rows, or a pipeline that would re-evaluate
+   the oracle / refit heavy models on a re-run (not lazy) is a CRITICAL
+   finding. NOTE: the runtime EXECUTES pipeline.py lazily after this gate
+   (asserting zero new evals + self-assert) as the binding check — your job
+   is to judge readability, faithfulness, and that the headline derives from
+   the ledger. This gate — provenance + replicability — is how scientific
    integrity is enforced, NOT the eval count.
 </adversarial_checklist>
 

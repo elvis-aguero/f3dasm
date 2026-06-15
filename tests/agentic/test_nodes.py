@@ -61,7 +61,7 @@ _DEFAULT_STUDY_DIR: Path | None = None
 
 
 def _default_study_dir() -> Path:
-    """Return a shared temp study dir with replicate.py pre-written.
+    """Return a shared temp study dir with pipeline.py pre-written.
 
     Created once per test session; all make_state() calls that don't supply
     an explicit study_dir share this directory so Done() always has the
@@ -71,7 +71,7 @@ def _default_study_dir() -> Path:
     if _DEFAULT_STUDY_DIR is None:
         import tempfile
         d = Path(tempfile.mkdtemp(prefix="f3dasm_test_"))
-        (d / "replicate.py").write_text("# test replicate\n")
+        (d / "pipeline.py").write_text("# test pipeline\n")
         _DEFAULT_STUDY_DIR = d
     return _DEFAULT_STUDY_DIR
 
@@ -369,7 +369,7 @@ def test_strategizer_delegate_includes_expected_report_in_message():
             self.closure_tools["Delegate"](
                 target="implementer",
                 intent="Run the experiment.",
-                expected_report="Must produce workspace/replicate.py",
+                expected_report="Must produce workspace/pipeline.py",
             )
             time.sleep(0.1)  # let worker finish
             self.closure_tools["Done"](summary="done")
@@ -386,7 +386,7 @@ def test_strategizer_delegate_includes_expected_report_in_message():
 
     assert received_messages, "Worker was never called"
     task_content = received_messages[0][0]["content"]
-    assert "workspace/replicate.py" in task_content
+    assert "workspace/pipeline.py" in task_content
     assert "Required deliverables" in task_content
 
 
@@ -2185,7 +2185,7 @@ def test_missing_deliverables_normalizes_workspace_prefix(tmp_path):
     actually writes at study_dir/ (audit Finding 1 — the resonance UNGATED bug)."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
-    (tmp_path / "replicate.py").write_text("x")
+    (tmp_path / "pipeline.py").write_text("x")
     (tmp_path / "solution.md").write_text("y")
     node = StrategizerNode(
         StubAdapter(), name="strategizer", outgoing=["implementer"],
@@ -2194,7 +2194,7 @@ def test_missing_deliverables_normalizes_workspace_prefix(tmp_path):
     # Prefixed paths still resolve to the bare files at study root → none missing.
     state = {
         "study_dir": str(tmp_path),
-        "required_deliverables": ["workspace/replicate.py", "workspace/solution.md"],
+        "required_deliverables": ["workspace/pipeline.py", "workspace/solution.md"],
     }
     assert node._missing_deliverables(state) == []
     # A genuinely absent deliverable is still reported (as a bare name).
@@ -2245,10 +2245,10 @@ def test_write_deliverable_writes_py_file(tmp_path):
     node._current_notes_dir = notes_dir
 
     result = node.adapter.closure_tools["WriteDeliverable"](
-        "replicate.py", "import f3dasm\nprint('hello')"
+        "pipeline.py", "import f3dasm\nprint('hello')"
     )
     assert result.startswith("Written:"), f"Unexpected result: {result!r}"
-    written = study_dir / "replicate.py"
+    written = study_dir / "pipeline.py"
     assert written.exists(), f"File not found at {written}"
     assert "import f3dasm" in written.read_text()
 
@@ -2318,7 +2318,7 @@ def test_write_deliverable_rejects_path_separators(tmp_path):
     node._current_notes_dir = notes_dir
 
     result = node.adapter.closure_tools["WriteDeliverable"](
-        "sub/replicate.py", "code"
+        "sub/pipeline.py", "code"
     )
     assert result.startswith("ERROR:"), f"Expected ERROR, got: {result!r}"
 
@@ -2336,7 +2336,7 @@ def test_write_deliverable_returns_error_without_notes_dir(tmp_path):
     node._current_notes_dir = None  # simulate pre-run state
 
     result = node.adapter.closure_tools["WriteDeliverable"](
-        "replicate.py", "code"
+        "pipeline.py", "code"
     )
     assert result.startswith("ERROR:"), f"Expected ERROR, got: {result!r}"
 
@@ -2891,7 +2891,7 @@ def test_done_critic_gate_embeds_ledger_and_falsification_flags(tmp_path):
        Worker returns a report with best_y: 1.47.
     3. Updates H1 to SUPPORTED with evidence citing that delegation,
        posterior=0.9.
-    4. Writes replicate.py via WriteDeliverable (required deliverable).
+    4. Writes pipeline.py via WriteDeliverable (required deliverable).
     5. Calls Done() twice (two-shot).
 
     The critic StubAdapter captures the task_msg it receives.
@@ -2979,7 +2979,7 @@ def test_done_critic_gate_embeds_ledger_and_falsification_flags(tmp_path):
             )
             # 4. Write required deliverable
             self.closure_tools["WriteDeliverable"](
-                "replicate.py", "# replicate\nprint('done')"
+                "pipeline.py", "# pipeline\nprint('done')"
             )
             # 4b. Resolve process milestones (orthogonal to this test) so the
             # Done() close-gate lets us reach the critic gate under test.

@@ -4,6 +4,5 @@ eval_budget: 200
 evaluator:
   entrypoint: "workspace/evaluator.py:evaluate"
   output_names: [y]
-required_deliverables:
-  - replicate.py
-  - solution.md
+# pipeline.py is the single deliverable and is auto-required; solution.md is
+# auto-written by the runtime. List required_deliverables only for EXTRA files.

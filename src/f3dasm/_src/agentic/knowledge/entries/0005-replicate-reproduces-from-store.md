@@ -1,23 +1,30 @@
 ---
-id: replicate-reproduces-from-store
-title: replicate.py must re-derive the headline from the canonical store
-tags: [replicate, reproducibility, deliverable, critic, headline]
+id: pipeline-reproduces-from-store
+title: pipeline.py is the deliverable — lazy, and it reproduces the headline from the store
+tags: [pipeline, reproducibility, deliverable, critic, headline, lazy]
 audience: [strategizer, implementer]
 ---
-`replicate.py` must load the canonical ExperimentData store and **re-derive**
-the headline number from ledgered rows — never hardcode it. The critic's
-reproducibility gate checks exactly this: would a clean run reproduce the
-headline from the store alone?
+The single deliverable is `pipeline.py`: a human-readable f3dasm Pipeline of the
+whole data-driven process that ALSO reproduces the headline. The runtime
+EXECUTES it lazily after the critic gate, asserting the headline re-derives from
+the canonical ledger with ZERO new oracle evaluations. Hand-authored idxmin
+scripts are gone — running the pipeline IS the reproduction.
 
-Practical notes that have bitten runs before:
-- Use an absolute, self-locating path to the store, not a bare relative one:
+It must be LAZY:
+- **Oracle:** load the canonical store (`ExperimentData.from_file`) and reach the
+  oracle only via `get_evaluator()`. f3dasm skips already-`FINISHED` rows, so a
+  fresh run does the full campaign while a re-run evaluates nothing (see
+  [[evaluate-through-get-evaluator]]).
+- **Heavy non-oracle blocks** (a fitted GP/NN/RF surrogate, costly analysis):
+  f3dasm's row-laziness does NOT cover these — cache-or-load them yourself.
+  Persist the artifact (`Domain.add_output(name, to_disk=True, store_function=,
+  load_function=)`, or a plain "load if the file exists else fit+save" guard) so
+  a re-run does not refit. See [[surrogates-are-off-ledger]].
 
-  ```python
-  import os
-  here = os.path.dirname(os.path.abspath(__file__))
-  store = os.path.join(here, "experiment_data")  # adjust to your layout
-  ```
-
-- The headline must be reachable from provenance-stamped rows (see
-  [run ground-truth evaluations through get_evaluator()]). If the headline
-  came from an off-ledger computation, the gate will reject it.
+And SELF-REPRODUCING:
+- Derive the headline from ledgered rows in a final analysis step and `assert`
+  it against the reported number — never hardcode the answer; deriving it IS the
+  reproduction.
+- Read the store from the `F3DASM_CANONICAL_STORE` env var when set (the runtime
+  gate sets it), else a self-locating path — never a brittle cwd-relative guess
+  (that is what broke past runs).

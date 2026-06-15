@@ -339,6 +339,10 @@ def load_inner_evaluator(
         except TypeError:
             pass
 
+        # DataGenerator instance (already decorated) → return as-is
+        if isinstance(obj, DataGenerator):
+            return obj
+
         # Callable (bare function) → wrap with @datagenerator.
         # The contract: the callable accepts **kwargs whose keys are
         # the ExperimentSample's input column names.  We create a thin
@@ -388,21 +392,19 @@ def load_inner_evaluator(
 # ==========================================================================
 
 
-def get_evaluator(inner: Optional[DataGenerator] = None) -> (
-    InstrumentedDataGenerator
-):
-    """Factory that creates an InstrumentedDataGenerator for a delegation.
+def get_evaluator() -> InstrumentedDataGenerator:
+    """The ONE door to the registered ground-truth oracle.
 
     Locates ``run_config.json`` by walking up from ``Path.cwd()``, reads
     all configuration from it, and derives the delegation ID from the
     current working directory name (expected pattern ``D###``).
 
-    Parameters
-    ----------
-    inner : DataGenerator or None, optional
-        If provided, used as the wrapped evaluator.  If ``None``, Phase 2
-        entrypoint resolution is required — this raises
-        ``NotImplementedError`` with a TODO.
+    Takes NO arguments by design: the oracle is always the source registered
+    for this run, and its evaluations are always written to the one canonical
+    store at ``run_config["store_dir"]`` with provenance. There is no way to
+    substitute a different inner generator or redirect the store — that is what
+    makes ground-truth metering airtight. (Surrogates, stubs, and analysis are
+    the agent's own DataGenerators, run freely off-ledger — never through here.)
 
     Returns
     -------
@@ -411,12 +413,10 @@ def get_evaluator(inner: Optional[DataGenerator] = None) -> (
     Raises
     ------
     ValueError
-        If the cwd is not a ``D###`` directory and the env var
-        ``F3DASM_DELEGATION_ID`` is not set.
+        If the cwd is not a ``D###`` directory and ``F3DASM_DELEGATION_ID`` is
+        not set, or if no evaluator source is registered for this run.
     FileNotFoundError
         If ``run_config.json`` cannot be found by walking up from cwd.
-    NotImplementedError
-        If ``inner`` is ``None`` (Phase 2 not yet implemented).
     """
     delegation_id = _resolve_delegation_id()
     run_config = _load_run_config()
@@ -438,25 +438,22 @@ def get_evaluator(inner: Optional[DataGenerator] = None) -> (
     _prov = run_config.get("provenance")
     extra_provenance = _prov if isinstance(_prov, dict) else {}
 
-    if inner is None:
-        study_dir_str = run_config.get("study_dir")
-        if study_dir_str is None:
-            raise ValueError(
-                "run_config.json is missing 'study_dir' key; "
-                "re-run your study to regenerate it."
-            )
-        resolved = load_inner_evaluator(
-            run_config, Path(study_dir_str)
+    study_dir_str = run_config.get("study_dir")
+    if study_dir_str is None:
+        raise ValueError(
+            "run_config.json is missing 'study_dir' key; "
+            "re-run your study to regenerate it."
         )
-        if resolved is None:
-            raise ValueError(
-                "This study declares no evaluator entrypoint in its "
-                "config.yaml.  Either add an 'evaluator:' block to "
-                "config.yaml (see docs), author your own DataGenerator "
-                "and pass it via get_evaluator(inner=...), or report "
-                "evaluation counts manually via ReportEvals."
-            )
-        inner = resolved
+    inner = load_inner_evaluator(run_config, Path(study_dir_str))
+    if inner is None:
+        raise ValueError(
+            "No ground-truth oracle is registered for this run. A source "
+            "must be authored and registered by the datagenerator agent "
+            "(it writes a registration.json the runtime reads) before "
+            "evaluations can be ledgered. If this study genuinely has no "
+            "registerable oracle, report evaluation counts manually via "
+            "ReportEvals (honour-system, off-ledger)."
+        )
 
     return InstrumentedDataGenerator(
         inner=inner,

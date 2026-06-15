@@ -766,7 +766,7 @@ class TestScienceMonitorStoreDirWiring:
         (run_dir / "debug" / "strategizer_notes").mkdir(parents=True)
         study_dir = tmp_path / "study"
         study_dir.mkdir()
-        (study_dir / "replicate.py").write_text("# test\n")
+        (study_dir / "pipeline.py").write_text("# test\n")
 
         dlog = DelegationLog(run_dir / "debug" / "delegation_log.jsonl")
 
