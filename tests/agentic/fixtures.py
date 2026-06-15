@@ -140,8 +140,8 @@ class ScriptedStrategistAdapter:
         # Write required deliverable before Done().
         if "WriteDeliverable" in tools:
             tools["WriteDeliverable"](
-                "replicate.py",
-                "# replicate.py\nprint('Optimal design confirmed.')\n",
+                "pipeline.py",
+                "# pipeline.py\nprint('Optimal design confirmed.')\n",
             )
 
         tools["Done"](summary="H1 falsified. H2 supported. Optimal design confirmed.")  # first: warning
