@@ -29,7 +29,7 @@ from f3dasm.agentic import AgenticRun
 AgenticRun(study_dir="my_study").execute()
 ```
 
-Everything else under `my_study/` (`solution.md`, `replicate.py`, `runs/…`) is
+Everything else under `my_study/` (`solution.md`, `pipeline.py`, `runs/…`) is
 **produced by the run** — you do not author it.
 
 ---
@@ -48,7 +48,7 @@ ungatable claims. Include:
   vector and the ledgered value").
 - **Design space** — every input variable with bounds, type (continuous /
   integer / categorical) and **units**.
-- **Deliverables** — what the run must hand back beyond `replicate.py`
+- **Deliverables** — what the run must hand back beyond `pipeline.py`
   (e.g. `solution.md`, a mechanism explanation, a plot).
 - **Resources** — datasets, solver paths, reference values, prior work to beat.
 - **Validity / constraint gates** — feasibility flags, regimes of validity,
@@ -65,7 +65,7 @@ no budget, honor-system evaluator). Keys the runtime actually **reads**:
 | `backend` | `claude` \| `ollama` | `claude` | which LLM backend |
 | `budget` | `"HH:MM:SS"` or seconds | none (unlimited) | **soft** wall-clock (warn at 95/100%); a separate `RUN_BACKSTOP_MULTIPLE`× backstop guards runaway cost |
 | `eval_budget` | int | none | **soft** cap on ground-truth evaluations |
-| `required_deliverables` | list[str] | `[]` | files that must exist before `Done()` is accepted (`replicate.py` is **always** required regardless) |
+| `required_deliverables` | list[str] | `[]` | EXTRA files that must exist before `Done()` is accepted (`pipeline.py` is **always** required regardless; `solution.md` is auto-written by the runtime) |
 | `evaluator` | block | none → honor-system | declares the oracle — see below |
 
 > ⚠️ **`checkpoint_every` is a no-op.** It appears in `README-agentic.md`
@@ -131,7 +131,7 @@ declare the oracle in one of these ways (decision order):
 ```
 my_study/
   solution.md                              ← headline + critic verdict (study root, written post-gate)
-  replicate.py                             ← re-derives the headline from the ledger and asserts it
+  pipeline.py                              ← lazy f3dasm Pipeline; re-running reproduces the headline from the ledger (0 new evals)
   runs/<timestamp>/
     experiment_data/experiment_data/        ← canonical ledger: output.csv / input.csv / jobs.csv / domain.json
     debug/
@@ -168,8 +168,9 @@ Before a long run, confirm:
 - [ ] The oracle imports and runs on **one** sample without error.
 - [ ] Auth: `CLAUDE_CODE_OAUTH_TOKEN` is exported and `api.anthropic.com` is
       reachable from where you'll run.
-- [ ] You expect a `replicate.py` deliverable — it's always required and the
-      `Done()` gate refuses to close without it.
+- [ ] You expect a `pipeline.py` deliverable — it's always required, the
+      `Done()` gate refuses to close without it, and the runtime executes it
+      lazily to verify the headline reproduces from the ledger.
 
 ---
 
@@ -190,9 +191,8 @@ eval_budget: 200
 evaluator:
   entrypoint: "workspace/evaluator.py:evaluate"
   output_names: [y]
-required_deliverables:
-  - replicate.py
-  - solution.md
+# pipeline.py is the single deliverable (auto-required); solution.md is
+# auto-written. Add required_deliverables only for EXTRA files.
 ```
 
 `my_study/workspace/evaluator.py`:
@@ -208,10 +208,10 @@ def evaluate(x1: float, x2: float) -> float:
 ```markdown
 # Minimise a 2-D quadratic
 Objective: minimise y = (x1-1)^2 + (x2+2)^2 over x1,x2 ∈ [-5, 5].
-Success: report argmin (x1*, x2*) and the ledgered y*, with replicate.py
-asserting y* from the canonical store.
+Success: report argmin (x1*, x2*) and the ledgered y*, with pipeline.py
+reproducing y* from the canonical store (lazy, zero new evals).
 Design space: x1, x2 — continuous, [-5, 5], dimensionless.
-Deliverables: solution.md, replicate.py.
+Deliverables: solution.md, pipeline.py.
 ```
 
 Then `AgenticRun(study_dir="my_study").execute()`.

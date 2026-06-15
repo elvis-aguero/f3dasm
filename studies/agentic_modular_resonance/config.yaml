@@ -5,6 +5,5 @@ eval_budget: 1000
 checkpoint_every: 30
 runtime:
   debug: true
-required_deliverables:
-  - replicate.py
-  - solution.md
+# pipeline.py is the single deliverable and is auto-required; solution.md is
+# auto-written by the runtime. List required_deliverables only for EXTRA files.

@@ -10,8 +10,8 @@ minimum is `y = 0` at `(x1, x2) = (1, -2)`.
 
 ## Success criteria
 Report the argmin `(x1*, x2*)` and the **ledgered** `y*`, and ship a
-`replicate.py` that loads the canonical store and asserts `y*` from ledgered
-rows (not a hardcoded number).
+`pipeline.py` — a lazy f3dasm Pipeline that loads the canonical store and, run
+again, reproduces `y*` from ledgered rows (derived, not a hardcoded number).
 
 ## Design space
 | variable | type | bounds | units |
@@ -25,4 +25,5 @@ returns `y`). Declared in `config.yaml` under `evaluator.entrypoint`.
 
 ## Deliverables
 - `solution.md` — the argmin, the ledgered `y*`, and a one-line conclusion.
-- `replicate.py` — re-derives `y*` from the canonical store and asserts it.
+- `pipeline.py` — the lazy f3dasm Pipeline of the whole process; re-running it
+  reproduces `y*` from the canonical ledger (zero new evals) and asserts it.

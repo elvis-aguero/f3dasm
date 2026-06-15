@@ -1,9 +1,11 @@
 """Run the agentic_black_box_8d study fresh (clears previous artifacts).
 
 Topology:
-    strategizer → implementer
     strategizer → literature_reviewer
+    strategizer → datagenerator
+    strategizer → implementer
     strategizer → critic
+    datagenerator → literature_reviewer
 """
 
 import shutil
@@ -12,6 +14,7 @@ from pathlib import Path
 from f3dasm.agentic import (
     AdversarialCritiqueAgent,
     AgenticRun,
+    DataGeneratorAgent,
     Edge,
     Graph,
     ImplementerAgent,
@@ -27,7 +30,8 @@ MODEL = "claude-haiku-4-5-20251001"
 for path in [
     STUDY_DIR / "runs",
     STUDY_DIR / "solution.md",
-    STUDY_DIR / "replicate.py",
+    STUDY_DIR / "pipeline.py",
+    STUDY_DIR / "replicate.py",  # legacy artifact from older runs
 ]:
     if path.is_dir():
         shutil.rmtree(path)
@@ -38,14 +42,17 @@ for path in [
 graph = Graph(
     nodes={
         "strategizer":       StrategizerAgent(),
-        "implementer":       ImplementerAgent(),
         "literature_reviewer": LiteratureReviewAgent(),
+        "datagenerator":     DataGeneratorAgent(),
+        "implementer":       ImplementerAgent(),
         "critic":            AdversarialCritiqueAgent(),
     },
     edges=(
-        Edge("strategizer", "implementer"),
         Edge("strategizer", "literature_reviewer"),
+        Edge("strategizer", "datagenerator"),
+        Edge("strategizer", "implementer"),
         Edge("strategizer", "critic"),
+        Edge("datagenerator", "literature_reviewer"),
     ),
     entry="strategizer",
 )
