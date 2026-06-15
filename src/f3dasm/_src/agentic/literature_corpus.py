@@ -51,10 +51,16 @@ log = logging.getLogger(__name__)
 _sleep = _time_module.sleep
 
 # ---------------------------------------------------------------------------
-# Out-of-process embedder (numpy<2 ephemeral env via uv)
+# Out-of-process embedder (isolated Python 3.12 env via uv)
 # ---------------------------------------------------------------------------
 
-_EMBED_WITH = "fastembed>=0.3,onnxruntime<1.20,numpy<2"
+# fastembed runs bge-small via onnxruntime (light: ONNX, no torch). onnxruntime
+# ships no CPython-3.13 wheel, so it cannot import in a 3.13 host. The worker
+# runs in an ISOLATED uv env, so we just pin that env to Python 3.12 (where
+# fastembed+onnxruntime+numpy all have wheels) — no host pins needed, and the
+# host's numpy-2 is irrelevant across the process boundary.
+_EMBED_WITH = "fastembed>=0.3"
+_EMBED_PYTHON = "3.12"
 
 # Tri-state cache for subprocess embedder availability:
 #   None   → not yet probed
@@ -83,6 +89,7 @@ class _SubprocessEmbedder:
         worker = _P(__file__).parent / "_embed_worker.py"
         cmd = [
             "uv", "run", "--no-project", "--quiet",
+            "--python", _EMBED_PYTHON,
             "--with", _EMBED_WITH,
             "python", str(worker),
         ]

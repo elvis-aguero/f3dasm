@@ -29,11 +29,12 @@ dependencies = [
   "hydra-core>=1.3.2",
   "langchain-core>=0.3.86",
   "langgraph>=0.6.11",
+  "langgraph-checkpoint-sqlite>=3.0.3",
   "numpy>=1.24.4",
   "pandas>=2.0.3",
   "pathos>=0.3.4",
   "salib>=1.5.2",
-  "xarray>=2023.1.0"
+  "xarray>=2023.1.0",
 ]
 description = "f3dasm - Framework for Data-driven Development and Analysis of Structures and Materials"
 license = {text = "BSD-3-Clause"}
@@ -56,6 +57,7 @@ agentic = [
   "rank-bm25>=0.2.2",
   # paper search — lightweight (httpx + tenacity), so it stays in the lean core
   "semanticscholar>=0.8.0",
+  "arxiv>=2.1.0",
   "langchain-community>=0.3.0,<1.0.0",
   "langchain-core>=0.3.0,<1.0.0",
   "langchain-ollama>=0.2.0,<1.0.0",
@@ -65,14 +67,18 @@ agentic = [
   "ollama>=0.4.0",
   "requests>=2.28.0"
 ]
-# Heavy quality upgrade for the literature reviewer, installed ON TOP of
-# `agentic`: layout-aware PDF→MD (docling, which pulls torch via
-# docling-ibm-models) + dense embeddings (fastembed). These are the ONLY
-# torch-pullers. The marker excludes the torch-bound wheels on Intel macOS,
-# where the lean pymupdf+BM25 path is used.
+# Optional quality upgrade for the literature reviewer, installed ON TOP of
+# `agentic`: layout-aware PDF→MD via docling (which pulls torch via
+# docling-ibm-models — the ONLY torch-puller). The marker excludes the
+# torch-bound wheels on Intel macOS, where the lean pymupdf path is used.
+# Dense chunk embeddings (bge-small) are NOT here: they run in an isolated,
+# torch-free uv subprocess (literature_corpus._SubprocessEmbedder, pinned to
+# Python 3.12 for the onnxruntime wheel), so semantic search works on the lean
+# `agentic` install without this tier. fastembed can't live in `agentic`
+# either — onnxruntime ships no cp313 wheel, which would break a 3.13 install —
+# so the subprocess is its only home.
 agentic-extra = [
-  "docling>=2.0.0; sys_platform != 'darwin' or platform_machine == 'arm64'",
-  "fastembed>=0.3.0; sys_platform != 'darwin' or platform_machine == 'arm64'"
+  "docling>=2.0.0; sys_platform != 'darwin' or platform_machine == 'arm64'"
 ]
 all = [
   "abaqus2py>=1.0.0",

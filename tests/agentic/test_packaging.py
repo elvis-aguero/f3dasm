@@ -57,8 +57,11 @@ def test_lean_agentic_is_torch_free_no_heavy_deps(extras):
 def test_agentic_extra_holds_only_the_torch_pullers(extras):
     assert "agentic-extra" in extras, "agentic-extra extra must exist"
     xtra = extras["agentic-extra"]
-    for q in ("docling", "fastembed"):
-        assert q in xtra, f"agentic-extra must provide {q}"
+    # docling (layout-aware PDF→MD) is the ONLY torch-puller left here.
+    assert "docling" in xtra, "agentic-extra must provide docling"
+    # fastembed now runs via an isolated torch-free subprocess, so it is NOT a
+    # host dependency of the heavy extra anymore.
+    assert "fastembed" not in xtra
     # semanticscholar is light → lives in core, NOT in the heavy extra
     assert "semanticscholar" not in xtra
 

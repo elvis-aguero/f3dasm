@@ -74,15 +74,18 @@ class TestSubprocessEmbedderCommand:
         result = embedder.embed(["hello", "world"])
 
         cmd = captured["cmd"]
-        # Must use uv run --no-project --quiet --with <spec> python <worker>
+        # uv run --no-project --quiet --python 3.12 --with <spec> python <worker>
         assert cmd[0] == "uv"
         assert "--no-project" in cmd
         assert "--quiet" in cmd
         assert "--with" in cmd
         with_idx = cmd.index("--with")
         assert "fastembed" in cmd[with_idx + 1]
-        assert "numpy<2" in cmd[with_idx + 1]
-        assert "onnxruntime" in cmd[with_idx + 1]
+        # Isolated env pinned to Python 3.12 — onnxruntime/fastembed have cp312
+        # wheels; the 3.13 host has none. No numpy/onnxruntime pins needed since
+        # the subprocess env is independent of the host's numpy-2.
+        assert "--python" in cmd
+        assert cmd[cmd.index("--python") + 1] == "3.12"
         assert cmd[-1].endswith("_embed_worker.py")
 
         # Input is valid JSON with "texts"
