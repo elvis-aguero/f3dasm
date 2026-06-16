@@ -96,6 +96,13 @@ you like — just don't confuse it with the canonical ledger.
 - Don't forget to `arm()` before `call()` — it's a required two-phase API.
 - Don't carry `Loop` state in memory — persist to the ED, `mark_all("open")`.
 - Don't hardcode the headline — derive it from the canonical store.
+- Don't ship a read-only analysis script whose run step is a comment
+  (`# in production this would call get_evaluator()`). `pipeline.py` is the
+  **production script**: the same lazy recipe runs the full campaign from an
+  empty store AND resumes near-instantly on the shipped ledger (FINISHED rows
+  skipped → far faster, zero new evals). A real `get_evaluator()` block costs
+  nothing when the ledger is full but is what makes the script regenerate, not
+  just summarise. The runtime executes it and asserts zero new evals.
 - The oracle run step is ALWAYS `get_evaluator()` — never a hand-written
   `DataGenerator`, never the raw evaluator, never a redirected store. That one
   door is what makes the result ledgered and reproducible; see

@@ -154,15 +154,33 @@ Every run produces two outputs at study_dir/:
                   it is absent). It is BOTH the human-readable record of the
                   whole data-driven process AND the reproduction.
 
+pipeline.py is the PRODUCTION SCRIPT for this study — the one real, runnable
+recipe that DOES the campaign, not a post-hoc summary of one. The SAME script
+serves both jobs because it is lazy:
+  • run it against an EMPTY store → it executes the full campaign from scratch;
+  • run it against YOUR shipped ExperimentData (the canonical ledger) → it
+    RESUMES, skipping every FINISHED row, so it finishes in a tiny fraction of
+    the from-scratch time and adds ZERO new oracle evals.
+That speed gap IS the proof of laziness, and it is what the runtime checks.
+
+DO NOT ship a read-only "analysis" script that loads the ledger and prints the
+answer with the evaluation step replaced by a comment like
+"# in production this would call get_evaluator()". That is NOT the deliverable:
+it can reproduce but can never regenerate. The run step must be a REAL, live
+get_evaluator() block. Because evaluation is lazy, that real block still adds
+zero rows when the ledger is already full — you lose nothing and gain a script
+that is genuinely the production pipeline.
+
 pipeline.py is read by a human to understand exactly how the result was
 produced — the DoE, the oracle, the surrogate/optimizer, the analysis — as an
 f3dasm Pipeline. It is ALSO executed by the runtime as the binding
 reproducibility gate, so it must satisfy four rules:
 
   1. LAZY ON THE ORACLE. Load the canonical ledger
-     (ExperimentData.from_file(<store>)) and reach the oracle ONLY through
-     get_evaluator(). f3dasm skips already-FINISHED rows, so a fresh run does
-     the full campaign while a re-run on the shipped ledger evaluates NOTHING.
+     (ExperimentData.from_file(<store>)) and reach the oracle ONLY through a
+     REAL get_evaluator() run step (never a commented-out stub). f3dasm skips
+     already-FINISHED rows, so a fresh run does the full campaign while a re-run
+     on the shipped ledger evaluates NOTHING and returns near-instantly.
      The gate ASSERTS re-running adds ZERO new oracle evals.
   2. LAZY ON HEAVY BLOCKS. f3dasm's row-laziness covers ONLY oracle evals.
      Anything else expensive YOU build — a fitted GP/NN/RF surrogate, costly

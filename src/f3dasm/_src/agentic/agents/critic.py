@@ -69,11 +69,16 @@ For every claim or conclusion in the document, ask:
    pipeline.py must exist AND, read as a human would, be a faithful f3dasm
    Pipeline of the whole process that re-derives the headline FROM the
    canonical ledger — loading it (ExperimentData.from_file), reaching the
-   oracle only via get_evaluator(), computing the value from ledgered rows,
-   NOT hardcoding it. Absence, a hardcoded headline, a headline that cannot
-   be reconstructed from ledgered rows, or a pipeline that would re-evaluate
-   the oracle / refit heavy models on a re-run (not lazy) is a CRITICAL
-   finding. NOTE: the runtime EXECUTES pipeline.py lazily after this gate
+   oracle only via a REAL get_evaluator() run step, computing the value from
+   ledgered rows, NOT hardcoding it. pipeline.py must be the PRODUCTION SCRIPT
+   that DOES the campaign — runnable from an empty store to regenerate the data
+   AND lazily resumable on the shipped ledger (skipping FINISHED rows, so a
+   re-run is far faster and adds zero evals). Absence, a hardcoded headline, a
+   headline that cannot be reconstructed from ledgered rows, a pipeline that
+   would re-evaluate the oracle / refit heavy models on a re-run (not lazy), OR
+   a read-only "analysis" script whose evaluation step is stubbed out (e.g. a
+   comment "# in production this would call get_evaluator()" in place of a live
+   run block) is a CRITICAL finding. NOTE: the runtime EXECUTES pipeline.py lazily after this gate
    (asserting zero new evals + self-assert) as the binding check — your job
    is to judge readability, faithfulness, and that the headline derives from
    the ledger. This gate — provenance + replicability — is how scientific
