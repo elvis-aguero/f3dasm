@@ -1890,10 +1890,28 @@ def build_routing_tools(node) -> dict:
             _agent_tools = _ag.tools
 
     def WriteDeliverable(filename: str, content: str) -> str:
-        """Write a final deliverable file to runs/<timestamp>/ (alongside solution.md).
+        """Write the deliverable pipeline.py (alongside solution.md).
 
-        Use to produce pipeline.py or other top-level artifacts.
-        filename must end in .py or .md. Content is written verbatim.
+        pipeline.py is the PRODUCTION SCRIPT: a COMPLETE, runnable f3dasm pipeline
+        that regenerates the whole campaign from an empty store — every phase
+        (sampling, surrogate/BO, local search, validation) actually CALLS
+        get_evaluator(); NO stubs, NO placeholder functions, NO 'skipped' /
+        'would go here' comments — AND resumes lazily on the shipped ledger (zero
+        new evals). A script that only loads the ledger and prints the headline
+        is NOT acceptable, and a stub dressed up as real code (placeholder
+        functions that don't call the oracle) is still a stub — the gate and the
+        critic will reject it. Do not try to disguise one.
+
+        DO NOT REINVENT IT. The implementers you delegated already WROTE and
+        VALIDATED this code under workspace_dir/D###/ (see <run_paths>): the LHS
+        sampler, the BO loop, the local search that actually found the optimum.
+        Before writing pipeline.py, ReadNote their working scripts and
+        CONSOLIDATE them into one lazy create→run→analyze pipeline — lift proven
+        code, don't re-derive it from scratch (re-deriving is where you hit bugs
+        and run out of room).
+
+        filename must end in .py or .md. Content is written verbatim. Verify with
+        CheckDeliverable() before Done().
         """
         prefix = node._drain_notifications()
         if node._study_dir is None:

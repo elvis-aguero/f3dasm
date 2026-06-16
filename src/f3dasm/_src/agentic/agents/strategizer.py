@@ -171,6 +171,22 @@ get_evaluator() block. Because evaluation is lazy, that real block still adds
 zero rows when the ledger is already full — you lose nothing and gain a script
 that is genuinely the production pipeline.
 
+A placeholder that doesn't call the oracle is a STUB even if it is code rather
+than a comment — a function with a fake objective, a "minimal implementation",
+a phase that returns early without evaluating. Writing such code to LOOK
+implemented does not pass: the critic reads the source and the gate runs it, so
+a disguised stub is rejected exactly like a commented one. Don't spend effort
+dressing up a stub — spend it on the real thing, which is cheaper than you think
+because you do not write it from scratch:
+
+BUILD pipeline.py BY CONSOLIDATING WORK THAT ALREADY EXISTS. The implementers
+you delegated already wrote and validated every piece — the sampler, the
+surrogate/BO loop, the local search that actually found the optimum — under
+workspace_dir/D###/ (see <run_paths>). ReadNote those scripts and assemble them
+into one lazy create→run→analyze pipeline. You orchestrated this work and can
+read all of it; reuse the proven code rather than re-deriving it (re-deriving
+from memory is where you introduce bugs and run out of room).
+
 pipeline.py is read by a human to understand exactly how the result was
 produced — the DoE, the oracle, the surrogate/optimizer, the analysis — as an
 f3dasm Pipeline. It is ALSO executed by the runtime as the binding
