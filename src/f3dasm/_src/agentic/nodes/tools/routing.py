@@ -1925,16 +1925,35 @@ def build_routing_tools(node) -> dict:
         arbitrary code. Call it repeatedly until it passes, THEN call Done()."""
         prefix = node._drain_notifications()
         if not (Path(node._study_dir) / "pipeline.py").exists():
+            # A no-op (nothing to check) does NOT consume the budget.
             return (prefix + "No pipeline.py yet — write it first via "
                     "WriteDeliverable('pipeline.py', …), then CheckDeliverable().")
+        _BUDGET = 10
+        prior = getattr(node, "_check_deliverable_calls", 0)
+        if prior >= _BUDGET:
+            return (prefix + f"CheckDeliverable budget exhausted ({_BUDGET}/"
+                    f"{_BUDGET} used). Stop iterating — write a correct lazy "
+                    "pipeline in ONE decisive edit (re-read the LAST error; the "
+                    "fix is usually 'load the ledger and skip finished rows', "
+                    "not a fresh rewrite), or call Done() to close now (the run "
+                    "is recorded FAILED if it still doesn't reproduce).")
+        node._check_deliverable_calls = prior + 1
+        used = node._check_deliverable_calls
+        left = _BUDGET - used
+        # Show the budget on EVERY call so the agent paces itself and never hits
+        # an unseen wall.
+        footer = (
+            f"\n\n[CheckDeliverable: {used}/{_BUDGET} used — {left} check"
+            f"{'s' if left != 1 else ''} left before you must close with "
+            "Done().]")
         problem = node._reproduction_gate()
         if problem is None:
             ok = getattr(node, "_repro_ok_detail", "reproduces cleanly")
             return (prefix + "PASS — pipeline.py " + ok
-                    + ". It will pass the Done() gate.")
+                    + ". Call Done() now to close." + footer)
         return (prefix + "NOT YET — pipeline.py failed the reproduction gate. "
                 "Fix the exact problem below and CheckDeliverable() again:\n\n"
-                + problem)
+                + problem + footer)
 
     if "Done" in _agent_tools:
         closures["Done"] = Done

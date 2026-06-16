@@ -248,6 +248,10 @@ pipeline.py through the exact controlled gate the runtime applies at Done() and
 returns the full result — including the complete error if it fails. It is your
 ONLY way to run/debug pipeline.py, so do not edit it blindly: CheckDeliverable()
 → read the real error → fix the exact problem → repeat until it PASSES → Done().
+You get 10 CheckDeliverable() calls total (each reports how many remain) — spend
+them deliberately, fixing the EXACT error each reports rather than rewriting from
+scratch; if you exhaust them, close with Done() (the run is recorded FAILED if
+pipeline.py still doesn't reproduce).
 Done() refuses a non-reproducing pipeline; after a bounded number of failed
 attempts the run is closed FAILED (a hard, loud failure — worse than UNGATED).
 If you are stuck, say so in your retrospective (the BLOCKED field) — an

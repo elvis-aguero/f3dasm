@@ -245,6 +245,22 @@ def test_check_deliverable_reports_pass_and_failure(tmp_path):
     assert check().lstrip().startswith("PASS")
 
 
+def test_check_deliverable_shows_countdown_and_bounds_iteration(tmp_path):
+    """CheckDeliverable has a visible 10-call budget: each call reports how many
+    remain (so the agent never hits an unseen wall), and the 11th refuses —
+    converting an endless check↔write grind into a fast, bounded close."""
+    n = _study_with_store(tmp_path, "C2")
+    (tmp_path / "pipeline.py").write_text("import sys\nsys.exit(1)\n")  # never passes
+    check = n.adapter.closure_tools["CheckDeliverable"]
+    first = check()
+    assert "1/10 used" in first and "9 checks left" in first
+    outs = [check() for _ in range(9)]   # calls 2..10
+    assert "10/10 used" in outs[-1] and "0 checks left" in outs[-1]
+    # 11th call refuses without running the gate again.
+    exhausted = check()
+    assert "budget exhausted" in exhausted.lower() and "Done()" in exhausted
+
+
 def test_repro_failure_closes_FAILED_not_ungated(tmp_path):
     """After the bounded sighted attempts, a non-reproducing pipeline closes in a
     distinct FAILED state (loud ⛔ banner) via the retrospective round — NOT a
