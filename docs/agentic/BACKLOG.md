@@ -4,6 +4,10 @@ Deferred ideas with enough context to resume cold. Not committed work; pick up
 when prioritized. Ordered by priority (highest first); item numbers are stable
 references, not a queue position — see the order above.
 
+> **Detailed, evidence-grounded specs** for every item live in
+> [`specs/`](specs/README.md) (primary-evidence citations, TDD test names, DRY
+> reuse, KPI done-when). The entries below are the short version.
+
 ---
 
 ## 1. Reconcile cancelled-but-completed delegations
