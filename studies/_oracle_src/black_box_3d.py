@@ -219,7 +219,7 @@ def _write_wrapper(workspace: Path) -> None:
             Returns
             -------
             float
-                Objective value (minimise). Global minimum is -1.0.
+                Objective value (minimise).
             \"\"\"
             arr = (ctypes.c_double * {_DIM})(*x)
             return float(_lib.evaluate(arr))
@@ -269,7 +269,10 @@ def _compile(c_path: Path, workspace: Path) -> Path:
 # -----------------------------------------------------------------------------
 
 def main() -> None:
-    study_root = Path(__file__).parent
+    # This generator lives OUTSIDE the study dir (agents must not read the
+    # secret it embeds — the optimum and well structure). It writes the oracle
+    # artifacts into the study's workspace/.
+    study_root = Path(__file__).resolve().parent.parent / "agentic_black_box_3d"
     workspace = study_root / "workspace"
     workspace.mkdir(exist_ok=True)
 
