@@ -667,6 +667,29 @@ class AgenticRun:
             if not existing.startswith("# Auto-generated"):
                 pipeline_path.write_text(header + existing, encoding="utf-8")
 
+        # Append a KPI row to the longitudinal ledger automatically (best
+        # effort). The extraction logic lives in studies/run_ledger.py (the one
+        # source of truth, writing studies/run_ledger.csv); we invoke it as a
+        # subprocess when present so a run is always recorded without a manual
+        # step. Absent (e.g. a non-studies install) → silently skipped.
+        try:
+            import subprocess
+            import sys as _sys
+            ledger_script = self.study_dir.parent / "run_ledger.py"
+            if ledger_script.exists():
+                proc = subprocess.run(
+                    [_sys.executable, str(ledger_script), str(run_dir)],
+                    capture_output=True, text=True, timeout=60,
+                )
+                if proc.returncode == 0:
+                    log.info("KPI ledger: %s", proc.stdout.strip())
+                else:
+                    log.warning(
+                        "KPI ledger append failed (rc=%s): %s",
+                        proc.returncode, proc.stderr.strip())
+        except Exception:
+            log.warning("KPI ledger append errored", exc_info=True)
+
         log.info(
             f"Run complete. Evals: {evals}. "
             f"Tokens in/out: {tokens_in}/{tokens_out}. "
