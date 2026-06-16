@@ -119,6 +119,46 @@ def test_bare_fn_file_path_entrypoint_resolves(tmp_path, monkeypatch):
     assert df_out.iloc[0]["_delegation_id"] == "D001"
 
 
+def test_run_config_resolves_via_env_var_independent_of_cwd(
+    tmp_path, monkeypatch
+):
+    """F3DASM_RUN_CONFIG resolves get_evaluator() regardless of cwd.
+
+    Regression: the SDK spawns the worker with cwd=study_dir, but run_config.json
+    lives DOWN at runs/<id>/debug/ — a walk-UP never reaches it, so the worker
+    had to cd into debug/ first. The env var points straight at the file.
+    """
+    from f3dasm._src.agentic.instrumented import get_evaluator
+
+    study_dir = tmp_path / "study"
+    study_dir.mkdir()
+    (study_dir / "tiny_eval.py").write_text(
+        "def evaluate_kw(**kwargs):\n    return float(sum(kwargs.values()))\n"
+    )
+    store_dir = tmp_path / "store"
+    store_dir.mkdir()
+    debug_dir, _delegation_dir = _make_delegation_dir(tmp_path)
+    _write_run_config(
+        debug_dir, store_dir, study_dir,
+        evaluator_entrypoint="tiny_eval.py:evaluate_kw",
+        evaluator_output_names=["f"],
+    )
+
+    # cwd = study_dir (as the SDK sets it): run_config.json is NOT on the
+    # walk-up path from here. Only the env var can resolve it.
+    monkeypatch.chdir(study_dir)
+    monkeypatch.setenv("F3DASM_DELEGATION_ID", "D001")
+    monkeypatch.setenv("F3DASM_RUN_CONFIG", str(debug_dir / "run_config.json"))
+
+    gen = get_evaluator()
+    sample = ExperimentSample(
+        _input_data={"x0": 0.3, "x1": 0.2}, _output_data={},
+        job_status=JobStatus.OPEN)
+    out = gen.execute(sample)
+    assert out._output_data["f"] == pytest.approx(0.5, abs=1e-9)
+    assert out._output_data["_delegation_id"] == "D001"
+
+
 # ---------------------------------------------------------------------------
 # Test 2 — DataGenerator-class entrypoint
 # ---------------------------------------------------------------------------

@@ -62,6 +62,23 @@ def get_delegation_id() -> str | None:
     return getattr(_transcript_tls, "delegation_id", None)
 
 
+def set_run_config_path(path: str | None) -> None:
+    """Bind this thread's run_config.json path (None clears it).
+
+    Thread-local, mirroring ``set_delegation_id``. The Claude backend injects it
+    as a per-session ``F3DASM_RUN_CONFIG`` env var so ``get_evaluator()`` finds
+    the config by an explicit path — the SDK spawns the worker with
+    ``cwd=study_dir``, but run_config.json lives *down* at
+    ``runs/<id>/debug/``, so the old walk-up-from-cwd never reached it and the
+    worker had to ``cd`` into ``debug/`` first.
+    """
+    _transcript_tls.run_config_path = str(path) if path else None
+
+
+def get_run_config_path() -> str | None:
+    return getattr(_transcript_tls, "run_config_path", None)
+
+
 def set_oracle_registered(registered: bool) -> None:
     """Bind whether a canonical oracle is registered for this thread's worker.
 

@@ -404,11 +404,17 @@ class ClaudeAdapter:
         # so get_evaluator() resolves without the worker having to cd into its
         # D### dir (audit Finding 2). The SDK MERGES this over the inherited
         # environment (PATH etc. preserved), so a bare extra key is safe.
-        from .base import get_delegation_id
+        from .base import get_delegation_id, get_run_config_path
         _sess_env: dict = {}
         _did = get_delegation_id()
         if _did:
             _sess_env["F3DASM_DELEGATION_ID"] = _did
+        # Explicit path to run_config.json so get_evaluator() resolves it
+        # regardless of cwd (the SDK spawns the worker in study_dir, from which
+        # the old walk-up never reached runs/<id>/debug/run_config.json).
+        _rc = get_run_config_path()
+        if _rc:
+            _sess_env["F3DASM_RUN_CONFIG"] = _rc
 
         from ..settings import get_float
         _max_buf_mb = get_float("llm_max_buffer_mb", 30.0)

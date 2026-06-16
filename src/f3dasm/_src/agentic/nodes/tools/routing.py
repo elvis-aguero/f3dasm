@@ -519,6 +519,9 @@ def build_routing_tools(node) -> dict:
                     set_oracle_registered as _set_oracle_reg,
                 )
                 from ...backends.base import (
+                    set_run_config_path as _set_rc,
+                )
+                from ...backends.base import (
                     set_transcript_sink as _set_sink,
                 )
 
@@ -527,6 +530,14 @@ def build_routing_tools(node) -> dict:
                 # env → get_evaluator() resolves without a mandatory cd
                 # into D### (audit Finding 2).
                 _set_did(delegation_id)
+
+                # Bind the run_config.json path too, so the backend injects
+                # F3DASM_RUN_CONFIG → get_evaluator() resolves by explicit path
+                # rather than walking up from the worker's cwd (study_dir),
+                # which can never reach runs/<id>/debug/run_config.json.
+                _notes_for_rc = node._current_notes_dir
+                if _notes_for_rc is not None:
+                    _set_rc(str(_notes_for_rc.parent / "run_config.json"))
 
                 # The eval-ledger guards apply ONLY to evaluator roles
                 # (implementer/debugger) AND only once a canonical oracle is

@@ -490,7 +490,22 @@ def _resolve_delegation_id() -> str:
 
 
 def _load_run_config() -> dict:
-    """Walk up from cwd until run_config.json is found."""
+    """Locate run_config.json: explicit env var first, then walk up from cwd.
+
+    ``F3DASM_RUN_CONFIG`` (injected per-session by the backend) points straight
+    at the file, so resolution does not depend on the worker's cwd — the SDK
+    spawns it in study_dir, from which a walk-UP can never reach the config that
+    lives DOWN at runs/<id>/debug/. The cwd walk-up stays as a fallback for
+    direct/standalone invocations (e.g. the reproduction gate sets cwd itself).
+    """
+    env_path = os.environ.get("F3DASM_RUN_CONFIG", "")
+    if env_path:
+        candidate = Path(env_path)
+        if candidate.exists():
+            return json.loads(candidate.read_text())
+        raise FileNotFoundError(
+            f"F3DASM_RUN_CONFIG points to '{env_path}', which does not exist."
+        )
     current = Path.cwd()
     for _ in range(10):  # guard against infinite walk
         candidate = current / "run_config.json"
@@ -501,8 +516,8 @@ def _load_run_config() -> dict:
             break
         current = parent
     raise FileNotFoundError(
-        "run_config.json not found by walking up from "
-        f"'{Path.cwd()}'."
+        "run_config.json not found: F3DASM_RUN_CONFIG unset and no "
+        f"run_config.json found by walking up from '{Path.cwd()}'."
     )
 
 
