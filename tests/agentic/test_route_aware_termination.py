@@ -465,14 +465,16 @@ def test_propose_rejects_duplicate_case_whitespace(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_readnote_directory_returns_error(tmp_path):
-    """ReadNote on a directory path returns an error string instead of raising."""
+def test_readnote_directory_returns_listing(tmp_path):
+    """ReadNote on a directory returns a file LISTING (not an error) so the agent
+    can discover and reuse the implementers' delegation code."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
     (tmp_path / "pipeline.py").write_text("# test\n")
-    # Create a subdirectory to pass as the ReadNote path
+    # Create a subdirectory with a file to pass as the ReadNote path
     subdir = tmp_path / "subdir"
     subdir.mkdir()
+    (subdir / "worker_code.py").write_text("# reusable\n")
 
     results: list[str] = []
 
@@ -495,9 +497,9 @@ def test_readnote_directory_returns_error(tmp_path):
     node(state)
 
     assert results, "ReadNote was never called"
-    assert "ERROR" in results[0], (
-        f"Expected ERROR from ReadNote on directory, got: {results[0]!r}"
-    )
     assert "directory" in results[0].lower(), (
-        f"Expected 'directory' in error, got: {results[0]!r}"
+        f"Expected a directory listing, got: {results[0]!r}"
+    )
+    assert "worker_code.py" in results[0], (
+        f"Expected the directory's files listed, got: {results[0]!r}"
     )
