@@ -50,6 +50,13 @@ ESCALATE_AFTER_ERROR_REPEATS = 2
 
 _NUMBERS_SECTION_RE = re.compile(
     r"###\s*Numbers\s*\n(.*?)(?=\n###|\n##|\Z)", re.DOTALL)
+# A substantive Conclusions section also counts as a concrete result (Charter
+# §6 allows qualitative evidence — a measurement is not the only anchor).
+_CONCLUSIONS_SECTION_RE = re.compile(
+    r"###\s*Conclusions?\s*\n(.*?)(?=\n###|\n##|\Z)", re.DOTALL)
+# Minimum non-whitespace chars for a Conclusions section to count as a concrete
+# qualitative finding rather than an empty/placeholder heading.
+_MIN_CONCLUSION_CHARS = 20
 # Key charclass tolerates markdown emphasis/code (**key**, `key`) —
 # workers often format report keys in bold (observed in wet runs).
 _NUM_LINE_RE = re.compile(
@@ -236,21 +243,29 @@ class ScienceMonitor:
                     break
             if most_recent is None:
                 continue
-            section = _NUMBERS_SECTION_RE.search(
-                most_recent.get("deliverable", ""))
+            deliverable = most_recent.get("deliverable", "")
+            section = _NUMBERS_SECTION_RE.search(deliverable)
             has_numbers = bool(
                 section
                 and any(
                     _NUM_LINE_RE.match(ln)
                     for ln in section.group(1).splitlines()))
-            if not has_numbers:
+            # Per Charter §6, evidence need not be numeric — a qualitative
+            # finding anchors a verdict too. Accept a substantive ### Conclusions
+            # section as a concrete result. (The critic remains the semantic
+            # judge of adequacy; this is only an early "did it produce anything"
+            # nudge, so a generous accept here is fine — the gate backstops it.)
+            _concl = _CONCLUSIONS_SECTION_RE.search(deliverable)
+            has_conclusion = bool(
+                _concl and len(_concl.group(1).strip()) >= _MIN_CONCLUSION_CHARS)
+            if not (has_numbers or has_conclusion):
                 out.append(Violation(
                     "UNANCHORED_DELEGATION", "warn", h_id,
                     f"Delegation {most_recent['id']} (most recent "
-                    f"linked to {h_id}) completed with no "
-                    "### Numbers content. Its result cannot anchor "
-                    "a hypothesis update — re-delegate for concrete "
-                    "measurements."))
+                    f"linked to {h_id}) completed with no concrete result "
+                    "(no ### Numbers and no substantive ### Conclusions). A "
+                    "verdict needs a concrete result to cite — a measurement, a "
+                    "comparison, or a qualitative finding. Re-delegate for one."))
         return out
 
     def _check_unledgered(self, all_records: list[dict]) -> list[Violation]:

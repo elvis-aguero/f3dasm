@@ -233,10 +233,10 @@ def test_stale_open(tmp_path):
 def test_unanchored_delegation(tmp_path):
     ledger, dlog, mon, _ = make_world(tmp_path)
     h_id = propose(ledger)
-    # Deliverable with no ### Numbers section
+    # Truly bare: no ### Numbers AND no substantive ### Conclusions → no
+    # concrete result of any kind to anchor a verdict.
     bare_report = (
-        "## Report\n\n### Actions taken\n- ran sweep\n\n"
-        "### Conclusions\nNothing interesting found.\n"
+        "## Report\n\n### Actions taken\n- ran sweep\n"
     )
     record_done(dlog, "D001", [h_id], bare_report)
     violations = mon.evaluate()
@@ -250,14 +250,31 @@ def test_unanchored_delegation(tmp_path):
     assert "D001" in v.message
 
 
+def test_qualitative_conclusion_anchors_no_numbers_needed(tmp_path):
+    """Charter §6: a substantive ### Conclusions (qualitative finding) anchors a
+    verdict even with no ### Numbers — UNANCHORED_DELEGATION must NOT fire."""
+    ledger, dlog, mon, _ = make_world(tmp_path)
+    h_id = propose(ledger)
+    qualitative_report = (
+        "## Report\n\n### Actions taken\n- ran 5-restart local search\n\n"
+        "### Conclusions\nThe predicted optimum region contained NONE of the "
+        "top-3 empirical minima; the GP fit diverged on every restart.\n"
+    )
+    record_done(dlog, "D001", [h_id], qualitative_report)
+    violations = mon.evaluate()
+    assert not any(
+        v.rule == "UNANCHORED_DELEGATION" and v.h_id == h_id
+        for v in violations
+    ), "a qualitative Conclusions result should anchor (no UNANCHORED)"
+
+
 def test_unanchored_delegation_self_heals(tmp_path):
     """Once an anchored delegation D002 lands for H1, the bare D001
     stops nagging — UNANCHORED_DELEGATION for H1 disappears."""
     ledger, dlog, mon, _ = make_world(tmp_path)
     h_id = propose(ledger)
     bare_report = (
-        "## Report\n\n### Actions taken\n- ran sweep\n\n"
-        "### Conclusions\nNothing interesting found.\n"
+        "## Report\n\n### Actions taken\n- ran sweep\n"
     )
     # D001 is bare — violation fires for H1
     record_done(dlog, "D001", [h_id], bare_report)
