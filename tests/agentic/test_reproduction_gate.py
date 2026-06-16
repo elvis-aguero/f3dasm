@@ -14,6 +14,7 @@ from f3dasm._src.agentic.backends.base import Agent, Edge, Graph
 from f3dasm._src.agentic.instrumented import InstrumentedDataGenerator
 from f3dasm._src.agentic.nodes import StrategizerNode
 from f3dasm._src.core import DataGenerator
+from f3dasm._src.experimentdata import ExperimentData
 from f3dasm._src.experimentsample import ExperimentSample, JobStatus
 
 
@@ -140,6 +141,43 @@ def test_gate_passes_grounded_headline(tmp_path):
     node, study_dir = _setup(tmp_path)
     (study_dir / "pipeline.py").write_text("print('REPRODUCED: 1.0')\n")
     assert node._reproduction_gate({"study_dir": str(study_dir)}) is None
+
+
+def test_gate_runs_in_sandbox_never_pollutes_real_ledger(tmp_path):
+    """Regression: a NON-lazy pipeline (re-evaluating) must be caught as not-lazy
+    WITHOUT adding its evals to the real canonical ledger. The gate runs against
+    a throwaway copy, so repeated checks can never inflate the real store.
+    """
+    node, study_dir = _setup(tmp_path)  # real store seeded with 2 rows
+    run_dir = node._current_notes_dir.parent.parent
+    store_dir = run_dir / "experiment_data"
+    real_before = len(ExperimentData.from_file(project_dir=store_dir).to_pandas()[1])
+    # A non-lazy pipeline: it stamps a NEW eval into F3DASM_CANONICAL_STORE.
+    (study_dir / "pipeline.py").write_text(
+        "import os\n"
+        "from f3dasm._src.agentic.instrumented import InstrumentedDataGenerator\n"
+        "from f3dasm._src.core import DataGenerator\n"
+        "from f3dasm._src.experimentsample import ExperimentSample, JobStatus\n"
+        "class G(DataGenerator):\n"
+        "    def execute(self, s, **k):\n"
+        "        s._output_data['f'] = 1.0\n"
+        "        s.job_status = JobStatus.FINISHED\n"
+        "        return s\n"
+        "store = os.environ['F3DASM_CANONICAL_STORE']\n"
+        "g = InstrumentedDataGenerator(inner=G(), store_dir=store,\n"
+        "                              delegation_id='D777', flush_every=1)\n"
+        "g.execute(ExperimentSample(_input_data={'x0': 9.0}, _output_data={},\n"
+        "                           job_status=JobStatus.OPEN))\n"
+        "g.flush()\n"
+        "print('REPRODUCED: 1.0')\n"
+    )
+    # Run the gate several times — each would have added a row pre-fix.
+    for _ in range(3):
+        problem = node._reproduction_gate({"study_dir": str(study_dir)})
+        assert problem is not None and "lazy" in problem.lower()
+    real_after = len(ExperimentData.from_file(project_dir=store_dir).to_pandas()[1])
+    assert real_after == real_before, (
+        f"real ledger was polluted: {real_before} → {real_after}")
 
 
 def test_gate_rejects_ledger_tampering(tmp_path):

@@ -632,10 +632,13 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         On PASS the deliverable is a faithful, lightweight, lazy reproduction —
         not a script doing "sneaky stuff" unrelated to validating the pipeline.
         """
+        import json as _json
         import os
         import re
+        import shutil
         import subprocess
         import sys
+        import tempfile
 
         study_dir = (
             Path(self._study_dir) if getattr(self, "_study_dir", None) is not None
@@ -651,8 +654,8 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         store_dir = run_dir / "experiment_data"
         run_config = run_dir / "debug" / "run_config.json"
 
-        def _ledger_snapshot() -> tuple[int, str, list[float]]:
-            """(row_count, content_hash, objective_extrema) from the ledger.
+        def _ledger_snapshot(store: Path) -> tuple[int, str, list[float]]:
+            """(row_count, content_hash, objective_extrema) for a store dir.
 
             content_hash is order-independent (sorted rounded values) so a
             faithful lazy re-store doesn't false-trip it; objective_extrema are
@@ -661,7 +664,7 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
             import hashlib
             try:
                 from f3dasm import ExperimentData
-                data = ExperimentData.from_file(project_dir=store_dir)
+                data = ExperimentData.from_file(project_dir=store)
                 _, out = data.to_pandas()
             except Exception:  # noqa: BLE001
                 return 0, "", []
@@ -671,10 +674,8 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
             vals = out[cols].round(10)
             rows = sorted(tuple(r) for r in vals.to_numpy().tolist())
             h = hashlib.sha256(repr(rows).encode()).hexdigest()
-            # Objective = first declared output column if known, else all cols.
             obj_cols = cols
             try:
-                import json as _json
                 if run_config.exists():
                     _on = _json.loads(run_config.read_text()).get(
                         "evaluator_output_names")
@@ -690,40 +691,55 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                     pass
             return len(out), h, extrema
 
-        before_n, before_hash, _ = _ledger_snapshot()
-
-        # Controlled env: explicit resolution vars so get_evaluator() locates the
-        # store/config by path (not cwd luck). We keep the inherited env for
-        # venv/PATH robustness; the BINDING controls are the content checks
-        # below (zero-eval, integrity, headline-grounding) + the timeout, NOT
-        # env stripping (network/fs sandboxing is a deliberate non-goal here —
-        # too brittle cross-platform; tracked separately if needed).
-        env = dict(os.environ)
-        env["F3DASM_CANONICAL_STORE"] = str(store_dir)
-        if run_config.exists():
-            env["F3DASM_RUN_CONFIG"] = str(run_config)
-        env.setdefault("F3DASM_DELEGATION_ID", "D999")
-        _cwd = run_config.parent if run_config.exists() else study_dir
-        # Timeout: 10% of the time budget, or 3 min, whichever is larger — a
-        # lazy reproduction is far quicker than the campaign; this ceiling
-        # catches a from-scratch re-run or a hang (heavy-compute guard).
-        _timeout = (
-            max(0.1 * self._budget_seconds, 180.0)
-            if self._budget_seconds else 300.0
-        )
+        # ── HERMETIC SANDBOX ──────────────────────────────────────────────────
+        # CRITICAL: run pipeline.py against a COPY of the canonical store, never
+        # the live one. A faithful lazy pipeline adds nothing; a NON-lazy one
+        # (re-evaluating) writes its evals into the THROWAWAY copy — we detect
+        # that as "not lazy" while the real ledger stays pristine. Without this,
+        # checking a non-lazy pipeline pollutes + inflates the canonical store
+        # (and CheckDeliverable could be looped to balloon it without bound).
+        before_n, before_hash, extrema = _ledger_snapshot(store_dir)
+        sandbox = Path(tempfile.mkdtemp(prefix="f3dasm_repro_"))
         try:
-            proc = subprocess.run(
-                [sys.executable, str(pipeline_py)],
-                cwd=str(_cwd), env=env,
-                capture_output=True, text=True, timeout=_timeout,
+            sb_store = sandbox / "experiment_data"
+            if store_dir.exists():
+                shutil.copytree(store_dir, sb_store)
+            else:
+                sb_store.mkdir(parents=True, exist_ok=True)
+            # A sandbox run_config so get_evaluator() also writes to the COPY
+            # (it resolves the store from run_config["store_dir"], not the env).
+            sb_run_config = sandbox / "run_config.json"
+            if run_config.exists():
+                _cfg = _json.loads(run_config.read_text())
+            else:
+                _cfg = {}
+            _cfg["store_dir"] = str(sb_store)
+            _cfg["lock_path"] = str(sb_store / "experiment_data" / ".lock")
+            sb_run_config.write_text(_json.dumps(_cfg))
+
+            env = dict(os.environ)
+            env["F3DASM_CANONICAL_STORE"] = str(sb_store)
+            env["F3DASM_RUN_CONFIG"] = str(sb_run_config)
+            env.setdefault("F3DASM_DELEGATION_ID", "D999")
+            _timeout = (
+                max(0.1 * self._budget_seconds, 180.0)
+                if self._budget_seconds else 300.0
             )
-        except subprocess.TimeoutExpired:
-            return (
-                f"pipeline.py did not finish within {_timeout:.0f}s. A "
-                "reproduction must be lightweight — load the ledger and skip "
-                "finished evals and heavy refits (cache-or-load surrogates). "
-                "Make it lazy.")
-        after_n, after_hash, extrema = _ledger_snapshot()
+            try:
+                proc = subprocess.run(
+                    [sys.executable, str(pipeline_py)],
+                    cwd=str(sandbox), env=env,
+                    capture_output=True, text=True, timeout=_timeout,
+                )
+            except subprocess.TimeoutExpired:
+                return (
+                    f"pipeline.py did not finish within {_timeout:.0f}s. A "
+                    "reproduction must be lightweight — load the ledger and skip "
+                    "finished evals and heavy refits (cache-or-load surrogates). "
+                    "Make it lazy.")
+            after_n, after_hash, _ = _ledger_snapshot(sb_store)
+        finally:
+            shutil.rmtree(sandbox, ignore_errors=True)
 
         # (a) clean exit — surface a generous stderr tail for sighted debugging.
         if proc.returncode != 0:
