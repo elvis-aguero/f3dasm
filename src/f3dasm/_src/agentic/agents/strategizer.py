@@ -189,11 +189,16 @@ reproducibility gate, so it must satisfy four rules:
      store_function=, load_function=) or a plain "load if the file exists else
      fit+save" guard. Re-running must NOT refit.
   3. SELF-ASSERTING HEADLINE. Derive the headline FROM the ledger's own columns
-     in a final analysis step and `assert` it against your reported number
-     (never hardcode the answer; deriving it IS the reproduction). Print it.
+     in a final analysis step and print it on a line EXACTLY as
+     `REPRODUCED: <value>`. The runtime re-reads the ledger and confirms that
+     value is an actual extremum of the objective — so a hardcoded or fabricated
+     number is REJECTED. Derive it; never hardcode.
   4. ROBUST LEDGER PATH. Read the store from the F3DASM_CANONICAL_STORE env var
      when set (the gate sets it), else a self-locating path — never a brittle
      cwd-relative guess.
+  5. READ-ONLY ON THE LEDGER. The reproduction must not modify or delete
+     existing rows (it may re-store identical rows). The gate checks ledger
+     integrity; tampering to fake a zero-eval delta is REJECTED.
 
 ─── PRIMER: the ledger is an f3dasm ExperimentData ─────────────────────
   import os
@@ -237,6 +242,16 @@ data.get_n_best_output("<obj>", n=1), len(data).
 
 Read PROBLEM_STATEMENT.md for what constitutes the reproducible result.
 Write pipeline.py as your last action before Done(); do not delegate it.
+
+TEST IT WITH CheckDeliverable() BEFORE Done(). CheckDeliverable() runs
+pipeline.py through the exact controlled gate the runtime applies at Done() and
+returns the full result — including the complete error if it fails. It is your
+ONLY way to run/debug pipeline.py, so do not edit it blindly: CheckDeliverable()
+→ read the real error → fix the exact problem → repeat until it PASSES → Done().
+Done() refuses a non-reproducing pipeline; after a bounded number of failed
+attempts the run is closed FAILED (a hard, loud failure — worse than UNGATED).
+If you are stuck, say so in your retrospective (the BLOCKED field) — an
+unreported capability gap can't be fixed.
 
 A run closes ONLY through an accepted Done(). Ending your turn after a
 refused Done() does not end the run — the runtime re-prompts you, and after
@@ -417,7 +432,8 @@ class StrategizerAgent(Agent):
     """Default orchestrator agent for f3dasm agentic runs."""
 
     system_prompt = STRATEGIZER_SYSTEM_PROMPT
-    tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote", "WriteDeliverable"})
+    tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
+                       "WriteDeliverable", "CheckDeliverable"})
     reset_on_checkpoint = False
     role = "strategizer"
     description = (

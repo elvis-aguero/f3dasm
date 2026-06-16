@@ -59,6 +59,11 @@ def extract(run_dir: Path) -> dict:
                 "status", "halted")
         except Exception:
             row["outcome"] = "halted?"
+    elif sol.exists() and (
+        "FAILED RUN" in (_s := sol.read_text()) or "⛔" in _s
+    ):
+        # Distinct, loud terminal state: the deliverable never reproduced.
+        row["outcome"] = "FAILED"
     elif sol.exists() and "UNGATED" in sol.read_text():
         row["outcome"] = "UNGATED"
     elif sol.exists():

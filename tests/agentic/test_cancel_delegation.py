@@ -21,7 +21,7 @@ def _node():
     class A(Agent):
         role = "strategizer"
         tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
-                           "WriteDeliverable"})
+                           "WriteDeliverable", "CheckDeliverable"})
         description = "strategizer"
 
     class B(Agent):
@@ -216,6 +216,65 @@ def test_getstatus_surfaces_worker_progress_note(tmp_path):
     n._registry["D009"] = entry
     out = n.adapter.closure_tools["GetStatus"]("D009")
     assert "worker note:" in out and "LHS done" in out
+
+
+def _study_with_store(tmp_path, name):
+    run_dir = tmp_path / "runs" / name
+    (run_dir / "debug" / "strategizer_notes").mkdir(parents=True)
+    _seed_store(run_dir / "experiment_data", "D004")  # 1 row, objective f=1.0
+    n = _node()
+    n._study_dir = tmp_path
+    n._current_notes_dir = run_dir / "debug" / "strategizer_notes"
+    return n
+
+
+def test_check_deliverable_reports_pass_and_failure(tmp_path):
+    """CheckDeliverable runs pipeline.py through the gate WITHOUT closing: PASS
+    for a grounded headline, full error for a broken pipeline. Gives the agent
+    sight to debug its own deliverable (the missing capability)."""
+    n = _study_with_store(tmp_path, "C0")
+    check = n.adapter.closure_tools["CheckDeliverable"]
+    # no pipeline yet
+    assert "no pipeline.py" in check().lower()
+    # broken pipeline → full error, NOT YET
+    (tmp_path / "pipeline.py").write_text("import sys\nsys.exit(1)\n")
+    out = check()
+    assert "not yet" in out.lower() and "failed" in out.lower()
+    # grounded headline (ledger max objective is 1.0) → PASS
+    (tmp_path / "pipeline.py").write_text("print('REPRODUCED: 1.0')\n")
+    assert check().lstrip().startswith("PASS")
+
+
+def test_repro_failure_closes_FAILED_not_ungated(tmp_path):
+    """After the bounded sighted attempts, a non-reproducing pipeline closes in a
+    distinct FAILED state (loud ⛔ banner) via the retrospective round — NOT a
+    quiet GATED/UNGATED, and the critic is never spent on it."""
+    n = _study_with_store(tmp_path, "C1")
+    (tmp_path / "pipeline.py").write_text("import sys\nsys.exit(1)\n")
+    done = n.adapter.closure_tools["Done"]
+    out = ""
+    for _ in range(12):  # two-shot warn + 6 bounces + giveup
+        out = done(summary="best result")
+        if "Retrospective" in out:
+            break
+    assert "Retrospective" in out          # routed into the failed-run interview
+    assert n._route.get("kind") != "done"  # not closed until the retro Done()
+    # the capability-gap probe must be in that interview
+    assert "BLOCKED" in out
+    # the retrospective Done() then closes with the loud FAILED banner
+    done(summary="### Retrospective\n- BLOCKED: no way to run pipeline.py")
+    assert n._route.get("kind") == "done"
+    assert "FAILED RUN" in n._route.get("summary", "")
+
+
+def test_retrospectives_probe_capability_gaps():
+    """Both interview prompts ask the BLOCKED capability-gap question (so 'I
+    couldn't run my own deliverable' can surface)."""
+    from f3dasm._src.agentic.nodes.tools.routing import (
+        _EXIT_INTERVIEW, _FAILED_RETROSPECTIVE)
+    for txt in (_EXIT_INTERVIEW, _FAILED_RETROSPECTIVE):
+        assert "BLOCKED" in txt
+        assert "couldn't" in txt.lower() or "could not" in txt.lower()
 
 
 def test_cancel_single_shot_when_no_ledgered_evals(tmp_path):

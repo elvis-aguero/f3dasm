@@ -137,11 +137,12 @@ class ScriptedStrategistAdapter:
             posterior=0.9,
         )
 
-        # Write required deliverable before Done().
+        # Write required deliverable before Done(). Must satisfy the controlled
+        # reproduction gate: print a verifiable 'REPRODUCED: <value>' sentinel.
         if "WriteDeliverable" in tools:
             tools["WriteDeliverable"](
                 "pipeline.py",
-                "# pipeline.py\nprint('Optimal design confirmed.')\n",
+                "# pipeline.py\nprint('REPRODUCED: 0.0')\n",
             )
 
         tools["Done"](summary="H1 falsified. H2 supported. Optimal design confirmed.")  # first: warning

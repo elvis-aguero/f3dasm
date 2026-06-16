@@ -114,3 +114,48 @@ def test_gate_skips_without_run_context(tmp_path):
     (study_dir / "pipeline.py").write_text("print('ok')\n")
     node._current_notes_dir = None
     assert node._reproduction_gate({"study_dir": str(study_dir)}) is None
+
+
+# ── gate hardening (controlled reproduction) ──────────────────────────────────
+
+def test_gate_rejects_fabricated_headline(tmp_path):
+    """A REPRODUCED value not grounded in the ledger (seeded extrema are 0.0/1.0)
+    is rejected — kills hardcoded/fabricated headlines."""
+    node, study_dir = _setup(tmp_path)
+    (study_dir / "pipeline.py").write_text("print('REPRODUCED: 999.0')\n")
+    problem = node._reproduction_gate({"study_dir": str(study_dir)})
+    assert problem is not None and "grounded" in problem.lower()
+
+
+def test_gate_rejects_missing_headline(tmp_path):
+    """A pipeline that runs but prints no verifiable headline is rejected."""
+    node, study_dir = _setup(tmp_path)
+    (study_dir / "pipeline.py").write_text("print('all done, trust me')\n")
+    problem = node._reproduction_gate({"study_dir": str(study_dir)})
+    assert problem is not None and "headline" in problem.lower()
+
+
+def test_gate_passes_grounded_headline(tmp_path):
+    """REPRODUCED matching a real ledger extremum (max=1.0) passes."""
+    node, study_dir = _setup(tmp_path)
+    (study_dir / "pipeline.py").write_text("print('REPRODUCED: 1.0')\n")
+    assert node._reproduction_gate({"study_dir": str(study_dir)}) is None
+
+
+def test_gate_rejects_ledger_tampering(tmp_path):
+    """Rewriting an existing ledger row's value (to fake a zero-delta) is caught
+    by the integrity check even though the row COUNT is unchanged."""
+    node, study_dir = _setup(tmp_path)
+    (study_dir / "pipeline.py").write_text(
+        "import os\n"
+        "import pandas as pd\n"
+        "from pathlib import Path\n"
+        "csv = Path(os.environ['F3DASM_CANONICAL_STORE'])"
+        " / 'experiment_data' / 'output.csv'\n"
+        "df = pd.read_csv(csv, index_col=0)\n"
+        "df.iloc[0, df.columns.get_loc('f')] = 12345.0\n"
+        "df.to_csv(csv)\n"
+        "print('REPRODUCED: 12345.0')\n"
+    )
+    problem = node._reproduction_gate({"study_dir": str(study_dir)})
+    assert problem is not None and "modified" in problem.lower()

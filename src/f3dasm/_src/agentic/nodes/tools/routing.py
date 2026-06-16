@@ -110,6 +110,30 @@ _EXIT_INTERVIEW = (
     "- DECISION: the one strategic choice you were least sure the system "
     "wanted, and why you made it.\n"
     "- FRICTION: anything counterintuitive about the rules/tools, or 'none'.\n"
+    "- BLOCKED: was there anything you NEEDED to do your job but COULDN'T — a "
+    "missing tool, permission, or way to test/inspect your own work (e.g. no "
+    "way to run or debug a deliverable you had to author)? Name it specifically, "
+    "or 'none'. (We want CAPABILITY GAPS, not just counterintuitive rules — be "
+    "honest; an unreported gap can't be fixed.)\n"
+    "This will NOT reopen the run."
+)
+
+# Retrospective for runs that did NOT pass (UNGATED / FAILED). The most painful
+# runs carry the most friction signal, yet they used to close with no interview
+# at all — so capability gaps (e.g. "I couldn't run my own deliverable") were
+# never surfaced. Capture them here, with the same BLOCKED probe.
+_FAILED_RETROSPECTIVE = (
+    "The run is closing WITHOUT a passing conclusion (it is recorded as "
+    "UNGATED/FAILED — this is final and will NOT reopen). Before it finalises, "
+    "a quick retrospective about the SYSTEM, not the science. Call Done() ONE "
+    "more time with a summary containing only a ### Retrospective block:\n"
+    "- BLOCKED: the single biggest thing you NEEDED but COULDN'T do — a missing "
+    "tool, permission, or way to test/inspect your own work (e.g. no way to run "
+    "or debug the deliverable you had to author). Name it specifically. (This "
+    "is the most important field — be candid; an unreported gap can't be "
+    "fixed.)\n"
+    "- BLOCKER: in one line, the proximate reason the run did not pass.\n"
+    "- FRICTION: any rule/tool that worked against you, or 'none'.\n"
     "This will NOT reopen the run."
 )
 
@@ -1342,24 +1366,51 @@ def build_routing_tools(node) -> dict:
         # to fix — the critic never wastes a turn reviewing a deliverable that
         # cannot even run. Bounded (N=3) so a persistently-broken pipeline still
         # lets the run end (the post-accept gate then marks it UNGATED).
+        _REPRO_MAX = 6  # bounce budget before the run is declared FAILED
         _repro = node._reproduction_gate()
         if _repro is not None:
             node._repro_attempts = getattr(node, "_repro_attempts", 0) + 1
-            if node._repro_attempts <= 3:
+            n = node._repro_attempts
+            if n <= _REPRO_MAX:
                 node._record_intervention(
                     "REPRO_GATE_BOUNCE", "",
-                    f"pre-critic reproduction gate failed "
-                    f"(attempt {node._repro_attempts}/3)")
+                    f"pre-critic reproduction gate failed (attempt {n}/{_REPRO_MAX})")
+                # Escalate: after the first failure, push the agent to DEBUG with
+                # CheckDeliverable() rather than re-Write blindly — it is the only
+                # way to run pipeline.py and see the real error.
+                escalate = (
+                    "" if n == 1 else
+                    f"\n\nThis is failure {n}/{_REPRO_MAX}. Do NOT re-Write "
+                    "pipeline.py blindly. Use CheckDeliverable() to RUN it and "
+                    "read the full error, fix the EXACT problem, CheckDeliverable() "
+                    "again until it PASSES, then call Done(). After "
+                    f"{_REPRO_MAX} failures the run is closed FAILED.")
                 return (
                     prefix + "Cannot close yet — pipeline.py failed the "
-                    "reproduction gate (the runtime executed it before "
-                    "involving the critic):\n\n" + _repro + "\n\nFix "
-                    "pipeline.py via WriteDeliverable('pipeline.py', …), then "
-                    "re-call Done(). (Process gate, not a tool error.)")
+                    "reproduction gate (the runtime ran it before involving the "
+                    "critic):\n\n" + _repro
+                    + "\n\nFix it via WriteDeliverable('pipeline.py', …) — and "
+                    "verify with CheckDeliverable() before re-calling Done()."
+                    + escalate)
+            # Genuine non-convergence: the agent could not produce a reproducing
+            # deliverable in _REPRO_MAX sighted attempts. Close FAILED (loud,
+            # distinct from GATED/UNGATED) via the retrospective round — do NOT
+            # spend the critic on a deliverable that does not even reproduce.
             node._record_intervention(
-                "REPRO_GATE_GIVEUP", "",
-                "reproduction gate still failing after 3 attempts; proceeding "
-                "to critic/close (run will be UNGATED)")
+                "REPRO_GATE_FAILED", "",
+                f"pipeline.py never reproduced after {n} attempts — run FAILED")
+            banner = (
+                "## ⛔ FAILED RUN — DELIVERABLE NEVER REPRODUCED\n\n"
+                f"pipeline.py failed the reproduction gate on all {n} attempts; "
+                "the run could not produce a runnable, lazy deliverable that "
+                "re-derives the headline from the canonical ledger. This is a "
+                "hard failure, not a gated or ungated conclusion.\n\n"
+                "### Last gate error\n" + _repro + "\n\n---\n\n"
+            )
+            node._awaiting_retro = True
+            node._final_summary = banner + summary
+            node._done_warned = False
+            return prefix + _FAILED_RETROSPECTIVE
 
         # Second call — run critic gate if critic is in the graph.
         if node._find_critic_name() is not None:
@@ -1510,13 +1561,13 @@ def build_routing_tools(node) -> dict:
                     + critique_text.strip() + "\n\n---\n\n"
                 )
                 node._revise_count = 0
-                route["kind"] = "done"
-                route["summary"] = banner + summary
-                return prefix + (
-                    "Run complete (UNGATED — closed after "
-                    "3 unsatisfiable critic revisions; objections "
-                    "recorded in solution.md)."
-                )
+                # Route through the retrospective round (D): even an UNGATED
+                # close gets interviewed for capability gaps — these are the
+                # runs that carry the most friction signal.
+                node._awaiting_retro = True
+                node._final_summary = banner + summary
+                node._done_warned = False
+                return prefix + _FAILED_RETROSPECTIVE
             return (
                 prefix +
                 f"Critic verdict: {verdict}. Address the findings below "
@@ -1862,6 +1913,29 @@ def build_routing_tools(node) -> dict:
         target.write_text(content, encoding="utf-8")
         return prefix + f"Written: {target}"
 
+    def CheckDeliverable() -> str:
+        """Dry-run pipeline.py through the SAME controlled reproduction gate the
+        runtime applies at Done(), and return the full result WITHOUT closing
+        the run. This is how you DEBUG pipeline.py before closing: it executes
+        the deliverable lazily against the canonical ledger and checks it (a)
+        runs cleanly, (b) adds zero new evals, (c) doesn't modify the ledger,
+        (d) prints a ledger-grounded 'REPRODUCED: <value>'. On failure you get
+        the full error (stderr) to fix the exact problem; on success the Done()
+        gate will pass. It runs ONLY pipeline.py through the gate — not
+        arbitrary code. Call it repeatedly until it passes, THEN call Done()."""
+        prefix = node._drain_notifications()
+        if not (Path(node._study_dir) / "pipeline.py").exists():
+            return (prefix + "No pipeline.py yet — write it first via "
+                    "WriteDeliverable('pipeline.py', …), then CheckDeliverable().")
+        problem = node._reproduction_gate()
+        if problem is None:
+            ok = getattr(node, "_repro_ok_detail", "reproduces cleanly")
+            return (prefix + "PASS — pipeline.py " + ok
+                    + ". It will pass the Done() gate.")
+        return (prefix + "NOT YET — pipeline.py failed the reproduction gate. "
+                "Fix the exact problem below and CheckDeliverable() again:\n\n"
+                + problem)
+
     if "Done" in _agent_tools:
         closures["Done"] = Done
     if "WriteNote" in _agent_tools:
@@ -1870,6 +1944,8 @@ def build_routing_tools(node) -> dict:
         closures["ReadNote"] = ReadNote
     if "WriteDeliverable" in _agent_tools:
         closures["WriteDeliverable"] = WriteDeliverable
+    if "CheckDeliverable" in _agent_tools:
+        closures["CheckDeliverable"] = CheckDeliverable
     # On-demand handbook lookup, available to the strategizer too.
     closures["ConsultHandbook"] = _consult_handbook
 

@@ -71,7 +71,9 @@ def _default_study_dir() -> Path:
     if _DEFAULT_STUDY_DIR is None:
         import tempfile
         d = Path(tempfile.mkdtemp(prefix="f3dasm_test_"))
-        (d / "pipeline.py").write_text("# test pipeline\n")
+        # Must satisfy the controlled reproduction gate (print a verifiable
+        # REPRODUCED sentinel) so Done() reaches the critic in these tests.
+        (d / "pipeline.py").write_text("print('REPRODUCED: 0.0')\n")
         _DEFAULT_STUDY_DIR = d
     return _DEFAULT_STUDY_DIR
 
@@ -2124,8 +2126,13 @@ def test_done_closes_gracefully_ungated_after_three_revisions():
 
     closed = [r for r in results if "Run complete" in r]
     assert closed, "run never closed — escape did not fire"
-    assert "UNGATED" in closed[0], (
-        f"expected a graceful UNGATED close, got: {closed[0]!r}")
+    # The escape now routes through a retrospective round before closing; the
+    # UNGATED banner lands in the recorded run summary, not the close string.
+    assert any("Retrospective" in r for r in results), (
+        "expected a retrospective prompt before the UNGATED close")
+    assert "UNGATED" in node._route.get("summary", ""), (
+        f"expected UNGATED banner in the recorded summary, got: "
+        f"{node._route.get('summary', '')!r}")
     # Two "revision N/3" prompts (1/3, 2/3), then the 3rd verdict escapes.
     revise_msgs = [r for r in results if "Critic verdict:" in r]
     assert len(revise_msgs) == 2, (
@@ -2977,9 +2984,10 @@ def test_done_critic_gate_embeds_ledger_and_falsification_flags(tmp_path):
                     "numbers": {"best_y": 1.47},
                 },
             )
-            # 4. Write required deliverable
+            # 4. Write required deliverable (must pass the reproduction gate to
+            # reach the critic: print a verifiable REPRODUCED sentinel).
             self.closure_tools["WriteDeliverable"](
-                "pipeline.py", "# pipeline\nprint('done')"
+                "pipeline.py", "# pipeline\nprint('REPRODUCED: 0.0')"
             )
             # 4b. Resolve process milestones (orthogonal to this test) so the
             # Done() close-gate lets us reach the critic gate under test.
