@@ -169,7 +169,39 @@ def register_evaluator_entrypoint(
     tmp = run_config_path.with_suffix(".json.tmp")
     tmp.write_text(_json.dumps(config, indent=2), encoding="utf-8")
     _os.replace(tmp, run_config_path)
+
+    # Guardrail: keep study_dir/config.yaml's declared output_names in sync with
+    # what was actually registered, so the human-facing config never goes stale
+    # (a stale config.yaml is what let an agent build a pipeline around the wrong
+    # objective column). Surgical line edit — preserves comments/formatting.
+    if output_names is not None and config.get("study_dir"):
+        try:
+            _sync_config_output_names(
+                Path(config["study_dir"]) / "config.yaml", output_names)
+        except Exception:  # noqa: BLE001 — best effort; never fail registration
+            pass
     return entrypoint
+
+
+def _sync_config_output_names(config_yaml: Path, output_names: list) -> bool:
+    """Rewrite the ``output_names:`` value under ``evaluator:`` in config.yaml to
+    match the registered names. Surgical (regex on the one line) so comments and
+    the rest of the file are untouched. Returns True if a change was written.
+
+    No-op if the file or the key is absent (we do not guess the YAML structure —
+    run_config.json remains the authoritative runtime source either way).
+    """
+    import re as _re
+    if not config_yaml.exists():
+        return False
+    text = config_yaml.read_text(encoding="utf-8")
+    flow = "[" + ", ".join(str(n) for n in output_names) + "]"
+    new_text, n = _re.subn(
+        r"(?m)^(\s*output_names:\s*).*$", r"\g<1>" + flow, text)
+    if n == 0 or new_text == text:
+        return False
+    config_yaml.write_text(new_text, encoding="utf-8")
+    return True
 
 
 def _ingest_precomputed_pool(

@@ -513,3 +513,58 @@ def test_init_canonical_store_no_eval_cfg_backward_compat(tmp_path):
     assert loaded["evaluator_lookup"] is None
     assert loaded["evaluator_output_names"] is None
     assert "study_dir" in loaded
+
+
+# ---------------------------------------------------------------------------
+# config.yaml output_names write-back guardrail (keeps the human-facing config
+# in sync with the registered objective column — prevents the stale-config /
+# split-objective-column failure where an agent builds a pipeline around the
+# wrong column).
+# ---------------------------------------------------------------------------
+
+def test_sync_config_output_names_surgical_preserves_comments(tmp_path):
+    from f3dasm._src.agentic.agent_runtime import _sync_config_output_names
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "model: claude-haiku-4-5\n"
+        "# the evaluator block is the schema\n"
+        "evaluator:\n"
+        "  entrypoint: \"workspace/evaluator.py:evaluate_kw\"\n"
+        "  output_names: [f]\n"
+    )
+    assert _sync_config_output_names(cfg, ["y"]) is True
+    text = cfg.read_text()
+    assert "output_names: [y]" in text
+    assert "output_names: [f]" not in text
+    # comments + other keys untouched
+    assert "# the evaluator block is the schema" in text
+    assert "model: claude-haiku-4-5" in text
+    # idempotent: re-syncing the same names is a no-op
+    assert _sync_config_output_names(cfg, ["y"]) is False
+
+
+def test_sync_config_output_names_noop_when_key_absent(tmp_path):
+    from f3dasm._src.agentic.agent_runtime import _sync_config_output_names
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("model: claude-haiku-4-5\nbudget: \"00:15:00\"\n")
+    assert _sync_config_output_names(cfg, ["y"]) is False
+    assert "output_names" not in cfg.read_text()  # not guessed/added
+
+
+def test_register_writes_back_to_config_yaml(tmp_path):
+    """register_evaluator_entrypoint syncs config.yaml's output_names to what
+    was actually registered — the end-to-end guardrail."""
+    from f3dasm._src.agentic.agent_runtime import register_evaluator_entrypoint
+    study = tmp_path / "study"
+    (study / "debug").mkdir(parents=True)
+    (study / "config.yaml").write_text(
+        "evaluator:\n  entrypoint: \"workspace/evaluator.py:evaluate_kw\"\n"
+        "  output_names: [f]\n")
+    rc = study / "debug" / "run_config.json"
+    rc.write_text(json.dumps({"study_dir": str(study), "store_dir": str(study)}))
+    (study / "gen.py").write_text("def g(**k):\n    return 0.0\n")
+    register_evaluator_entrypoint(rc, "gen.py", "g", output_names=["y"])
+    # run_config updated
+    assert json.loads(rc.read_text())["evaluator_output_names"] == ["y"]
+    # config.yaml written back (no longer stale)
+    assert "output_names: [y]" in (study / "config.yaml").read_text()
