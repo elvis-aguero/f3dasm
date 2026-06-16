@@ -765,7 +765,10 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                         "Wind down: finish the experiment in flight, then "
                         "wrap up and call Done(); avoid starting new "
                         "delegations. A hard cost backstop applies only at "
-                        f"{int(run_backstop_multiple())}x budget."
+                        f"{int(run_backstop_multiple())}x budget. Do NOT cancel "
+                        "a delegation that is still progressing to save time — "
+                        "its ledgered evals already persist, so cancelling only "
+                        "throws away its report; let it finish and read it."
                     ),
                 })
             elif pct >= 0.95:
@@ -774,7 +777,10 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                     "content": (
                         f"Warning: time budget at {pct*100:.0f}% "
                         f"({elapsed:.0f}s / {budget:.0f}s). "
-                        "Begin wrapping up — call Done() soon."
+                        "Begin wrapping up — call Done() soon. Don't cancel a "
+                        "progressing delegation under time pressure; its evals "
+                        "are already ledgered and cancelling only loses its "
+                        "report (GetStatus shows whether it's progressing)."
                     ),
                 })
 

@@ -503,7 +503,23 @@ def build_routing_tools(node) -> dict:
                 base = answer or "No answer received. Proceed with best judgment."
                 return budget_prefix + base
 
+            def ReportProgress(note: str) -> str:
+                """Leave a short progress note (<=200 chars) your delegator sees
+                when it polls you. NON-BLOCKING — you keep working immediately;
+                no answer comes back. Use it so the delegator can tell you are
+                making progress rather than stuck (which prevents needless
+                cancellation): e.g. 'LHS done, 250 evals; fitting GP next' or
+                'BO round 3/10, best f=-0.81 so far'.
+                """
+                _n = (note or "").strip()[:200]
+                with node._registry_lock:
+                    e = node._registry.get(delegation_id)
+                    if e is not None:
+                        e["progress_note"] = (_n, time.monotonic())
+                return "Progress noted (your delegator will see it on poll)."
+
             worker.closure_tools["ReportEvals"] = ReportEvals  # not wrapped: never errors
+            worker.closure_tools["ReportProgress"] = ReportProgress  # not wrapped
             worker.closure_tools["FollowUp"] = node._wrap_closure(FollowUp, target)
             # On-demand handbook lookup, available to every worker.
             worker.closure_tools["ConsultHandbook"] = _consult_handbook
@@ -950,7 +966,11 @@ def build_routing_tools(node) -> dict:
                 last_poll = entry.get("last_getstatus_time")
                 now_mono = time.monotonic()
                 entry["last_getstatus_time"] = now_mono
-                elapsed = int(now_mono - entry["start_time"])
+                start_mono = entry["start_time"]
+                elapsed = int(now_mono - start_mono)
+                prev_stamped = entry.get("last_stamped", 0)
+                last_progress = entry.get("last_progress_time", start_mono)
+                progress_note = entry.get("progress_note")
 
         # Status token FIRST (contract: callers dispatch on the
         # leading word); queued notifications follow the report.
@@ -967,6 +987,39 @@ def build_routing_tools(node) -> dict:
             return f"Errored:\n{entry['result']}" + _tail
 
         # --- Still working: build informative response ---
+        # Ledger progress (feature c): surface real progress so the delegator
+        # can tell "progressing" from "stuck" instead of inferring it from
+        # wall-time (the blindness that drove over-cancelling). Also folds in
+        # backlog #6: zero stamped after a long wall-time IS the stuck signal.
+        _store = (
+            node._current_notes_dir.parent.parent / "experiment_data"
+            if node._current_notes_dir is not None else None
+        )
+        cur_stamped = _stamped_eval_count(_store, delegation_id) if _store else 0
+        delta = cur_stamped - prev_stamped
+        if cur_stamped > prev_stamped:
+            last_progress = now_mono
+        with node._registry_lock:
+            _e = node._registry.get(delegation_id)
+            if _e is not None:
+                _e["last_stamped"] = cur_stamped
+                _e["last_progress_time"] = last_progress
+        stale = int(now_mono - last_progress)
+        if cur_stamped > 0 and delta > 0:
+            progress_desc = (
+                f"{cur_stamped} evals stamped (+{delta} since last poll) "
+                "— progressing")
+        elif cur_stamped > 0:
+            progress_desc = (
+                f"{cur_stamped} evals stamped, none new for {stale}s")
+        else:
+            progress_desc = f"0 evals stamped after {elapsed}s"
+        note_desc = ""
+        if progress_note:
+            _ntext, _nts = progress_note
+            note_desc = (
+                f" · worker note: {_ntext!r} ({int(now_mono - _nts)}s ago)")
+
         hints: list[str] = []
 
         # Rate warning: polled too recently.
@@ -988,18 +1041,30 @@ def build_routing_tools(node) -> dict:
                 "STOP polling in a tight loop. " if poll_count >= 15
                 else ""
             )
-            hints.append(
-                f"{firmness}Polled {poll_count}× ({elapsed}s) — polling does "
-                "NOT make it finish faster, and slow is NOT stuck (a long "
-                "campaign is still producing ledgered evals). Best move: (a) do "
-                "other work now (start another delegation, write notes, analyse "
-                "results so far); (b) just wait — poll once, occasionally, and "
-                "it'll be ready when ready. Only CancelDelegation('"
-                + delegation_id + "') if you genuinely no longer WANT its result "
-                "(wrong approach / superseded) — never just because it's slow; "
-                "cancelling throws away its findings. For future sequential "
-                "tasks, Delegate(wait=True) blocks with zero polling."
-            )
+            if cur_stamped > 0:
+                # Demonstrably progressing — anchor the nudge on the numbers so
+                # the agent doesn't cancel a healthy campaign out of impatience.
+                hints.append(
+                    f"{firmness}Polled {poll_count}× ({elapsed}s) — but "
+                    f"{delegation_id} IS progressing ({progress_desc}). Polling "
+                    "won't speed it up. Best move: (a) do other work now; or "
+                    "(b) just wait and poll occasionally. Do NOT cancel a "
+                    "progressing delegation to save time — its ledgered evals "
+                    "persist regardless, so cancelling only discards its report. "
+                    "Delegate(wait=True) avoids polling on sequential tasks."
+                )
+            else:
+                # Zero stamped (backlog #6 stuck signal): cancelling is now a
+                # defensible call, but only here.
+                hints.append(
+                    f"{firmness}Polled {poll_count}× ({elapsed}s) and "
+                    f"{progress_desc}. Options: (a) do other work; (b) just "
+                    "wait — a worker may still be setting up before its first "
+                    "eval. Only if it has stamped NOTHING for a long time is it "
+                    "likely genuinely stuck — then CancelDelegation('"
+                    + delegation_id + "') is reasonable. For sequential tasks, "
+                    "Delegate(wait=True) blocks with zero polling."
+                )
 
         # Budget broadcast: check if a new 10%-overbudget threshold is reached.
         budget = node._budget_seconds
@@ -1048,8 +1113,8 @@ def build_routing_tools(node) -> dict:
         hint_str = ("\n\n" + "\n".join(hints)) if hints else ""
         tail = ("\n\n" + prefix.rstrip()) if prefix.strip() else ""
         return (
-            f"Working (running for {elapsed}s, "
-            f"polled {poll_count} times)" + hint_str + tail
+            f"Working (running for {elapsed}s, polled {poll_count}× · "
+            + progress_desc + note_desc + ")" + hint_str + tail
         )
 
     def CancelDelegation(delegation_id: str) -> str:

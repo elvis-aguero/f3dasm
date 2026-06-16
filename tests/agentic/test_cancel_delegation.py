@@ -170,6 +170,54 @@ def test_done_bounces_on_broken_pipeline_before_critic(tmp_path):
     assert n._repro_attempts == 1
 
 
+def _working_entry():
+    import time as _t
+    return {"status": "Working", "result": None,
+            "start_time": _t.monotonic(), "getstatus_count": 0}
+
+
+def test_getstatus_reports_ledger_progress_when_evals_stamped(tmp_path):
+    """Feature (c): GetStatus surfaces stamped-eval progress so the delegator
+    sees a delegation is progressing (and won't cancel it out of blindness)."""
+    run_dir = tmp_path / "runs" / "T3"
+    (run_dir / "debug" / "strategizer_notes").mkdir(parents=True)
+    _seed_store(run_dir / "experiment_data", "D007")  # 1 stamped eval
+    n = _node()
+    n._current_notes_dir = run_dir / "debug" / "strategizer_notes"
+    n._registry["D007"] = _working_entry()
+    out = n.adapter.closure_tools["GetStatus"]("D007")
+    assert out.startswith("Working")
+    assert "evals stamped" in out and "progressing" in out
+
+
+def test_getstatus_flags_zero_progress_as_possible_stuck(tmp_path):
+    """Backlog #6 signal: zero stamped evals is surfaced distinctly (the only
+    case where cancelling is framed as reasonable)."""
+    run_dir = tmp_path / "runs" / "T4"
+    (run_dir / "debug" / "strategizer_notes").mkdir(parents=True)
+    (run_dir / "experiment_data").mkdir()
+    n = _node()
+    n._current_notes_dir = run_dir / "debug" / "strategizer_notes"
+    n._registry["D008"] = _working_entry()
+    out = n.adapter.closure_tools["GetStatus"]("D008")
+    assert "0 evals stamped" in out
+
+
+def test_getstatus_surfaces_worker_progress_note(tmp_path):
+    """Thin (a): a non-blocking worker note shows up on the delegator's poll."""
+    import time as _t
+    run_dir = tmp_path / "runs" / "T5"
+    (run_dir / "debug" / "strategizer_notes").mkdir(parents=True)
+    (run_dir / "experiment_data").mkdir()
+    n = _node()
+    n._current_notes_dir = run_dir / "debug" / "strategizer_notes"
+    entry = _working_entry()
+    entry["progress_note"] = ("LHS done, 250 evals; fitting GP", _t.monotonic())
+    n._registry["D009"] = entry
+    out = n.adapter.closure_tools["GetStatus"]("D009")
+    assert "worker note:" in out and "LHS done" in out
+
+
 def test_cancel_single_shot_when_no_ledgered_evals(tmp_path):
     """No ledgered evals → cancel is immediate (the impatience guard only
     trips for delegations actually producing evaluations)."""
