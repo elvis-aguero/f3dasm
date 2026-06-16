@@ -1643,10 +1643,11 @@ def build_routing_tools(node) -> dict:
         return prefix + f"Written: {target}"
 
     def ReadNote(path: str) -> str:
-        """Read a file from the study directory. Use it to load
-        PROBLEM_STATEMENT.md before forming a strategy, spot-check
-        Implementer-generated files, and review prior notes — read what you
-        need, not every file speculatively."""
+        """Read a file — or LIST a directory — from the study directory. Use it
+        to load PROBLEM_STATEMENT.md, review prior notes, and (importantly) to
+        reuse the implementers' work: point it at a delegation workspace
+        (workspace_dir/D###/) to LIST its files, then read the script you want
+        to consolidate into pipeline.py. Read what you need, not everything."""
         prefix = node._drain_notifications()
         if study_dir is None:
             return "ERROR: study_dir not set."
@@ -1654,9 +1655,20 @@ def build_routing_tools(node) -> dict:
         if not target.exists():
             return prefix + f"NOT FOUND: {target}"
         if target.is_dir():
+            # List the directory (recursively, files only) so the agent can
+            # discover what an implementer wrote and then read the right file —
+            # rather than guessing filenames and erroring.
+            try:
+                entries = sorted(
+                    str(p.relative_to(target))
+                    for p in target.rglob("*") if p.is_file()
+                )
+            except Exception:  # noqa: BLE001
+                entries = sorted(p.name for p in target.iterdir())
+            listing = "\n".join(f"  {e}" for e in entries) or "  (empty)"
             return prefix + (
-                f"ERROR: {target} is a directory."
-                " Pass a file path."
+                f"{target} is a directory. Files (read one with "
+                f"ReadNote('{path.rstrip('/')}/<file>')):\n{listing}"
             )
         return prefix + target.read_text(encoding="utf-8")
 

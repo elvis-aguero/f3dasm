@@ -245,6 +245,36 @@ def test_check_deliverable_reports_pass_and_failure(tmp_path):
     assert check().lstrip().startswith("PASS")
 
 
+def test_readnote_lists_a_directory_so_delegation_code_is_discoverable(tmp_path):
+    """ReadNote on a directory returns a file LISTING (so the agent can discover
+    and reuse the implementers' delegation code) instead of 'pass a file path'."""
+    class A(Agent):
+        role = "strategizer"
+        tools = frozenset({"Done", "ReadNote"})
+        description = "strategizer"
+
+    class B(Agent):
+        role = "implementer"
+        description = "implementer"
+
+    spec = Graph(
+        nodes={"strategizer": A(), "implementer": B()},
+        edges=(Edge("strategizer", "implementer"),), entry="strategizer",
+    )
+    d = tmp_path / "debug" / "delegations" / "D005"
+    d.mkdir(parents=True)
+    (d / "local_search.py").write_text("# the local search that found the optimum\n")
+    n = StrategizerNode(
+        _Stub(), name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": _Stub()}, study_dir=str(tmp_path),
+    )
+    listing = n.adapter.closure_tools["ReadNote"]("debug/delegations/D005")
+    assert "local_search.py" in listing and "directory" in listing.lower()
+    body = n.adapter.closure_tools["ReadNote"](
+        "debug/delegations/D005/local_search.py")
+    assert "found the optimum" in body
+
+
 def test_check_deliverable_shows_countdown_and_bounds_iteration(tmp_path):
     """CheckDeliverable has a visible 10-call budget: each call reports how many
     remain (so the agent never hits an unseen wall), and the 11th refuses —
