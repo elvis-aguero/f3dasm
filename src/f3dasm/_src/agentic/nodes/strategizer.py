@@ -614,7 +614,7 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                 missing.append(name)
         return missing
 
-    def _reproduction_gate(self, state: AgenticState) -> str | None:
+    def _reproduction_gate(self, state: AgenticState | None = None) -> str | None:
         """Execute pipeline.py LAZILY against the canonical ledger.
 
         The binding reproducibility check: run the deliverable and require it to
@@ -624,12 +624,20 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         non-zero eval delta means the pipeline re-sampled/re-evaluated instead
         of loading the ledger. Returns None on PASS, else a problem string for
         the bounded re-prompt. Skips silently when there is no run context.
+
+        Runs as a pre-critic gate inside Done() (so a broken/non-reproducing
+        deliverable bounces back to the strategizer WITHOUT spending a critic
+        consult) and again as the authoritative final check. Callable without
+        ``state`` — the study dir comes from ``self._study_dir``.
         """
         import os
         import subprocess
         import sys
 
-        study_dir = Path(state.get("study_dir", "."))
+        study_dir = (
+            Path(self._study_dir) if getattr(self, "_study_dir", None) is not None
+            else Path((state or {}).get("study_dir", "."))
+        )
         pipeline_py = study_dir / "pipeline.py"
         if not pipeline_py.exists():
             return None  # absence is handled by _missing_deliverables
@@ -657,17 +665,26 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         env["F3DASM_CANONICAL_STORE"] = str(store_dir)
         env.setdefault("F3DASM_DELEGATION_ID", "D999")
         _cwd = run_config.parent if run_config.exists() else study_dir
+        # Timeout: 10% of the time budget, or 3 min, whichever is larger. A
+        # reproduction is lazy (load ledger, skip finished evals) so it should
+        # be far quicker than the campaign; this ceiling catches a pipeline that
+        # re-runs everything from scratch or hangs.
+        _timeout = (
+            max(0.1 * self._budget_seconds, 180.0)
+            if self._budget_seconds else 300.0
+        )
         try:
             proc = subprocess.run(
                 [sys.executable, str(pipeline_py)],
                 cwd=str(_cwd), env=env,
-                capture_output=True, text=True, timeout=300,
+                capture_output=True, text=True, timeout=_timeout,
             )
         except subprocess.TimeoutExpired:
             return (
-                "pipeline.py did not finish within 300s. A reproduction must "
-                "be lightweight — load the ledger and skip finished evals and "
-                "heavy refits (cache-or-load surrogates). Make it lazy.")
+                f"pipeline.py did not finish within {_timeout:.0f}s. A "
+                "reproduction must be lightweight — load the ledger and skip "
+                "finished evals and heavy refits (cache-or-load surrogates). "
+                "Make it lazy.")
         after = _rows()
 
         if proc.returncode != 0:

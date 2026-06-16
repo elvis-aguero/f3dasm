@@ -133,6 +133,43 @@ def test_cancel_is_two_shot_for_progressing_delegation(tmp_path):
     assert n._registry["D004"]["status"] == "Cancelled"
 
 
+def test_followup_headless_proceeds_without_eoferror():
+    """FollowUp must never block on input() in a non-interactive run (no TTY).
+
+    Regression: a background run hit EOFError at `return input()`. The strategizer
+    should instead be told no operator is present and proceed autonomously.
+    """
+    n = _node()
+    # Default node is non-interactive → autonomous notice, no crash.
+    out = n.adapter.closure_tools["FollowUp"]("Which units?")
+    assert "no operator" in out.lower()
+    # Even if flagged interactive, a non-TTY stdin (as under pytest) must NOT
+    # crash — the isatty guard falls through to the same autonomous notice.
+    n._interactive = True
+    n._ask_count = 0
+    out2 = n.adapter.closure_tools["FollowUp"]("Again?")
+    assert "no operator" in out2.lower()
+
+
+def test_done_bounces_on_broken_pipeline_before_critic(tmp_path):
+    """A pipeline.py that fails to run bounces back in Done() WITHOUT spending a
+    critic consult — the pre-critic reproduction gate (timeout-bounded)."""
+    run_dir = tmp_path / "runs" / "T2"
+    (run_dir / "debug" / "strategizer_notes").mkdir(parents=True)
+    (run_dir / "experiment_data").mkdir()
+    n = _node()  # graph has no critic → the gate still runs before close
+    n._study_dir = tmp_path
+    n._current_notes_dir = run_dir / "debug" / "strategizer_notes"
+    (tmp_path / "pipeline.py").write_text("import sys\nsys.exit(1)\n")
+
+    done = n.adapter.closure_tools["Done"]
+    done(summary="x")                       # first call → two-shot warn
+    out = done(summary="x")                 # second call → repro gate bounce
+    assert "reproduction gate" in out.lower()
+    assert n._route.get("kind") != "done"   # run did NOT close
+    assert n._repro_attempts == 1
+
+
 def test_cancel_single_shot_when_no_ledgered_evals(tmp_path):
     """No ledgered evals → cancel is immediate (the impatience guard only
     trips for delegations actually producing evaluations)."""

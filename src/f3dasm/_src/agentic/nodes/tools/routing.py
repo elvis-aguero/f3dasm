@@ -1260,6 +1260,31 @@ def build_routing_tools(node) -> dict:
             # the time we reach this two-shot warn, all milestones are resolved.)
             # WARNING goes first; then any pending notifications.
             return "  ".join(warn_parts) + (("\n\n" + prefix.rstrip()) if prefix.strip() else "")
+        # Pre-critic reproducibility gate (HARD): the deliverable must EXECUTE
+        # and reproduce lazily BEFORE any critic consult is spent on it. A
+        # broken / non-lazy pipeline.py bounces straight back to the strategizer
+        # to fix — the critic never wastes a turn reviewing a deliverable that
+        # cannot even run. Bounded (N=3) so a persistently-broken pipeline still
+        # lets the run end (the post-accept gate then marks it UNGATED).
+        _repro = node._reproduction_gate()
+        if _repro is not None:
+            node._repro_attempts = getattr(node, "_repro_attempts", 0) + 1
+            if node._repro_attempts <= 3:
+                node._record_intervention(
+                    "REPRO_GATE_BOUNCE", "",
+                    f"pre-critic reproduction gate failed "
+                    f"(attempt {node._repro_attempts}/3)")
+                return (
+                    prefix + "Cannot close yet — pipeline.py failed the "
+                    "reproduction gate (the runtime executed it before "
+                    "involving the critic):\n\n" + _repro + "\n\nFix "
+                    "pipeline.py via WriteDeliverable('pipeline.py', …), then "
+                    "re-call Done(). (Process gate, not a tool error.)")
+            node._record_intervention(
+                "REPRO_GATE_GIVEUP", "",
+                "reproduction gate still failing after 3 attempts; proceeding "
+                "to critic/close (run will be UNGATED)")
+
         # Second call — run critic gate if critic is in the graph.
         if node._find_critic_name() is not None:
             # Synchronous critic gate
@@ -1448,12 +1473,26 @@ def build_routing_tools(node) -> dict:
                 "Proceed autonomously with the information you have."
             )
         node._ask_count += 1
-        if interactive:
+        # Prompt the human ONLY when interactive AND stdin is a real terminal.
+        # A headless/background run (no TTY) must never block on input() — that
+        # raises EOFError. In that case, and whenever the operator gives no
+        # answer, notify the agent that no operator is present and let it
+        # proceed autonomously.
+        import sys as _sys
+        _can_prompt = (
+            interactive
+            and getattr(_sys.stdin, "isatty", lambda: False)()
+        )
+        if _can_prompt:
             print(f"\n[Node {node._name}] {question}\nAnswer: ", end="", flush=True)
-            return input()
-        # Non-interactive: auto-respond so run proceeds autonomously.
+            try:
+                answer = input()
+            except (EOFError, KeyboardInterrupt):
+                answer = ""
+            if answer.strip():
+                return answer
         return (
-            "No operator is present. Proceed autonomously "
+            "No operator is present to answer. Proceed autonomously "
             "using only information available in the task message "
             "and files in the study directory."
         )
