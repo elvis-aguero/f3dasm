@@ -95,3 +95,40 @@ docstring + poll/premature nudges reframed (`routing.py`).
 strategizer sees it finished, not "ignored"), or stop the worker BEFORE it
 stamps. Pick one source of truth so strategizer and critic never see
 contradictory delegation state.
+
+---
+
+## 5. ProblemDefinerAgent — a pre-strategizer intake stage
+**Status:** deferred. Raised 2026-06-16.
+
+A new agent that sits **between the human and the strategizer**, running once at
+the very start of a run, before the strategizer takes over. Its job is to turn a
+raw human problem statement into a high-signal, airtight brief so the strategizer
+spends its budget on science, not on plumbing/ambiguity.
+
+**Responsibilities:**
+- **(a) Airtight problem statement** — resolve ambiguity, pin the objective
+  (minimise/maximise), constraints, success criterion, and what "the result"
+  is. Today this is partly covered by the advisory `_review_problem_statement`
+  pre-run pass (`agent_runtime.py:680`); the ProblemDefiner would *own* and
+  extend it (interactive with the human, not just advisory).
+- **(b) Tech stack + ExperimentData schema** — decide/confirm the f3dasm Domain
+  (input variables + bounds + types) and the **output columns** of the canonical
+  ExperimentData (objective col name, feasibility cols, units), so the ledger
+  schema is fixed before any delegation runs.
+- **(c) Hard-to-automate plumbing** — the evaluator entrypoint, eval/wall
+  budgets, output_names, any study-specific config that today lives in
+  `config.yaml` / `PROBLEM_STATEMENT.md` and is easy to get subtly wrong.
+
+**Why:** it **offloads the strategizer** (which currently has to infer schema,
+reconcile config vs problem statement, and self-review well-posedness) and hands
+it a higher-quality signal. Net effect: fewer SCIENCE_DRIFT / MILESTONE_BLOCK
+diagnostics traceable to an under-specified brief, and a fixed ledger schema from
+turn one.
+
+**To design when picked up:** is it a graph node (entry before strategizer) or a
+runtime pre-pass like the current problem-statement review? How interactive with
+the human (blocking Q&A vs one-shot)? Does it *write* `config.yaml` + an enriched
+`PROBLEM_STATEMENT.md` as its output artifacts (so the brief is itself a
+reproducible deliverable)? Relationship to the existing
+`_review_problem_statement` advisory pass (replace vs wrap).
