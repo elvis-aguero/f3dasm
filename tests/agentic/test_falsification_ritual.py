@@ -61,6 +61,29 @@ def _done_record(n, did="D001"):
         completed_at="2026-01-01T01:00:00+00:00", status="DONE")
 
 
+def test_hypothesis_link_deferred_while_process_backlog_open(tmp_path):
+    """#3: the 'every delegation must link a hypothesis' error is DEFERRED while
+    the process backlog is still open (setup phase — no hypotheses exist yet, so
+    there's nothing to link). Once the backlog is cleared, the link is required.
+    """
+    n = _node(tmp_path)
+    assert [m["id"] for m in n._milestones.pending()]  # backlog open at start
+    deleg = n.adapter.closure_tools["Delegate"]
+
+    # Backlog OPEN: an empty-hypothesis delegation is NOT bounced on the link
+    # rule (it defers, then hits the separate milestone gate).
+    out = deleg(target="implementer", intent="wrap the oracle",
+                expected_report="validation", hypothesis_ids=[])
+    assert "must not be empty" not in out
+
+    # Backlog CLEARED: the link is required again.
+    for m in n._milestones.list_all():
+        n._milestones.skip(m["id"], "n/a")
+    out2 = deleg(target="implementer", intent="run experiment",
+                 expected_report="results", hypothesis_ids=[])
+    assert "must not be empty" in out2
+
+
 # --------------------------------------------------------------------------
 # 1. DelegationLog.mark_attempt — retroactive post-hoc link
 # --------------------------------------------------------------------------

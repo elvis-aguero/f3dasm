@@ -309,12 +309,24 @@ def build_routing_tools(node) -> dict:
             h_ids = [str(h) for h in (hypothesis_ids or [])]
         if node._ledger is not None:
             if not h_ids:
-                return (
-                    "ERROR: hypothesis_ids must not be empty. "
-                    "Every delegation must be linked to at "
-                    "least one hypothesis. Call "
-                    "HypothesisList() to see open hypotheses."
-                )
+                # Defer this requirement while the process backlog is still open
+                # (setup phase): you propose hypotheses AFTER engaging with the
+                # problem and setting up the oracle, so early setup delegations
+                # (oracle wrapping, literature review) have nothing to link to
+                # yet. Once the backlog is cleared, every delegation must cite a
+                # hypothesis. (Tied to the existing milestone backlog, not a
+                # phase taxonomy the agent controls.)
+                _ms = getattr(node, "_milestones", None)
+                _backlog_open = _ms is not None and bool(_ms.pending())
+                if not _backlog_open:
+                    return (
+                        "ERROR: hypothesis_ids must not be empty. "
+                        "Every delegation must be linked to at "
+                        "least one hypothesis. Call "
+                        "HypothesisList() to see open hypotheses."
+                    )
+                # backlog still open → permit this setup-phase delegation
+                # without a hypothesis link.
             known = {
                 h["id"] for h in node._ledger.list_all()
             }
