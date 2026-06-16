@@ -56,3 +56,40 @@ def test_charter_survives_existing_required_tokens():
     assert "is_falsification_attempt" in STRATEGIZER_SYSTEM_PROMPT
     assert "is_falsification_attempt" in ADVERSARIAL_CRITIQUE_SYSTEM_PROMPT
     assert "falsified" in STRATEGIZER_SYSTEM_PROMPT.lower()
+
+
+# ── self-consistency guards (pin the 2026-06-16 epistemic repairs) ────────────
+# These exist because the failure mode is editing one clause without holding the
+# whole file in view. Each pins a repair that fixed a real philosophical defect.
+
+def _normalised() -> str:
+    """Charter lowercased with whitespace collapsed, so wrapping can't break a
+    substring assertion."""
+    return " ".join(FALSIFICATION_CHARTER.lower().split())
+
+
+def test_charter_adequacy_is_severity_not_a_label():
+    """§2: adequacy is the test's SEVERITY; the is_falsification_attempt flag
+    only audits. A careless edit must not re-promote the flag to an adequacy
+    criterion (the pollution that conflated bookkeeping with epistemics)."""
+    c = _normalised()
+    assert "severity" in c
+    assert "never of a label" in c
+    assert "only records the attempt" in c
+
+
+def test_charter_survived_adequate_test_routes_to_supported():
+    """§3/§5: a survived adequate test is SUPPORTED, NOT INCONCLUSIVE — and
+    INCONCLUSIVE is reserved for an inadequate test. This reconciliation
+    replaced a shipped §3↔§5 contradiction; do not let it creep back."""
+    c = _normalised()
+    assert (
+        "not contradicted -> the hypothesis survived and is therefore supported"
+        in c
+    )
+    assert "inconclusive is reserved for an inadequate test" in c
+
+
+def test_charter_dropped_the_bayesian_prior_graft():
+    """§1: the Popperian definition no longer grafts in a Bayesian 'prior'."""
+    assert "prior" not in FALSIFICATION_CHARTER.lower()

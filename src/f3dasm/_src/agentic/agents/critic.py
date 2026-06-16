@@ -40,10 +40,13 @@ For every claim or conclusion in the document, ask:
 
 2. FALSIFICATION — ATTEMPT AND VERDICT (Charter §2–§4)
    Two separate checks per hypothesis in hypotheses.json:
-   (a) ATTEMPT: was the registered prediction actually tested by a
-       delegation flagged is_falsification_attempt? Judge adequacy — a
-       token probe does not count. A hypothesis closed with no adequate
-       attempt is a MAJOR finding.
+   (a) ATTEMPT: was the registered prediction subjected to a SEVERE test —
+       one that could have refuted it (Charter §2)? Judge the test's
+       adequacy by its severity, NOT by its label: a token probe does not
+       count, and a severe test is adequate whether or not it carries the
+       is_falsification_attempt tag (the tag only makes the attempt
+       auditable). A hypothesis closed with no adequate attempt is a MAJOR
+       finding.
    (b) VERDICT: does the recorded status obey Charter §3–§4? A FALSIFIED
        status is legitimate ONLY if an adequate test CONTRADICTED the
        SAME registered prediction. A hypothesis marked FALSIFIED whose
