@@ -83,6 +83,11 @@ defers to it.
 
 §6  The four statuses are the only ones: OPEN, SUPPORTED, FALSIFIED,
     INCONCLUSIVE. OPEN = no adequate test yet; the other three are closing
-    statuses and must cite a real delegation ID and at least one number drawn
-    from that delegation's report.
+    statuses and must cite a real delegation ID plus a CONCRETE result from
+    that delegation that bears on the registered prediction — a measurement, a
+    category, a pass/fail, or a comparison (whatever form the prediction takes;
+    not all evidence is numeric — a qualitative observation that contradicts a
+    risky prediction falsifies it just as a black swan refutes "all swans are
+    white"). What is forbidden is closing on prose or vibes: the cited result
+    must be specific and checkable against the prediction.
 """

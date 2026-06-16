@@ -93,3 +93,17 @@ def test_charter_survived_adequate_test_routes_to_supported():
 def test_charter_dropped_the_bayesian_prior_graft():
     """§1: the Popperian definition no longer grafts in a Bayesian 'prior'."""
     assert "prior" not in FALSIFICATION_CHARTER.lower()
+
+
+def test_charter_evidence_is_concrete_not_number_only():
+    """§6: a closing status must cite a real delegation + a CONCRETE result that
+    bears on the prediction — quantitative OR qualitative. It must NOT mandate a
+    number (that over-narrows Popper: a qualitative observation can falsify, cf.
+    the black swan). The provenance requirement (a delegation ID) stays."""
+    c = _normalised()
+    assert "delegation id" in c                      # provenance kept
+    assert "concrete result" in c                    # the softened requirement
+    assert "not all evidence is numeric" in c        # qualitative explicitly OK
+    assert "black swan" in c                          # the Popperian anchor
+    # the old number-mandate wording is gone
+    assert "at least one number" not in c
