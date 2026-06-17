@@ -602,9 +602,9 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
     def _missing_deliverables(self, state: AgenticState) -> list[str]:
         """Return required deliverable paths not present at study_dir yet.
 
-        The single deliverable (pipeline.ipynb in notebook mode, else
-        pipeline.py) is always required, written before Done() is accepted. It is
-        the human-readable recipe AND the reproduction: the runtime executes it
+        The single deliverable (pipeline.ipynb) is always required, authored
+        before Done() is accepted. It is the human-readable recipe AND the
+        reproduction in one notebook: the runtime executes it
         lazily (see _reproduction_gate) to verify the headline re-derives from the
         ledger with zero new evals. Additional paths can be declared in
         state['required_deliverables'].
@@ -629,7 +629,7 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         return missing
 
     def _reproduction_gate(self, state: AgenticState | None = None) -> str | None:
-        """Execute pipeline.py under a CONTROLLED reproduction gate.
+        """Execute pipeline.ipynb under a CONTROLLED reproduction gate.
 
         The binding reproducibility check. The pipeline must:
           (a) finish cleanly within a time ceiling (no heavy from-scratch run);
@@ -658,16 +658,16 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
             Path(self._study_dir) if getattr(self, "_study_dir", None) is not None
             else Path((state or {}).get("study_dir", "."))
         )
-        # Resolve the deliverable by what's present: a notebook is preferred when
-        # it exists, else the script. The gate executes whichever it finds (by
-        # suffix) — so notebook and script studies both work, and absence is left
-        # to _missing_deliverables.
-        pipeline_py = next(
+        # The deliverable is pipeline.ipynb. (A .py is still executable by the
+        # executor-agnostic gate, kept only as a fallback for gate-logic tests;
+        # the notebook is preferred when both are present.) Absence is left to
+        # _missing_deliverables.
+        deliverable = next(
             (study_dir / n for n in ("pipeline.ipynb", "pipeline.py")
              if (study_dir / n).exists()),
             None,
         )
-        if pipeline_py is None:
+        if deliverable is None:
             return None  # absence is handled by _missing_deliverables
         notes = self._current_notes_dir
         if notes is None:
@@ -714,7 +714,7 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
             return len(out), h, extrema
 
         # ── HERMETIC SANDBOX ──────────────────────────────────────────────────
-        # CRITICAL: run pipeline.py against a COPY of the canonical store, never
+        # CRITICAL: run the deliverable against a COPY of the canonical store, never
         # the live one. A faithful lazy pipeline adds nothing; a NON-lazy one
         # (re-evaluating) writes its evals into the THROWAWAY copy — we detect
         # that as "not lazy" while the real ledger stays pristine. Without this,
@@ -753,10 +753,10 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                 # TimeoutExpired on timeout, so the asserts below are unchanged.
                 from ..notebook_exec import run_deliverable
                 proc = run_deliverable(
-                    pipeline_py, cwd=sandbox, env=env, timeout=_timeout)
+                    deliverable, cwd=sandbox, env=env, timeout=_timeout)
             except subprocess.TimeoutExpired:
                 return (
-                    f"{pipeline_py.name} did not finish within {_timeout:.0f}s. A "
+                    f"{deliverable.name} did not finish within {_timeout:.0f}s. A "
                     "reproduction must be lightweight — load the ledger and skip "
                     "finished evals and heavy refits (cache-or-load surrogates). "
                     "Make it lazy.")
@@ -767,7 +767,7 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         # (a) clean exit — surface a generous stderr tail for sighted debugging.
         if proc.returncode != 0:
             return (
-                f"pipeline.py FAILED to run (exit {proc.returncode}). It must "
+                f"{deliverable.name} FAILED to run (exit {proc.returncode}). It must "
                 "load the ledger and derive the headline cleanly. Stderr:\n"
                 + (proc.stderr or "")[-3000:]
                 + ("\n\nStdout tail:\n" + proc.stdout[-800:]
@@ -775,14 +775,14 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         # (b) zero new evals (lazy).
         if after_n != before_n:
             return (
-                f"pipeline.py is NOT lazy: re-running it changed the ledger row "
+                f"{deliverable.name} is NOT lazy: re-running it changed the ledger row "
                 f"count ({before_n} → {after_n}). It must LOAD the ledger "
                 "(ExperimentData.from_file) and reach the oracle only via "
                 "get_evaluator() so FINISHED rows are skipped — zero new evals.")
         # (c) integrity — existing rows unchanged.
         if before_hash and after_hash and before_hash != after_hash:
             return (
-                "pipeline.py MODIFIED existing ledger rows. A reproduction must "
+                f"{deliverable.name} MODIFIED existing ledger rows. A reproduction must "
                 "read the ledger READ-ONLY (it may re-store identical rows, but "
                 "must not rewrite values or delete+re-add). Do not tamper with "
                 "the canonical store.")
@@ -792,8 +792,8 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                       proc.stdout or "")
         if m is None:
             return (
-                "pipeline.py did not print a headline the runtime can verify. "
-                "Its analyze step must derive the result FROM the ledger and "
+                f"{deliverable.name} did not print a headline the runtime can verify. "
+                "Its analysis cell must derive the result FROM the ledger and "
                 "print exactly 'REPRODUCED: <value>' so the runtime can confirm "
                 "it independently (this is how a fabricated/hardcoded headline "
                 "is caught).")
@@ -802,7 +802,7 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
             tol = 1e-6 + 1e-6 * max(abs(x) for x in extrema)
             if not any(abs(claimed - x) <= tol for x in extrema):
                 return (
-                    f"pipeline.py printed REPRODUCED: {claimed}, which is NOT "
+                    f"{deliverable.name} printed REPRODUCED: {claimed}, which is NOT "
                     "grounded in the ledger (objective extrema in the canonical "
                     f"store: {sorted(set(round(x, 6) for x in extrema))}). "
                     "Derive the headline from the loaded rows — do not hardcode "

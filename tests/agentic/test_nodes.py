@@ -61,7 +61,7 @@ _DEFAULT_STUDY_DIR: Path | None = None
 
 
 def _default_study_dir() -> Path:
-    """Return a shared temp study dir with pipeline.py pre-written.
+    """Return a shared temp study dir with pipeline.ipynb pre-written.
 
     Created once per test session; all make_state() calls that don't supply
     an explicit study_dir share this directory so Done() always has the
@@ -70,10 +70,16 @@ def _default_study_dir() -> Path:
     global _DEFAULT_STUDY_DIR
     if _DEFAULT_STUDY_DIR is None:
         import tempfile
+
+        import nbformat
+        from f3dasm._src.agentic.notebook_exec import build_notebook
         d = Path(tempfile.mkdtemp(prefix="f3dasm_test_"))
-        # Must satisfy the controlled reproduction gate (print a verifiable
-        # REPRODUCED sentinel) so Done() reaches the critic in these tests.
-        (d / "pipeline.py").write_text("print('REPRODUCED: 0.0')\n")
+        # Must satisfy the controlled reproduction gate (a code cell printing a
+        # verifiable REPRODUCED sentinel) so Done() reaches the critic.
+        nb = build_notebook([
+            {"type": "code", "name": "analysis",
+             "source": "print('REPRODUCED: 0.0')"}])
+        nbformat.write(nb, str(d / "pipeline.ipynb"))
         _DEFAULT_STUDY_DIR = d
     return _DEFAULT_STUDY_DIR
 
@@ -2244,8 +2250,8 @@ def test_missing_deliverables_normalizes_workspace_prefix(tmp_path):
     actually writes at study_dir/ (audit Finding 1 — the resonance UNGATED bug)."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
-    (tmp_path / "pipeline.py").write_text("x")
-    (tmp_path / "solution.md").write_text("y")
+    (tmp_path / "pipeline.ipynb").write_text("x")
+    (tmp_path / "notes.md").write_text("y")
     node = StrategizerNode(
         StubAdapter(), name="strategizer", outgoing=["implementer"],
         spec=_spec_with_write_deliverable(), notes_dir=tmp_path,
@@ -2253,7 +2259,7 @@ def test_missing_deliverables_normalizes_workspace_prefix(tmp_path):
     # Prefixed paths still resolve to the bare files at study root → none missing.
     state = {
         "study_dir": str(tmp_path),
-        "required_deliverables": ["workspace/pipeline.py", "workspace/solution.md"],
+        "required_deliverables": ["workspace/pipeline.ipynb", "workspace/notes.md"],
     }
     assert node._missing_deliverables(state) == []
     # A genuinely absent deliverable is still reported (as a bare name).
@@ -2286,8 +2292,39 @@ def test_write_deliverable_absent_when_not_in_tools():
     assert "WriteDeliverable" not in node.adapter.closure_tools
 
 
-def test_write_deliverable_writes_py_file(tmp_path):
-    """WriteDeliverable writes a .py file directly to study_dir/."""
+def test_write_deliverable_writes_notebook(tmp_path):
+    """WriteDeliverable writes pipeline.ipynb directly to study_dir/."""
+    import nbformat
+
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    from f3dasm._src.agentic.notebook_exec import build_notebook
+
+    study_dir = tmp_path / "study"
+    study_dir.mkdir()
+    notes_dir = tmp_path / "run" / "debug" / "strategizer_notes"
+    notes_dir.mkdir(parents=True)
+
+    adapter = StubAdapter()
+    spec = _spec_with_write_deliverable()
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        study_dir=study_dir, notes_dir=notes_dir,
+    )
+    node._current_notes_dir = notes_dir
+
+    nb = build_notebook([{"type": "code", "name": "analysis",
+                          "source": "import f3dasm\nprint('hello')"}])
+    result = node.adapter.closure_tools["WriteDeliverable"](
+        "pipeline.ipynb", nbformat.writes(nb)
+    )
+    assert result.startswith("Written:"), f"Unexpected result: {result!r}"
+    written = study_dir / "pipeline.ipynb"
+    assert written.exists(), f"File not found at {written}"
+    assert "import f3dasm" in written.read_text()
+
+
+def test_write_deliverable_rejects_py_script(tmp_path):
+    """WriteDeliverable REJECTS a .py script — the deliverable is a notebook."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
     study_dir = tmp_path / "study"
@@ -2306,38 +2343,13 @@ def test_write_deliverable_writes_py_file(tmp_path):
     result = node.adapter.closure_tools["WriteDeliverable"](
         "pipeline.py", "import f3dasm\nprint('hello')"
     )
-    assert result.startswith("Written:"), f"Unexpected result: {result!r}"
-    written = study_dir / "pipeline.py"
-    assert written.exists(), f"File not found at {written}"
-    assert "import f3dasm" in written.read_text()
-
-
-def test_write_deliverable_writes_md_file(tmp_path):
-    """WriteDeliverable writes a .md file directly to study_dir/."""
-    from f3dasm._src.agentic.nodes import StrategizerNode
-
-    study_dir = tmp_path / "study"
-    study_dir.mkdir()
-    notes_dir = tmp_path / "run" / "debug" / "strategizer_notes"
-    notes_dir.mkdir(parents=True)
-
-    adapter = StubAdapter()
-    spec = _spec_with_write_deliverable()
-    node = StrategizerNode(
-        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
-        study_dir=study_dir, notes_dir=notes_dir,
-    )
-    node._current_notes_dir = notes_dir
-
-    result = node.adapter.closure_tools["WriteDeliverable"](
-        "summary.md", "# Summary\nAll done."
-    )
-    assert result.startswith("Written:")
-    assert (study_dir / "summary.md").exists()
+    assert result.startswith("ERROR:"), f"Expected ERROR, got: {result!r}"
+    assert "notebook" in result.lower()
+    assert not (study_dir / "pipeline.py").exists()
 
 
 def test_write_deliverable_rejects_unsupported_extension(tmp_path):
-    """WriteDeliverable returns ERROR for extensions other than .py and .md."""
+    """WriteDeliverable returns ERROR for any extension other than .ipynb."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
     study_dir = tmp_path / "study"

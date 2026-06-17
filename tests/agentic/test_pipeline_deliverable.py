@@ -44,7 +44,7 @@ def test_pipeline_milestone_auto_satisfies_when_file_exists(tmp_path):
     class _N:
         _study_dir = tmp_path
     assert _pipeline_drafted(_N()) is False
-    (tmp_path / "pipeline.py").write_text("# candidate pipeline\n")
+    (tmp_path / "pipeline.ipynb").write_text("# candidate pipeline\n")
     assert _pipeline_drafted(_N()) is True
 
 

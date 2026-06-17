@@ -137,13 +137,18 @@ class ScriptedStrategistAdapter:
             posterior=0.9,
         )
 
-        # Write required deliverable before Done(). Must satisfy the controlled
-        # reproduction gate: print a verifiable 'REPRODUCED: <value>' sentinel.
+        # Author the required deliverable (pipeline.ipynb) before Done(). Must
+        # satisfy the controlled reproduction gate: a code cell printing a
+        # verifiable 'REPRODUCED: <value>' sentinel.
         if "WriteDeliverable" in tools:
-            tools["WriteDeliverable"](
-                "pipeline.py",
-                "# pipeline.py\nprint('REPRODUCED: 0.0')\n",
-            )
+            import nbformat
+            from f3dasm._src.agentic.notebook_exec import build_notebook
+            nb = build_notebook([
+                {"type": "markdown", "source": "# Problem\nminimise f."},
+                {"type": "code", "name": "analysis",
+                 "source": "print('REPRODUCED: 0.0')"},
+            ])
+            tools["WriteDeliverable"]("pipeline.ipynb", nbformat.writes(nb))
 
         tools["Done"](summary="H1 falsified. H2 supported. Optimal design confirmed.")  # first: warning
         tools["Done"](summary="H1 falsified. H2 supported. Optimal design confirmed.")  # second: accepted

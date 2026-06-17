@@ -64,12 +64,12 @@ def test_build_tools_with_extra_allowed_tools_calls_literature_tools():
     from f3dasm._src.agentic.backends.ollama import OllamaAdapter
 
     mock_tool = MagicMock()
-    mock_tool.name = "mcp__arxiv__search_papers"
+    mock_tool.name = "arxiv_search_papers"
 
     adapter = OllamaAdapter(
         model="llama3.2",
         system_prompt="Test",
-        extra_allowed_tools=["mcp__arxiv__search_papers"],
+        extra_allowed_tools=["arxiv_search_papers"],
     )
 
     with patch(
@@ -88,14 +88,14 @@ def test_build_tools_filters_to_allowed_names():
     from f3dasm._src.agentic.backends.ollama import OllamaAdapter
 
     allowed_tool = MagicMock()
-    allowed_tool.name = "mcp__arxiv__search_papers"
+    allowed_tool.name = "arxiv_search_papers"
     disallowed_tool = MagicMock()
     disallowed_tool.name = "mcp__zotero__fetch"
 
     adapter = OllamaAdapter(
         model="llama3.2",
         system_prompt="Test",
-        extra_allowed_tools=["mcp__arxiv__search_papers"],
+        extra_allowed_tools=["arxiv_search_papers"],
     )
 
     with patch(

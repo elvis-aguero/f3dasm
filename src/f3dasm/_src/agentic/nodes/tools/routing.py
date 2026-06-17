@@ -1266,7 +1266,7 @@ def build_routing_tools(node) -> dict:
 
         Call only when: a best design is in hand with numerical support from
         Reports; at least one falsification attempt has been carried out; and
-        pipeline.py has been written via WriteDeliverable("pipeline.py", …).
+        pipeline.ipynb has been authored via WriteDeliverable("pipeline.ipynb", …).
         summary should state the best design + supporting numbers + the
         falsification outcome + remaining uncertainty.
 
@@ -1401,7 +1401,7 @@ def build_routing_tools(node) -> dict:
             return "  ".join(warn_parts) + (("\n\n" + prefix.rstrip()) if prefix.strip() else "")
         # Pre-critic reproducibility gate (HARD): the deliverable must EXECUTE
         # and reproduce lazily BEFORE any critic consult is spent on it. A
-        # broken / non-lazy pipeline.py bounces straight back to the strategizer
+        # broken / non-lazy pipeline.ipynb bounces straight back to the strategizer
         # to fix — the critic never wastes a turn reviewing a deliverable that
         # cannot even run. Bounded (N=3) so a persistently-broken pipeline still
         # lets the run end (the post-accept gate then marks it UNGATED).
@@ -1416,19 +1416,19 @@ def build_routing_tools(node) -> dict:
                     f"pre-critic reproduction gate failed (attempt {n}/{_REPRO_MAX})")
                 # Escalate: after the first failure, push the agent to DEBUG with
                 # CheckDeliverable() rather than re-Write blindly — it is the only
-                # way to run pipeline.py and see the real error.
+                # way to run pipeline.ipynb and see the real error.
                 escalate = (
                     "" if n == 1 else
                     f"\n\nThis is failure {n}/{_REPRO_MAX}. Do NOT re-Write "
-                    "pipeline.py blindly. Use CheckDeliverable() to RUN it and "
+                    "pipeline.ipynb blindly. Use CheckDeliverable() to RUN it and "
                     "read the full error, fix the EXACT problem, CheckDeliverable() "
                     "again until it PASSES, then call Done(). After "
                     f"{_REPRO_MAX} failures the run is closed FAILED.")
                 return (
-                    prefix + "Cannot close yet — pipeline.py failed the "
+                    prefix + "Cannot close yet — pipeline.ipynb failed the "
                     "reproduction gate (the runtime ran it before involving the "
                     "critic):\n\n" + _repro
-                    + "\n\nFix it via WriteDeliverable('pipeline.py', …) — and "
+                    + "\n\nFix it via WriteDeliverable('pipeline.ipynb', …) — and "
                     "verify with CheckDeliverable() before re-calling Done()."
                     + escalate)
             # Genuine non-convergence: the agent could not produce a reproducing
@@ -1437,10 +1437,10 @@ def build_routing_tools(node) -> dict:
             # spend the critic on a deliverable that does not even reproduce.
             node._record_intervention(
                 "REPRO_GATE_FAILED", "",
-                f"pipeline.py never reproduced after {n} attempts — run FAILED")
+                f"pipeline.ipynb never reproduced after {n} attempts — run FAILED")
             banner = (
                 "## ⛔ FAILED RUN — DELIVERABLE NEVER REPRODUCED\n\n"
-                f"pipeline.py failed the reproduction gate on all {n} attempts; "
+                f"pipeline.ipynb failed the reproduction gate on all {n} attempts; "
                 "the run could not produce a runnable, lazy deliverable that "
                 "re-derives the headline from the canonical ledger. This is a "
                 "hard failure, not a gated or ungated conclusion.\n\n"
@@ -1484,11 +1484,11 @@ def build_routing_tools(node) -> dict:
                 f"strategizer_notes     = {notes_path}\n"
                 "delegations_workspace = "
                 f"{_debug_dir}/delegations/\n"
-                f"deliverable           = {_study_dir}/pipeline.py "
-                "(the runtime EXECUTES it lazily after this gate to verify the "
-                "headline re-derives from the ledger with zero new evals; "
-                "solution.md is written by the runtime AFTER this gate, from "
-                "the accepted summary — do NOT flag it as missing)\n"
+                f"deliverable           = {_study_dir}/pipeline.ipynb "
+                "(the runtime EXECUTES the notebook lazily after this gate to "
+                "verify the headline re-derives from the ledger with zero new "
+                "evals; the notebook's own markdown cells ARE the writeup — "
+                "there is no solution.md, do NOT flag it as missing)\n"
                 "</paths>\n\n"
                 # FULL conclusion — never truncate what the adversarial gate
                 # must validate (a head-excerpt would let an over-claim in
@@ -1702,7 +1702,7 @@ def build_routing_tools(node) -> dict:
         to load PROBLEM_STATEMENT.md, review prior notes, and (importantly) to
         reuse the implementers' work: point it at a delegation workspace
         (workspace_dir/D###/) to LIST its files, then read the script you want
-        to consolidate into pipeline.py. Read what you need, not everything."""
+        to consolidate into pipeline.ipynb. Read what you need, not everything."""
         prefix = node._drain_notifications()
         if study_dir is None:
             return "ERROR: study_dir not set."
@@ -1977,54 +1977,57 @@ def build_routing_tools(node) -> dict:
             _agent_tools = _ag.tools
 
     def WriteDeliverable(filename: str, content: str) -> str:
-        """Write the deliverable pipeline.py (alongside solution.md).
+        """Author the deliverable pipeline.ipynb (the ONLY deliverable).
 
-        pipeline.py is the PRODUCTION SCRIPT: a COMPLETE, runnable f3dasm pipeline
-        that regenerates the whole campaign from an empty store — every phase
-        (sampling, surrogate/BO, local search, validation) actually CALLS
-        get_evaluator(); NO stubs, NO placeholder functions, NO 'skipped' /
-        'would go here' comments — AND resumes lazily on the shipped ledger (zero
-        new evals). A script that only loads the ledger and prints the headline
-        is NOT acceptable, and a stub dressed up as real code (placeholder
-        functions that don't call the oracle) is still a stub — the gate and the
-        critic will reject it. Do not try to disguise one.
+        pipeline.ipynb is the single merged artifact — the writeup AND the
+        runnable, lazily-reproducible recipe in one. Its code cells form a
+        COMPLETE f3dasm pipeline: every phase (sampling, surrogate/BO, local
+        search, validation) actually CALLS get_evaluator(); NO stubs, NO
+        placeholder functions, NO 'would go here' comments — AND it resumes
+        lazily on the shipped ledger (zero new evals). A notebook that only
+        loads the ledger and prints the headline is NOT acceptable, and a stub
+        dressed up as real code is still a stub — the gate and the critic reject
+        it. Do not try to disguise one. See <deliverable_format> for the cell
+        structure (the four f3dasm pillars + the Popperian spine).
 
         DO NOT REINVENT IT. The implementers you delegated already WROTE and
         VALIDATED this code under workspace_dir/D###/ (see <run_paths>): the LHS
         sampler, the BO loop, the local search that actually found the optimum.
-        Before writing pipeline.py, ReadNote their working scripts and
-        CONSOLIDATE them into one lazy create→run→analyze pipeline — lift proven
-        code, don't re-derive it from scratch (re-deriving is where you hit bugs
-        and run out of room).
+        Before authoring, ReadNote their working scripts and CONSOLIDATE them
+        into the notebook's cells — lift proven code, don't re-derive from
+        scratch (re-deriving is where you hit bugs and run out of room).
 
-        filename must end in .py or .md. Content is written verbatim. Verify with
-        CheckDeliverable() before Done().
+        filename must be pipeline.ipynb; content must be valid nbformat-v4 JSON.
+        Verify with CheckDeliverable() before Done().
         """
         prefix = node._drain_notifications()
         if node._study_dir is None:
             return "ERROR: study_dir not available."
 
-        allowed_exts = {".py", ".md", ".ipynb"}
         p = Path(filename)
-        if p.suffix not in allowed_exts:
-            return (
-                f"ERROR: filename must end in {allowed_exts}, got {filename!r}."
-            )
         if "/" in filename or "\\" in filename:
             return "ERROR: filename must be a bare name (no path separators)."
-
+        # The deliverable is a Jupyter notebook ONLY. There is no pipeline.py and
+        # no solution.md — the notebook IS both the runnable pipeline and the
+        # writeup. Reject any other suffix loudly so the agent doesn't ship a
+        # script the gate would never execute.
+        if p.suffix != ".ipynb":
+            return (
+                f"ERROR: the deliverable must be pipeline.ipynb (a notebook), "
+                f"not {filename!r}. There is no pipeline.py / solution.md — the "
+                "notebook's markdown cells ARE the writeup. See "
+                "<deliverable_format>."
+            )
         # A .ipynb must be valid notebook JSON — reject a malformed notebook here
-        # (a fallback to the Jupyter MCP authoring path) rather than letting the
-        # gate fail opaquely later.
-        if p.suffix == ".ipynb":
-            try:
-                import nbformat
-                nbformat.reads(content, as_version=4)
-            except Exception as exc:  # noqa: BLE001
-                return (
-                    f"ERROR: {filename!r} is not valid notebook JSON ({exc}). "
-                    "Author it with the Jupyter tools, or write valid nbformat v4."
-                )
+        # rather than letting the gate fail opaquely later.
+        try:
+            import nbformat
+            nbformat.reads(content, as_version=4)
+        except Exception as exc:  # noqa: BLE001
+            return (
+                f"ERROR: {filename!r} is not valid notebook JSON ({exc}). "
+                "Author it with the Jupyter tools, or write valid nbformat v4."
+            )
 
         # Write directly to study_dir/ — the user-visible output location.
         target = Path(node._study_dir) / p.name
@@ -2032,20 +2035,22 @@ def build_routing_tools(node) -> dict:
         return prefix + f"Written: {target}"
 
     def CheckDeliverable() -> str:
-        """Dry-run pipeline.py through the SAME controlled reproduction gate the
-        runtime applies at Done(), and return the full result WITHOUT closing
-        the run. This is how you DEBUG pipeline.py before closing: it executes
-        the deliverable lazily against the canonical ledger and checks it (a)
+        """Dry-run pipeline.ipynb through the SAME controlled reproduction gate
+        the runtime applies at Done(), and return the full result WITHOUT closing
+        the run. This is how you DEBUG pipeline.ipynb before closing: it executes
+        the notebook lazily against the canonical ledger and checks it (a)
         runs cleanly, (b) adds zero new evals, (c) doesn't modify the ledger,
         (d) prints a ledger-grounded 'REPRODUCED: <value>'. On failure you get
         the full error (stderr) to fix the exact problem; on success the Done()
-        gate will pass. It runs ONLY pipeline.py through the gate — not
+        gate will pass. It runs ONLY pipeline.ipynb through the gate — not
         arbitrary code. Call it repeatedly until it passes, THEN call Done()."""
+        from ...notebook_exec import required_deliverable_name
+        _dname = required_deliverable_name()
         prefix = node._drain_notifications()
-        if not (Path(node._study_dir) / "pipeline.py").exists():
+        if not (Path(node._study_dir) / _dname).exists():
             # A no-op (nothing to check) does NOT consume the budget.
-            return (prefix + "No pipeline.py yet — write it first via "
-                    "WriteDeliverable('pipeline.py', …), then CheckDeliverable().")
+            return (prefix + f"No {_dname} yet — write it first via "
+                    f"WriteDeliverable('{_dname}', …), then CheckDeliverable().")
         _BUDGET = 10
         prior = getattr(node, "_check_deliverable_calls", 0)
         if prior >= _BUDGET:
@@ -2067,9 +2072,9 @@ def build_routing_tools(node) -> dict:
         problem = node._reproduction_gate()
         if problem is None:
             ok = getattr(node, "_repro_ok_detail", "reproduces cleanly")
-            return (prefix + "PASS — pipeline.py " + ok
+            return (prefix + "PASS — pipeline.ipynb " + ok
                     + ". Call Done() now to close." + footer)
-        return (prefix + "NOT YET — pipeline.py failed the reproduction gate. "
+        return (prefix + "NOT YET — pipeline.ipynb failed the reproduction gate. "
                 "Fix the exact problem below and CheckDeliverable() again:\n\n"
                 + problem + footer)
 

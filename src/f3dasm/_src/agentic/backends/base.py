@@ -151,7 +151,7 @@ class Agent:
 
     4. **External MCP server tools** — names declared in
        ``extra_allowed_tools`` (e.g.
-       ``"mcp__arxiv__search_papers"``).  The runtime passes these to the
+       ``"arxiv_search_papers"``).  The runtime passes these to the
        backend together with ``mcp_servers``, a dict of
        ``{server_name: McpStdioServerConfig}`` that declares which external
        MCP servers to start.
@@ -449,7 +449,7 @@ def retry_on_transient(
 # When a worker reaches the ground-truth oracle directly (e.g. `from evaluator
 # import evaluate`, or loading evaluator.dylib) instead of via get_evaluator(),
 # its evaluations are NOT stamped into the canonical ExperimentData ledger — so
-# any headline they back cannot be reproduced by pipeline.py. This is a
+# any headline they back cannot be reproduced by pipeline.ipynb. This is a
 # best-effort regex NUDGE, not a sandbox: it exists to save a worker from
 # burning a whole phase off-ledger, not to stop a determined bypass (the
 # reproducibility gate in the critic is the real backstop). Deliberately does
@@ -468,7 +468,7 @@ _ORACLE_NUDGE_MESSAGE = (
     "[ORACLE ACCESS] This reaches the ground-truth evaluator directly. "
     "Evaluations run this way are NOT written to the canonical ExperimentData "
     "ledger, so any number they produce cannot anchor the headline — "
-    "pipeline.py will fail to reproduce it and the critic will reject the "
+    "pipeline.ipynb will fail to reproduce it and the critic will reject the "
     "run. Reach the true oracle ONLY via:  from f3dasm.agentic import "
     "get_evaluator; gen = get_evaluator(); data = data.run(data_generator="
     "gen); gen.flush().  Surrogates/optimisers/acquisition models you build "

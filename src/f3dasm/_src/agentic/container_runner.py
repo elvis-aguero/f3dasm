@@ -213,15 +213,16 @@ class ContainerRunner:
                 print(line, end="", flush=True)
 
     def _latest_solution(self) -> str:
-        """Return solution.md text from the most recent run, or empty string."""
-        runs_dir = self.study_dir / "runs"
-        if not runs_dir.exists():
+        """Return the deliverable notebook's markdown (the writeup) from the
+        study dir, or empty string. The notebook IS the writeup — there is no
+        solution.md."""
+        nb_path = self.study_dir / "pipeline.ipynb"
+        if not nb_path.exists():
             return ""
-        candidates = sorted(
-            runs_dir.glob("*/solution.md"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-        if not candidates:
+        try:
+            import nbformat
+            nb = nbformat.read(str(nb_path), as_version=4)
+        except Exception:  # noqa: BLE001
             return ""
-        return candidates[0].read_text(encoding="utf-8")
+        return "\n\n".join(
+            c.source for c in nb.cells if c.get("cell_type") == "markdown")

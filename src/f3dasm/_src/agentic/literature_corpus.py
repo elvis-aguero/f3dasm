@@ -557,8 +557,8 @@ class LiteratureCorpus:
         source:
             Absolute or relative path to a PDF (``.pdf``) or extracted
             text (``.md`` / ``.txt``) file already on disk.  Download
-            the file first with ``mcp__arxiv__download_paper`` or write
-            the text returned by ``mcp__arxiv__read_paper`` via the
+            the file first with ``arxiv_download_paper`` or write
+            the text returned by ``arxiv_read_paper`` via the
             Write tool.
         title, authors, year, doi, arxiv_id, venue, abstract:
             Optional metadata.  Pass values obtained from the MCP
@@ -795,7 +795,7 @@ class LiteratureCorpus:
                 f"ERROR: corpus contains no full-text papers"
                 f" ({n} abstract-only entr{'y' if n == 1 else 'ies'})."
                 " Quotes require full text — download the PDF or full"
-                " text first (DownloadPdf / mcp__arxiv__download_paper),"
+                " text first (DownloadPdf / arxiv_download_paper),"
                 " then CorpusAdd it."
             )
 

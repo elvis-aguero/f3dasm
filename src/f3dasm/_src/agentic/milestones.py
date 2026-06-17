@@ -56,12 +56,13 @@ def _canonical_source_ready(node) -> bool:
 
 
 def _pipeline_drafted(node) -> bool:
-    """A candidate pipeline.py deliverable exists in the study dir."""
+    """The deliverable notebook (pipeline.ipynb) exists in the study dir."""
     sd = getattr(node, "_study_dir", None)
     if sd is None:
         return False
     try:
-        return (Path(sd) / "pipeline.py").exists()
+        from .notebook_exec import required_deliverable_name
+        return (Path(sd) / required_deliverable_name()).exists()
     except Exception:  # noqa: BLE001
         return False
 
@@ -78,11 +79,12 @@ class DefaultMilestone:
 # M2 + M3 always seed.
 CRAFT_PIPELINE = DefaultMilestone(
     "craft_pipeline",
-    "Engage deeply with the scientific task and draft pipeline.py — the f3dasm "
-    "Pipeline that is your top-down plan AND your single deliverable. Start "
-    "with stub blocks; grow it into the real, lazy create→run→analyze pipeline "
-    "(loads the ledger, oracle via get_evaluator(), caches heavy blocks) that "
-    "the runtime executes to reproduce the headline. Not a throwaway.",
+    "Engage deeply with the scientific task and author pipeline.ipynb — the "
+    "f3dasm Pipeline notebook that is your top-down plan AND your single "
+    "deliverable. Start with scaffold cells; grow them into the real, lazy "
+    "four-pillar pipeline (loads the ledger, oracle via get_evaluator(), caches "
+    "heavy blocks) that the runtime executes to reproduce the headline. Not a "
+    "throwaway.",
     _pipeline_drafted,
 )
 ASSESS_LITERATURE = DefaultMilestone(

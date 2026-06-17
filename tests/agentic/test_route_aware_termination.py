@@ -92,7 +92,7 @@ def test_unaccepted_termination_reprompts():
 
     # Create study_dir with pipeline.py so missing-deliverables is NOT the issue
     study_dir = Path(tempfile.mkdtemp(prefix="f3dasm_rat_"))
-    (study_dir / "pipeline.py").write_text("# test\n")
+    (study_dir / "pipeline.ipynb").write_text("# test\n")
     state = _make_state(study_dir=study_dir)
 
     cmd = node(state)
@@ -116,7 +116,7 @@ def test_ungated_finish_after_three_attempts():
 
     # Adapter never calls Done; pipeline.py present so only Done is missing
     study_dir = Path(tempfile.mkdtemp(prefix="f3dasm_rat_"))
-    (study_dir / "pipeline.py").write_text("# test\n")
+    (study_dir / "pipeline.ipynb").write_text("# test\n")
 
     adapter = StubAdapter(response="Final analysis complete.")
     spec = _minimal_spec()
@@ -153,7 +153,7 @@ def test_accepted_done_no_banner():
     from f3dasm._src.agentic.nodes import StrategizerNode
 
     study_dir = Path(tempfile.mkdtemp(prefix="f3dasm_rat_"))
-    (study_dir / "pipeline.py").write_text("# test\n")
+    (study_dir / "pipeline.ipynb").write_text("# test\n")
 
     class DoneCallingAdapter(StubAdapter):
         def invoke(self, messages):
@@ -192,7 +192,7 @@ def test_run_backstop_halts_resumable_past_multiple(tmp_path):
 
     study_dir = tmp_path / "study"
     study_dir.mkdir()
-    (study_dir / "pipeline.py").write_text("# test\n")
+    (study_dir / "pipeline.ipynb").write_text("# test\n")
     run_dir = study_dir / "runs" / "T"
     (run_dir / "debug").mkdir(parents=True)
     (run_dir / "debug" / "thread_id").write_text("tid-xyz")
@@ -237,7 +237,7 @@ def test_usd_budget_exhausted_halts_resumable(tmp_path):
 
     study_dir = tmp_path / "study"
     study_dir.mkdir()
-    (study_dir / "pipeline.py").write_text("# test\n")
+    (study_dir / "pipeline.ipynb").write_text("# test\n")
     run_dir = study_dir / "runs" / "T"
     (run_dir / "debug").mkdir(parents=True)
     (run_dir / "debug" / "thread_id").write_text("tid-usd")
@@ -272,7 +272,7 @@ def test_usd_budget_inactive_under_ollama_does_not_halt(tmp_path):
 
     study_dir = tmp_path / "study"
     study_dir.mkdir()
-    (study_dir / "pipeline.py").write_text("# test\n")
+    (study_dir / "pipeline.ipynb").write_text("# test\n")
 
     adapter = StubAdapter(response="ollama answer")
     node = StrategizerNode(
@@ -300,7 +300,7 @@ def test_repeated_errors_halt_resumable(tmp_path, monkeypatch):
     monkeypatch.setenv("F3DASM_MAX_CONSECUTIVE_ERRORS", "3")
     study_dir = tmp_path / "study"
     study_dir.mkdir()
-    (study_dir / "pipeline.py").write_text("# test\n")
+    (study_dir / "pipeline.ipynb").write_text("# test\n")
     run_dir = study_dir / "runs" / "T"
     (run_dir / "debug").mkdir(parents=True)
     (run_dir / "debug" / "thread_id").write_text("tid-err")
@@ -327,7 +327,7 @@ def test_soft_budget_does_not_terminate_below_backstop():
     from f3dasm._src.agentic.nodes import StrategizerNode
 
     study_dir = Path(tempfile.mkdtemp(prefix="f3dasm_rat_"))
-    (study_dir / "pipeline.py").write_text("# test\n")
+    (study_dir / "pipeline.ipynb").write_text("# test\n")
 
     adapter = StubAdapter(response="Continuing despite soft warning.")
     spec = _minimal_spec()
@@ -357,7 +357,7 @@ def test_working_delegations_survive_loopback():
     from f3dasm._src.agentic.nodes import StrategizerNode
 
     study_dir = Path(tempfile.mkdtemp(prefix="f3dasm_rat_"))
-    (study_dir / "pipeline.py").write_text("# test\n")
+    (study_dir / "pipeline.ipynb").write_text("# test\n")
 
     # Adapter does NOT call Done → triggers loopback
     adapter = StubAdapter(response="Still thinking.")
@@ -405,7 +405,7 @@ def test_running_delegation_does_not_burn_finish_attempts():
     from f3dasm._src.agentic.nodes import StrategizerNode
 
     study_dir = Path(tempfile.mkdtemp(prefix="f3dasm_rat_"))
-    (study_dir / "pipeline.py").write_text("# test\n")
+    (study_dir / "pipeline.ipynb").write_text("# test\n")
     adapter = StubAdapter(response="Polling D004.")
     node = StrategizerNode(
         adapter, name="strategizer", outgoing=["implementer"],

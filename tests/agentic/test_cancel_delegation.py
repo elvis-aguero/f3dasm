@@ -228,20 +228,29 @@ def _study_with_store(tmp_path, name):
     return n
 
 
+def _write_nb(study_dir, source):
+    """Write study_dir/pipeline.ipynb with a single code cell running `source`."""
+    import nbformat
+
+    from f3dasm._src.agentic.notebook_exec import build_notebook
+    nb = build_notebook([{"type": "code", "name": "analysis", "source": source}])
+    nbformat.write(nb, str(study_dir / "pipeline.ipynb"))
+
+
 def test_check_deliverable_reports_pass_and_failure(tmp_path):
-    """CheckDeliverable runs pipeline.py through the gate WITHOUT closing: PASS
-    for a grounded headline, full error for a broken pipeline. Gives the agent
+    """CheckDeliverable runs pipeline.ipynb through the gate WITHOUT closing: PASS
+    for a grounded headline, full error for a broken notebook. Gives the agent
     sight to debug its own deliverable (the missing capability)."""
     n = _study_with_store(tmp_path, "C0")
     check = n.adapter.closure_tools["CheckDeliverable"]
-    # no pipeline yet
-    assert "no pipeline.py" in check().lower()
-    # broken pipeline → full error, NOT YET
-    (tmp_path / "pipeline.py").write_text("import sys\nsys.exit(1)\n")
+    # no notebook yet
+    assert "no pipeline.ipynb" in check().lower()
+    # broken notebook → full error, NOT YET
+    _write_nb(tmp_path, "import sys\nsys.exit(1)")
     out = check()
     assert "not yet" in out.lower() and "failed" in out.lower()
     # grounded headline (ledger max objective is 1.0) → PASS
-    (tmp_path / "pipeline.py").write_text("print('REPRODUCED: 1.0')\n")
+    _write_nb(tmp_path, "print('REPRODUCED: 1.0')")
     assert check().lstrip().startswith("PASS")
 
 
@@ -280,7 +289,7 @@ def test_check_deliverable_shows_countdown_and_bounds_iteration(tmp_path):
     remain (so the agent never hits an unseen wall), and the 11th refuses —
     converting an endless check↔write grind into a fast, bounded close."""
     n = _study_with_store(tmp_path, "C2")
-    (tmp_path / "pipeline.py").write_text("import sys\nsys.exit(1)\n")  # never passes
+    _write_nb(tmp_path, "import sys\nsys.exit(1)")  # never passes
     check = n.adapter.closure_tools["CheckDeliverable"]
     first = check()
     assert "1/10 used" in first and "9 checks left" in first

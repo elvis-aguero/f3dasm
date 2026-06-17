@@ -1,16 +1,14 @@
-"""Execute the run deliverable — a `pipeline.py` OR a `pipeline.ipynb` — under the
-reproduction gate, with ONE executor-agnostic entry point.
+"""Execute the run deliverable — `pipeline.ipynb` — under the reproduction gate.
 
-The reproduction gate's contract (exit-clean + ZERO new oracle evals + the
-`REPRODUCED:` headline grounded in the ledger) is unchanged; only the *execution
-mechanism* differs by deliverable suffix. `run_deliverable()` returns a
-`subprocess.CompletedProcess`-shaped result (`returncode`, `stdout`, `stderr`)
-for BOTH, and raises `subprocess.TimeoutExpired` on timeout for BOTH, so the gate
-branches on nothing.
+The system is committed to the notebook: `pipeline.ipynb` is THE deliverable.
+The gate's contract (exit-clean + ZERO new oracle evals + the `REPRODUCED:`
+headline grounded in the ledger) executes it lazily via nbclient. The nbclient/
+nbformat/ipykernel deps ship with the `agentic` extra; `run_deliverable()`
+returns a `subprocess.CompletedProcess`-shaped result and raises
+`subprocess.TimeoutExpired` on timeout, so the gate branches on nothing.
 
-Notebook mode is opt-in: enabled only when the `notebook_deliverable` runtime
-flag is set AND the `agentic-notebook` extra (nbclient/nbformat/ipykernel) is
-importable. A non-notebook install keeps shipping/gating `pipeline.py`.
+A per-run Jupyter SERVER (notebook_server.py) for cell-by-cell MCP authoring is
+a separate, opt-in aid — see `live_authoring_server_enabled()`.
 """
 from __future__ import annotations
 
@@ -24,7 +22,7 @@ from . import settings
 
 __all__ = [
     "notebook_available",
-    "notebook_mode_enabled",
+    "live_authoring_server_enabled",
     "required_deliverable_name",
     "run_deliverable",
     "build_notebook",
@@ -38,9 +36,8 @@ __all__ = [
 # f3dasm's four pillars (Phase enum: doe / data_generation / ml / optimization),
 # each a name-tagged code cell preceded by a WHY explainer markdown cell.
 def notebook_deliverable_spec() -> str:
-    """The deliverable contract for notebook mode — injected into the relevant
-    agent prompts so the .ipynb is a reproducible scientific narrative, not a
-    ported .py. Mode-specific: only shown when notebook mode is active."""
+    """The deliverable contract — injected into the relevant agent prompts so
+    the .ipynb is a reproducible scientific narrative, not a ported .py."""
     return (
         "\n<deliverable_format>\n"
         "DELIVERABLE = pipeline.ipynb. This SUPERSEDES every 'pipeline.py' /\n"
@@ -89,15 +86,18 @@ def notebook_available() -> bool:
     return True
 
 
-def notebook_mode_enabled() -> bool:
-    """Notebook deliverable is active iff the runtime flag is set AND the extra is
-    importable. Default off — a plain install/run stays on pipeline.py."""
-    return settings.get_bool("notebook_deliverable", False) and notebook_available()
-
-
 def required_deliverable_name() -> str:
-    """The single required deliverable filename for the active mode."""
-    return "pipeline.ipynb" if notebook_mode_enabled() else "pipeline.py"
+    """The single run deliverable. The system is committed to the notebook —
+    pipeline.ipynb is THE deliverable (there is no pipeline.py / solution.md)."""
+    return "pipeline.ipynb"
+
+
+def live_authoring_server_enabled() -> bool:
+    """Whether to start a per-run Jupyter SERVER so agents can author the
+    notebook cell-by-cell via the Jupyter MCP. This is an OPTIONAL authoring aid
+    (default off) — the notebook deliverable + nbclient gate work without it
+    (agents author via the notebook tools / nbformat). Requires the extra."""
+    return settings.get_bool("notebook_mcp_authoring", False) and notebook_available()
 
 
 @contextlib.contextmanager

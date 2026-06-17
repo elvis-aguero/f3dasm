@@ -69,27 +69,27 @@ For every claim or conclusion in the document, ask:
    outputs?  Flag any discrepancy between claimed and observed values.
 
 6. REPRODUCIBILITY GATE (binding)
-   pipeline.py must exist AND, read as a human would, be a faithful, COMPOSABLE
-   f3dasm Pipeline of the whole process — it reads top-to-bottom as the method
-   (DoE → oracle → surrogate/optimizer → analysis). It is LOAD-OR-CREATE: its
-   create step loads the canonical ledger (ExperimentData.from_file) if present;
-   its oracle step reaches the objective ONLY via a REAL get_evaluator() run
-   step (lazy — skips FINISHED rows); its analysis derives the headline from
-   ledgered rows, NOT hardcoded.
+   pipeline.ipynb must exist AND, read as a human would, be a faithful,
+   COMPOSABLE f3dasm Pipeline of the whole process — its cells read top-to-bottom
+   as the method (the four pillars: DoE → data generation → ML → optimization,
+   then analysis). It is LOAD-OR-CREATE: its DoE cell loads the canonical ledger
+   (ExperimentData.from_file) if present; its data-generation cell reaches the
+   objective ONLY via a REAL get_evaluator() step (lazy — skips FINISHED rows);
+   its analysis cell derives the headline from ledgered rows, NOT hardcoded.
 
    These are TWO SEPARATE checks — do not conflate them:
-   • REGENERATION (you check by READING): the create/run/analyze blocks must be
-     REAL composable code — a real sampler, a real get_evaluator() oracle step,
-     a real surrogate/optimizer — so the script COULD regenerate from an empty
-     store. You do NOT require it to be re-run from empty (that may take weeks);
-     you require it to BE a faithful recipe on the page. A read-only "analysis"
-     script whose evaluation step is stubbed out (a comment "# in production
-     this would call get_evaluator()", a fake objective, a phase that returns
-     early without evaluating) FAILS this — it can reproduce but is not the
-     method. A raw-evaluator import (bypassing get_evaluator()) also FAILS.
+   • REGENERATION (you check by READING): the code cells must be REAL composable
+     code — a real sampler, a real get_evaluator() oracle step, a real
+     surrogate/optimizer — so the notebook COULD regenerate from an empty store.
+     You do NOT require it to be re-run from empty (that may take weeks); you
+     require it to BE a faithful recipe on the page. A read-only "analysis"
+     notebook whose evaluation cell is stubbed out (a comment "# in production
+     this would call get_evaluator()", a fake objective, a pillar cell that
+     returns early without evaluating) FAILS this — it can reproduce but is not
+     the method. A raw-evaluator import (bypassing get_evaluator()) also FAILS.
    • LAZY REPRODUCTION (the runtime checks by EXECUTING): after this gate the
-     runtime runs pipeline.py against the shipped ledger and asserts ZERO new
-     oracle evals + the self-asserted headline. This is the binding dynamic
+     runtime executes pipeline.ipynb against the shipped ledger and asserts ZERO
+     new oracle evals + the self-asserted headline. This is the binding dynamic
      check; your job is the static read above.
 
    Absence, a hardcoded headline, a headline that cannot be reconstructed from
@@ -120,12 +120,12 @@ For every claim or conclusion in the document, ask:
   finding it already is — do not double-count it as a budgeting defect.
 - HANDBOOK POINTER (OPTIONAL, advisory — NEVER changes the verdict).
   If the deliverable passes the gate but falls short of a project standard you
-  can name (e.g. pipeline.py reproduces but is not the composable, multi-phase
+  can name (e.g. pipeline.ipynb reproduces but is not the composable, multi-phase
   recipe described in the handbook), you MAY add a short constructive pointer:
   at most THREE lines, naming the relevant handbook chapter (use
   ConsultHandbook to find/confirm the id) and what to align. Phrase it as
   guidance, not a finding — e.g. "Pointer: see handbook
-  'pipeline-building-patterns' — pipeline.py reproduces but is LHS-only; the
+  'pipeline-building-patterns' — pipeline.ipynb reproduces but is LHS-only; the
   standard is a composable create→surrogate→optimize→analyze recipe." Omit it
   when nothing applies. This NEVER turns a PASS into a REVISE/REJECT and is not
   a CRITICAL/MAJOR/MINOR finding — it is a hint for the next iteration.

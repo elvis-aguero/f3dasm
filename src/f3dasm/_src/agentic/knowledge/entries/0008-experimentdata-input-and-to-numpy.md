@@ -24,3 +24,13 @@ gotchas they encode, so you trust them:
   kwarg is `_input_data`, not `input`) and pass them to
   `ExperimentData.from_data`; to sample you use `create_sampler(...).call(...)`.
   Both are shown in the injected core idioms.
+
+- **The Domain input methods are `add_float` / `add_int` / `add_category` /
+  `add_constant` (also `add_array`).** Do NOT invent names from other
+  frameworks: there is no `add_continuous_input`, `add_continuous`,
+  `add_discrete`, `add_categorical`, `add_variable`, or
+  `add_parameter(type="continuous")`. A continuous bound is
+  `domain.add_float("x0", low, high)`; an integer is
+  `domain.add_int("k", low, high)`. A wrong method name raises `AttributeError`
+  the moment the reproduction gate executes your DoE cell — so the run bounces
+  on it; use the real names from the start.

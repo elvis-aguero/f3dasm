@@ -169,7 +169,7 @@ def test_runtime_contract_types(backend):
         backend,
         native_tools=["Read"],
         extra_mcp_servers={"my_server": {"command": "uvx"}},
-        extra_allowed_tools=["mcp__arxiv__search_papers"],
+        extra_allowed_tools=["arxiv_search_papers"],
         persistent=True,
         max_history_pairs=7,
     )
@@ -187,7 +187,7 @@ def test_runtime_contract_types(backend):
     assert isinstance(a.extra_mcp_servers, dict)
     assert "my_server" in a.extra_mcp_servers
     assert isinstance(a.extra_allowed_tools, list)
-    assert a.extra_allowed_tools == ["mcp__arxiv__search_papers"]
+    assert a.extra_allowed_tools == ["arxiv_search_papers"]
     assert a.persistent is True
     assert a.max_history_pairs == 7
     # the runtime's single entry point + native-tool selector
@@ -289,10 +289,10 @@ def test_literature_agent_arxiv_tools_in_build_closure_tools(tmp_path):
     from f3dasm._src.agentic.agents.literature import LiteratureReviewAgent
     tools = LiteratureReviewAgent().build_closure_tools(tmp_path)
     expected = {
-        "mcp__arxiv__search_papers",
-        "mcp__arxiv__list_papers",
-        "mcp__arxiv__download_paper",
-        "mcp__arxiv__read_paper",
+        "arxiv_search_papers",
+        "arxiv_list_papers",
+        "arxiv_download_paper",
+        "arxiv_read_paper",
     }
     assert expected.issubset(set(tools.keys()))
 

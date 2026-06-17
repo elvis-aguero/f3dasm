@@ -111,7 +111,7 @@ def test_implementer_block_lists_all_pending(tmp_path):
 
 def test_craft_pipeline_auto_satisfies_when_pipeline_exists(tmp_path):
     n = _node(tmp_path)
-    (tmp_path / "pipeline.py").write_text("# candidate\n")
+    (tmp_path / "pipeline.ipynb").write_text("# candidate\n")
     pend_keys = {m["key"] for m in implementer_block(n._milestones, n)}
     assert "craft_pipeline" not in pend_keys      # auto-satisfied
     assert "assess_literature_need" in pend_keys   # manual, still pending

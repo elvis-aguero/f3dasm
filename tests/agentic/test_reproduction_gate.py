@@ -283,14 +283,14 @@ def _write_nb(study_dir, cells):
     nbformat.write(build_notebook(cells), str(study_dir / "pipeline.ipynb"))
 
 
-def test_required_deliverable_is_notebook_when_extra_active():
-    """_required_deliverable_name flips to pipeline.ipynb only when the
-    notebook_deliverable flag is on (nbclient is installed in this env)."""
+def test_required_deliverable_is_always_notebook():
+    """The system is committed to the notebook: the single deliverable is
+    pipeline.ipynb, unconditionally (no dual-mode flag)."""
+    assert required_deliverable_name() == "pipeline.ipynb"
+    # A stray config flag must not flip it back to a script.
     try:
-        settings.configure({"notebook_deliverable": True})
+        settings.configure({"notebook_mcp_authoring": True})
         assert required_deliverable_name() == "pipeline.ipynb"
-        settings.configure({})
-        assert required_deliverable_name() == "pipeline.py"
     finally:
         settings.configure({})
 

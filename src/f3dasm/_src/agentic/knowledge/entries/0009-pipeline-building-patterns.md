@@ -153,7 +153,7 @@ Cell order:
 
 The four pillar cells are ALWAYS present; a pillar you did not run stays present
 with its explainer stating "NOT executed (budget)" — never silently drop one.
-Every WHY-explainer justifies the choice (cite the literature). Same lazy +
-zero-new-eval reproduction contract as `pipeline.py`: the runtime executes the
+Every WHY-explainer justifies the choice (cite the literature). The lazy +
+zero-new-eval reproduction contract is binding: the runtime executes the
 notebook against the shipped ledger and asserts zero new oracle evals + the
 grounded `REPRODUCED:` line.

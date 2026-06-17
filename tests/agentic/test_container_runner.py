@@ -175,14 +175,19 @@ def test_run_adds_host_gateway_on_linux(tmp_path, monkeypatch):
 # 6. _latest_solution
 # ---------------------------------------------------------------------------
 
-def test_latest_solution_reads_most_recent_run_dir(tmp_path):
-    """_latest_solution() returns the text of the most recently modified solution.md."""
-    from f3dasm._src.agentic.container_runner import ContainerRunner
+def test_latest_solution_reads_notebook_markdown(tmp_path):
+    """_latest_solution() returns the markdown (the writeup) of the deliverable
+    notebook — there is no solution.md."""
+    import nbformat
 
-    runs_dir = tmp_path / "runs" / "20250101T000000"
-    runs_dir.mkdir(parents=True)
-    sol = runs_dir / "solution.md"
-    sol.write_text("result", encoding="utf-8")
+    from f3dasm._src.agentic.container_runner import ContainerRunner
+    from f3dasm._src.agentic.notebook_exec import build_notebook
+
+    nb = build_notebook([
+        {"type": "markdown", "source": "result"},
+        {"type": "code", "name": "analysis", "source": "print(1)"},
+    ])
+    nbformat.write(nb, str(tmp_path / "pipeline.ipynb"))
 
     runner = ContainerRunner(tmp_path)
     assert runner._latest_solution() == "result"

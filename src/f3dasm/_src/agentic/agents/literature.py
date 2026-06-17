@@ -36,10 +36,10 @@ Quote ONLY from full-text papers. Abstract-only corpus entries are
 leads, not sources — CorpusSearch will not return their text.
 
 Acquisition chain:
-1. Search (mcp__arxiv__search_papers / search_semantic_scholar /
+1. Search (arxiv_search_papers / search_semantic_scholar /
    search_openalex) — note pdf_url fields in results.
 2. Download PDF via DownloadPdf(url, filename) or
-   mcp__arxiv__download_paper — saves the file locally.
+   arxiv_download_paper — saves the file locally.
 3. CorpusAdd(source=<saved path>, ...) — indexes the full text.
 4. CorpusSearch() — now returns real passages to quote.
 
@@ -69,11 +69,11 @@ Until a paper has been CorpusAdded from a PDF or full-text markdown
 </corpus_tools>
 
 <discovery_tools>
-  mcp__arxiv__search_papers(query, max_results)
+  arxiv_search_papers(query, max_results)
                                   — find papers; returns IDs, titles, abstracts
-  mcp__arxiv__download_paper(paper_id, dir)
+  arxiv_download_paper(paper_id, dir)
                                   — download PDF to dir; returns local path
-  mcp__arxiv__read_paper(paper_id)
+  arxiv_read_paper(paper_id)
                                   — extract text directly (no PDF needed)
   search_semantic_scholar(query, num_results=10)
                                   — search Semantic Scholar (200M+ papers)
@@ -103,15 +103,15 @@ Until a paper has been CorpusAdded from a PDF or full-text markdown
 
 <workflow>
 1. Expand queries: restate the question as 3-5 domain-specific keywords.
-   Search mcp__arxiv__search_papers, search_semantic_scholar, AND
+   Search arxiv_search_papers, search_semantic_scholar, AND
    search_openalex. Note pdf_url in results.
 2. For each relevant paper, acquire full text via ONE of:
-   a) mcp__arxiv__read_paper(paper_id) → write to {delegation_id}/{paper_id}.md
+   a) arxiv_read_paper(paper_id) → write to {delegation_id}/{paper_id}.md
       (only if result is >5000 chars), then CorpusAdd(source=…)
    b) pdf_url from search_openalex / get_semantic_scholar_paper_details →
       DownloadPdf(url, "{delegation_id}/{paper_id}.pdf") →
       CorpusAdd(source=<path>, arxiv_id=…, title=…, …)
-   c) mcp__arxiv__download_paper(paper_id, dir="{delegation_id}/") →
+   c) arxiv_download_paper(paper_id, dir="{delegation_id}/") →
       CorpusAdd(source=…)
 3. CorpusSearch() for passages. Call with multiple phrasings.
    CorpusRank() to merge and reorder results before quoting.

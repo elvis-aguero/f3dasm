@@ -232,10 +232,10 @@ def _build_arxiv_closures() -> dict:
                 return result.stdout or "(could not extract text — install pymupdf or pdftotext)"
 
     return {
-        "mcp__arxiv__search_papers": search_papers,
-        "mcp__arxiv__list_papers": list_papers,
-        "mcp__arxiv__download_paper": download_paper,
-        "mcp__arxiv__read_paper": read_paper,
+        "arxiv_search_papers": search_papers,
+        "arxiv_list_papers": list_papers,
+        "arxiv_download_paper": download_paper,
+        "arxiv_read_paper": read_paper,
     }
 
 

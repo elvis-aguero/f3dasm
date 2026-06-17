@@ -169,7 +169,7 @@ canonical_store       = {experiment_data_dir}
   ^ this is the ExperimentData PROJECT_DIR. Load the ledger with
   ExperimentData.from_file(project_dir="{experiment_data_dir}") — the CSVs live
   one level UNDER it; never hardcode a deeper/shallower path or you'll read an
-  empty store. pipeline.py MUST load it exactly this way.
+  empty store. pipeline.ipynb MUST load it exactly this way.
 workspace_dir         = {debug_dir}/delegations
 Use these absolute paths when calling Read() and WriteNote().
 WriteNote also accepts a bare filename such as 'meta_errors.md',

@@ -74,32 +74,33 @@ def test_run_paths_preamble_has_experiment_data_dir():
 
 def test_pipeline_deliverable_is_lazy_and_self_asserting():
     p = STRATEGIZER_SYSTEM_PROMPT
-    # pipeline.py loads the ledger and reaches the oracle via get_evaluator()
+    # the deliverable is the notebook; its code cells load the ledger and reach
+    # the oracle via get_evaluator()
+    assert "pipeline.ipynb" in p
     assert "ExperimentData.from_file" in p
     assert "get_evaluator()" in p
     # lazy: re-running must add zero new oracle evals
     assert "ZERO new oracle evals" in p
     # self-asserting headline, never hardcoded
-    assert "assert" in p
-    assert "never hardcode" in p
+    assert "REPRODUCED" in p
+    assert "hardcoded" in p.lower()
 
 
 def test_strategizer_has_pipeline_authoring_primer():
-    """The strategizer AUTHORS pipeline.py, so it must carry a concrete
+    """The strategizer AUTHORS pipeline.ipynb, so it must carry a concrete
     f3dasm primer — load the ledger, read its frames, cache heavy blocks,
-    and assert a DERIVED number (not hardcoded), as a Pipeline."""
+    and derive (not hardcode) the headline."""
     p = STRATEGIZER_SYSTEM_PROMPT
     # concrete ledger-read API, not just from_file
     assert "to_pandas()" in p
-    assert "SKELETON" in p
-    # the f3dasm Pipeline form is shown as actionable code
-    assert "Pipeline(" in p and "Step(" in p
     # heavy non-oracle blocks must cache-or-load; store path via env
     assert "CACHE-OR-LOAD" in p
     assert "F3DASM_CANONICAL_STORE" in p
     # explicit anti-hardcoding guidance the critic can lean on
     low = p.lower()
     assert "hardcod" in low and "derive" in low
+    # the detailed cell structure lives in the injected deliverable_format spec
+    assert "deliverable_format" in low
 
 
 # ---------------------------------------------------------------------------

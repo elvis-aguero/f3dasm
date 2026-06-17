@@ -283,17 +283,20 @@ def test_worker_node_recall_history_empty(tmp_path):
 
 
 def test_write_deliverable_creates_file(tmp_path):
-    """WriteDeliverable writes a .py file to study_dir."""
+    """WriteDeliverable writes pipeline.ipynb to study_dir."""
+    import nbformat
+
     from f3dasm._src.agentic.nodes import StrategizerNode
+    from f3dasm._src.agentic.notebook_exec import build_notebook
 
-    (tmp_path / "pipeline.py").write_text("# existing\n")
-
+    nb_json = nbformat.writes(build_notebook(
+        [{"type": "code", "name": "analysis", "source": "x = 42"}]))
     write_results = []
 
     class DeliverableAdapter(StubAdapter):
         def invoke(self, messages):
             result = self.closure_tools["WriteDeliverable"](
-                "output_script.py", "# generated\nx = 42\n"
+                "pipeline.ipynb", nb_json
             )
             write_results.append(result)
             self.closure_tools["Done"](summary="done")
@@ -311,15 +314,15 @@ def test_write_deliverable_creates_file(tmp_path):
 
     assert write_results
     assert "ERROR" not in write_results[0]
-    assert (tmp_path / "output_script.py").exists()
-    assert "42" in (tmp_path / "output_script.py").read_text()
+    assert (tmp_path / "pipeline.ipynb").exists()
+    assert "42" in (tmp_path / "pipeline.ipynb").read_text()
 
 
 def test_write_deliverable_rejects_bad_extension(tmp_path):
-    """WriteDeliverable rejects files that don't end in .py or .md."""
+    """WriteDeliverable rejects any file that doesn't end in .ipynb."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
-    (tmp_path / "pipeline.py").write_text("# r\n")
+    (tmp_path / "pipeline.ipynb").write_text("# r\n")
 
     results = []
 
