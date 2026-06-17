@@ -24,6 +24,7 @@ NOTE: `run.py` wipes `runs/` each launch — audit + persist BEFORE relaunching.
 | 2 | 20260617T012012 | UNGATED | MAJOR (criticals fixed) | 9 | 543 (in budget ✅) | $1.45 | 22:03 | **0 orphans ✅** (D003 traceable=RUNNING) | ERROR_RETURN:5, MILESTONE_BLOCK:1, SCIENCE_DRIFT:5, CONSISTENCY_FLAG:1 |
 | 3 | 20260617T015040 | **GATED ✅** | PASS | 6 | 384 ✅ | $1.15 | 32:26 | 0 orphans ✅ | ERROR_RETURN:**1**, MILESTONE_BLOCK:1, SCIENCE_DRIFT:**2** (no consistency flag) |
 | 4 | 20260617T023021 | UNGATED (premature kill) | 0 consults | 5 | 697 | $0.70 | **9:14** | n/a (never closed) | MILESTONE_BLOCK:1 — *died at finish-attempt 3/3 while D004 healthy* |
+| 5 | 20260617T024631 | **GATED ✅** | PASS | 6 | 390 ✅ | $1.33 | 21:02 | 0 orphans ✅ | MILESTONE_BLOCK:1, SCIENCE_DRIFT:3 (no system back door — see below) |
 
 ---
 
@@ -148,3 +149,50 @@ hang. Test: `test_running_delegation_does_not_burn_finish_attempts` (5 poll turn
 **Note:** run-4 friction was otherwise minimal (just MILESTONE_BLOCK:1) — the
 prior fixes held; this was a distinct, newly-exposed back door (a single big
 delegation rather than several small ones triggered it).
+
+### After Run 5 — NO system fix (discipline check): the flagged item is agent-execution
+Run 5 **GATED**, 0 orphans, closed cleanly in 21 min (the run-4 finish-budget fix
+held — no premature kill). The strategizer raised a CONSISTENCY flag ("cite
+RecallStore as authoritative" vs "derive the headline from the ledger"), which
+looked like a spec contradiction. Ground-truthed instead of fixing reflexively:
+
+- `RunStateSummary.from_store` is mtime-invalidated (re-reads when rows flush), so
+  `RecallStore()` is FRESH on every call — it does NOT go stale, and it agrees
+  with the ledger when both are read fresh.
+- The strategizer's OWN reflection concludes: *"I checked RecallStore once early
+  (300 evals) and relied on that snapshot. I did not re-check before closing …
+  **The rule is sound; my execution was incomplete.**"*
+
+So this is agent-discipline (reused a value fetched earlier), not a system back
+door — and the gate CAUGHT it (critic flagged headline-vs-ledger; agent corrected
+to f=−0.8255/390 → GATED). Per the directive ("close back doors beyond reasonable
+doubt NOT due to agents being dumb"), **no change made.** Other run-5 items —
+scipy.special import bug (agent code), 94 s oracle-init stall (inherent f3dasm/C
+startup cost), per-row phase labels absent from the ledger (phase is in
+delegation_log, joinable by `_delegation_id`) — likewise are not closeable system
+back doors. The remaining residue is agent-execution quality, which the gate
+catches; the systemic back doors are closed.
+
+---
+
+## FINAL SUMMARY
+
+**5 runs, 5 commits. Outcome trajectory: UNGATED → UNGATED → GATED → (premature-kill, fixed) → GATED.**
+Friction collapsed run-over-run: ERROR_RETURN 7→5→1, SCIENCE_DRIFT 6→5→2,
+CONSISTENCY_FLAG 1→1→0; the eval budget went from +52% over (1523) to consistently
+in-budget (384–697); provenance orphans 915→0 and stayed 0.
+
+Five system back doors closed (each flagged by the agents' own retrospectives /
+BLOCKERs and confirmed by code trace — none were agent-dumbness):
+1. `2f3b3b1a` Orphaned delegation rows (provenance + budget undercount) — a
+   delegation killed mid-flight left ledger rows with no log entry and escaped
+   the budget counter.
+2. `ff8a72c4` Verdict-retraction deadlock — the agent couldn't downgrade a
+   premature SUPPORTED→OPEN without citing a new delegation it didn't have.
+3. `24d333ca` `Domain` not top-level-exported + Write sandbox nesting D###/D###/.
+4. `cc5cfeb0` A healthy still-running delegation burned the finish-attempt budget
+   and force-terminated a run with wall budget to spare.
+5. (run 5) NONE — discipline check: the one flag was agent-execution, gate caught it.
+
+Deterministic suite: 920 → 927 passing (12 new regression tests across the 5
+fixes). No regressions.
