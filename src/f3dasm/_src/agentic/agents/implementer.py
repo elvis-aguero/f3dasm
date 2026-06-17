@@ -149,6 +149,13 @@ PREFER f3dasm primitives over raw numpy/scipy equivalents.
   # convenience, but they are NOT authoritative — never present them as the
   # eval count or headline, and don't let them disagree with the ledger. If a
   # number feeds a conclusion, it must trace to a ledgered row.
+  #
+  # NEVER call ExperimentData.store() on the canonical experiment_data dir.
+  # That store is written ONLY by get_evaluator(). Your own .store() MUST
+  # target a delegation-local path ("{delegation_id}/results", a scratch dir) —
+  # storing a partial table onto the canonical dir would destroy metered rows,
+  # and the runtime now REFUSES such a write (RuntimeError). Read the canonical
+  # store with ExperimentData.from_file(); write your own only elsewhere.
 
 ─── INITIAL SPACE-FILLING DESIGN (DoE-execution) ───────────────────────
   # You execute the initial design: sample + evaluate (see core idioms above
