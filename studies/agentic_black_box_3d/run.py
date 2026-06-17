@@ -12,7 +12,10 @@ Topology:
     datagenerator → literature_reviewer
 """
 
+import os
 import shutil
+import threading
+import time
 from pathlib import Path
 
 from f3dasm.agentic import (
@@ -64,8 +67,29 @@ graph = Graph(
     entry="strategizer",
 )
 
+# ── process-level watchdog ────────────────────────────────────────────────────
+# The runtime's time backstop is only checked BETWEEN strategizer turns, so a
+# stall OUTSIDE that loop — startup, inside an LLM/CLI call, inside a tool —
+# zombies forever (observed: a claude-CLI startup stall ran 80 min, idle CPU).
+# This hard wall-clock watchdog force-exits a stalled run so it can never zombie.
+# Generous (> any healthy run ~22-38 min and the in-run backstop) — it only ever
+# fires on a true stall.
+WATCHDOG_SECONDS = 60 * 60
+
+
+def _watchdog() -> None:
+    time.sleep(WATCHDOG_SECONDS)
+    print(
+        f"\nWATCHDOG: run exceeded {WATCHDOG_SECONDS}s wall-clock — force-exiting "
+        "(a call stalled outside the turn loop). No clean close.",
+        flush=True,
+    )
+    os._exit(2)
+
+
 # ── run ───────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    threading.Thread(target=_watchdog, daemon=True).start()
     result = AgenticRun(
         study_dir=STUDY_DIR,
         graph=graph,
