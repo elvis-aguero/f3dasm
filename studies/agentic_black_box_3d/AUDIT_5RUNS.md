@@ -22,6 +22,7 @@ NOTE: `run.py` wipes `runs/` each launch — audit + persist BEFORE relaunching.
 |-----|--------|---------|--------|-------|---------------------------|------|------|------------|----------------|
 | 1 | 20260617T004224 | UNGATED | REJECT (4 crit) | 4 | **1523 (+52%)** | $1.77 | 22:09 | **D003: 915 orphan rows** | MILESTONE_BLOCK:1, ERROR_RETURN:7, SCIENCE_DRIFT:6, CONSISTENCY_FLAG:1 |
 | 2 | 20260617T012012 | UNGATED | MAJOR (criticals fixed) | 9 | 543 (in budget ✅) | $1.45 | 22:03 | **0 orphans ✅** (D003 traceable=RUNNING) | ERROR_RETURN:5, MILESTONE_BLOCK:1, SCIENCE_DRIFT:5, CONSISTENCY_FLAG:1 |
+| 3 | 20260617T015040 | **GATED ✅** | PASS | 6 | 384 ✅ | $1.15 | 32:26 | 0 orphans ✅ | ERROR_RETURN:**1**, MILESTONE_BLOCK:1, SCIENCE_DRIFT:**2** (no consistency flag) |
 
 ---
 
@@ -103,3 +104,25 @@ anti-dodge test green. 925 passed.
 **Watch:** headline-subset discrepancy reappeared in a new guise (critic: pipeline
 idxmin = −0.79 but conclusion claimed −0.569 from a 250-row subset) — still
 downstream of agent analysis, not a clear system defect yet.
+
+### After Run 3 — first GATED run; close two friction back doors
+Run 3 **GATED** (critic PASS), 0 orphans, retraction fix held (H1/H2 honestly
+OPEN, no forced contradiction). Friction fell sharply: ERROR_RETURN 7→5→**1**,
+SCIENCE_DRIFT 6→5→**2**, no CONSISTENCY_FLAG. Two systemic frictions remained
+(flagged in retrospectives, ground-truth confirmed — both beyond reasonable
+doubt system, not agent fault):
+
+1. **`Domain` not exported from `f3dasm` top-level** (confirmed: `f3dasm.Domain`
+   was False; only `f3dasm.design.Domain` worked). The strategizer's natural
+   `from f3dasm import Domain` failed → ~4 wasted CheckDeliverable calls. Fix:
+   export `Domain` at top level (peers ExperimentData/Pipeline already are).
+
+2. **Write sandbox double-nested `D###/D###/`** (flagged by 3 agents across
+   runs). The sandbox is already rooted at `{delegation_id}/`, but the prompt
+   calls it "your D### subfolder" so agents prefix paths with it → `_ws/D###/…`
+   nested. Fix: `_sandboxed_write` absorbs a redundant leading `{delegation_id}/`
+   (absolute-path rejection preserved). The prior allow-test silently passed
+   while double-nesting; now pinned.
+
+Tests: `test_worker_write_strips_redundant_delegation_prefix`; Domain export
+checked. 926 passed.

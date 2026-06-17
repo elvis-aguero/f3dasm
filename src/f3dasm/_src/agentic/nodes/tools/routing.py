@@ -492,8 +492,19 @@ def build_routing_tools(node) -> dict:
 
             def _sandboxed_write(path: str, body: str, _ws=_delegation_ws, _did=delegation_id) -> str:
                 """Write restricted to {delegation_id}/."""
+                # Absorb a redundant leading "{delegation_id}/": the sandbox is
+                # ALREADY rooted at {delegation_id}/, but the prompt calls it
+                # "your D### subfolder", so agents naturally prefix paths with it
+                # — which would nest D###/D###/. Strip one leading D### component
+                # (only when a real filename remains after it). Do NOT lstrip
+                # "/": an absolute path must stay absolute so the relative_to
+                # boundary check below still rejects it.
+                _norm = (path or "").strip()
+                _first, _sep, _rest = _norm.partition("/")
+                if _first == _did and _rest:
+                    _norm = _rest
                 try:
-                    candidate = (_ws / path).resolve()
+                    candidate = (_ws / _norm).resolve()
                 except Exception as exc:  # noqa: BLE001
                     return f"ERROR: invalid path {path!r}: {exc}"
                 try:

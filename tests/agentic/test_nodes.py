@@ -1257,6 +1257,58 @@ def test_worker_write_allowed_inside_delegation_subfolder(tmp_path):
     assert write_results and "ERROR" not in write_results[0]
 
 
+def test_worker_write_strips_redundant_delegation_prefix(tmp_path):
+    """A path that already includes the delegation id must NOT nest D###/D###/.
+
+    The prompt calls the sandbox 'your D### subfolder', so agents prefix paths
+    with it (run-3 friction, flagged by 3 agents). The sandbox is already rooted
+    at {delegation_id}/, so the prefix is absorbed — both 'D001/a.csv' and
+    'b.csv' land directly under .../delegations/D001/."""
+    written = []
+
+    class WritingWorker(StubAdapter):
+        def invoke(self, messages):
+            import re as _re
+            did = (_re.search(r"delegations/([^/]+)/",
+                              " ".join(str(m) for m in messages))
+                   or _re.search(r"<workspace_subfolder>([^/]+)/",
+                                 " ".join(str(m) for m in messages)))
+            sub = did.group(1) if did else "D001"
+            written.append(self.closure_tools["Write"](f"{sub}/a.csv", "x"))
+            written.append(self.closure_tools["Write"]("b.csv", "y"))
+            return ("## Report\n\n### Actions taken\n- wrote\n\n"
+                    "### Files touched\n- a.csv\n\n### Conclusions\nok\n\n"
+                    "### Numbers\nevals: 0")
+
+    class DelegateAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.closure_tools["HypothesisPropose"](
+                statement="Write prefix test", falsification_criterion="c",
+                prediction="p", prior=0.5)
+            self.closure_tools["Delegate"](
+                target="implementer", intent="test", expected_report="",
+                hypothesis_ids=["H1"])
+            _time.sleep(0.3)
+            self.closure_tools["Done"](summary="done")
+            return "Done."
+
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    study_tmp = tmp_path / "study"
+    study_tmp.mkdir()
+    node = StrategizerNode(
+        DelegateAdapter(), name="strategizer", outgoing=["implementer"],
+        spec=_ledger_spec(), worker_adapters={"implementer": WritingWorker()},
+        notes_dir=tmp_path, study_dir=study_tmp)
+    node(make_state(study_dir=str(study_tmp)))
+
+    assert len(written) == 2 and all("ERROR" not in w for w in written)
+    # neither write doubled the delegation id
+    for w in written:
+        assert "/D001/D001/" not in w, f"double-nested: {w}"
+    assert written[0].replace("\\", "/").endswith("/D001/a.csv")
+    assert written[1].replace("\\", "/").endswith("/D001/b.csv")
+
+
 # ---------------------------------------------------------------------------
 # Blindspot 1: _accumulate_usage() unit tests
 # ---------------------------------------------------------------------------
