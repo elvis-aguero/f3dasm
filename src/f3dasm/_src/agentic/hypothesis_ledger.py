@@ -294,10 +294,40 @@ class HypothesisLedger:
                 and current != "OPEN"
                 and not has_delegation
             ):
-                return (
-                    "ERROR: reopening a closed hypothesis requires "
-                    "new evidence with a 'delegation' key."
+                # Un-falsifying RE-ASSERTS a hypothesis the evidence killed —
+                # that is a NEW claim, not a retraction, so it still requires its
+                # own delegation (anti-dodge: no escaping a falsification on
+                # "second thoughts").
+                if current == "FALSIFIED":
+                    return (
+                        "ERROR: reopening a FALSIFIED hypothesis requires new "
+                        "evidence with a 'delegation' key — un-falsifying is a "
+                        "new claim, not a retraction."
+                    )
+                # Retracting SUPPORTED/INCONCLUSIVE → OPEN is WITHDRAWING a
+                # claim, not asserting one — it must not deadlock for lack of a
+                # NEW delegation (the close-time self-correction: "I marked this
+                # SUPPORTED without a falsification attempt; per Charter §2 it
+                # should be OPEN"). Carry forward the evidence the verdict was
+                # based on; every closed hypothesis cited one. The comment
+                # explains the correction and the status_log keeps the full
+                # audit trail (so the critic still sees a frivolous reopen).
+                prior_cited = next(
+                    (
+                        d for d in (
+                            (e.get("evidence") or {}).get("delegation")
+                            for e in reversed(log)
+                        ) if d
+                    ),
+                    None,
                 )
+                if prior_cited is None:
+                    return (
+                        "ERROR: reopening a closed hypothesis requires "
+                        "evidence with a 'delegation' key."
+                    )
+                evidence = {**(evidence or {}), "delegation": prior_cited}
+                has_delegation = True
             entry = StatusLogEntry(
                 status=status,
                 comment=comment,

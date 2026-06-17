@@ -394,6 +394,13 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
             evidence: {"delegation": "D###", "numbers": {key: value}}
               required for closing statuses; numbers must come from
               that delegation's report.
+            RETRACTING SUPPORTED/INCONCLUSIVE back to OPEN (e.g. you marked it
+              SUPPORTED but no falsification ATTEMPT was made — Charter §2) needs
+              NO new evidence: pass evidence=None and explain in the comment; the
+              evidence the verdict was based on is carried forward. Use this to
+              fix your own premature close instead of leaving a contradiction.
+              (Un-falsifying a FALSIFIED hypothesis still needs new evidence — it
+              is a new claim, not a retraction.)
             triggered_by is auto-injected from last completed
             delegation."""
             if node._ledger is None:
