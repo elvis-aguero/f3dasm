@@ -32,16 +32,16 @@ from f3dasm.agentic import (
 STUDY_DIR = Path(__file__).parent
 BUDGET_SECONDS = 15 * 60  # 15 minutes
 MODEL = "claude-haiku-4-5-20251001"
-# EXPERIMENT: run the STRATEGIZER (the orchestrator) on Sonnet while every other
-# node stays on MODEL (Haiku). Single-variable A/B vs the Haiku-strategizer
-# baseline (health-runs h1–h3). Set to None to revert the strategizer to MODEL.
-STRATEGIZER_MODEL = "claude-sonnet-4-6"
+# Per-agent strategizer model override; None → use MODEL (Haiku). (Was set to
+# Sonnet for the orchestrator A/B; reverted to Haiku for the notebook e2e.)
+STRATEGIZER_MODEL = None
 
 # ── clean previous artifacts ──────────────────────────────────────────────────
 for path in [
     STUDY_DIR / "runs",
     STUDY_DIR / "solution.md",
     STUDY_DIR / "pipeline.py",
+    STUDY_DIR / "pipeline.ipynb",
 ]:
     if path.is_dir():
         shutil.rmtree(path)
