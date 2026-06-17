@@ -55,6 +55,12 @@ agentic = [
   "claude-agent-sdk>=0.2.82,<1.0.0",
   "pymupdf>=1.24.0",
   "rank-bm25>=0.2.2",
+  # The run deliverable is pipeline.ipynb; the reproduction gate executes it
+  # lazily via nbclient. These are REQUIRED for the agentic runtime (the system
+  # is committed to the notebook deliverable), so they live in the lean core.
+  "nbclient>=0.7",
+  "nbformat>=5.9",
+  "ipykernel>=6.0",
   # paper search — lightweight (httpx + tenacity), so it stays in the lean core
   "semanticscholar>=0.8.0",
   "arxiv>=2.1.0",
@@ -79,16 +85,6 @@ agentic = [
 # so the subprocess is its only home.
 agentic-extra = [
   "docling>=2.0.0; sys_platform != 'darwin' or platform_machine == 'arm64'"
-]
-# Notebook deliverable: the agentic run ships a single pipeline.ipynb that the
-# reproduction gate executes lazily via nbclient. Opt-in and orthogonal to
-# f3dasm core; the feature is gated on import availability so a non-notebook
-# install still produces/gates pipeline.py.
-agentic-notebook = [
-  "nbclient>=0.7",
-  "nbformat>=5.9",
-  "ipykernel>=6.0",
-  "jupyter-server>=2.0"
 ]
 all = [
   "abaqus2py>=1.0.0",

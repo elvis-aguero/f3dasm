@@ -372,7 +372,8 @@ class StrategizerAgent(Agent):
 
     system_prompt = STRATEGIZER_SYSTEM_PROMPT
     tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
-                       "WriteDeliverable", "CheckDeliverable"})
+                       "WriteDeliverable", "CheckDeliverable",
+                       "SetNotebookIntro", "AddPipelineCell"})
     reset_on_checkpoint = False
     role = "strategizer"
     description = (

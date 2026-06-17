@@ -7,8 +7,8 @@ nbformat/ipykernel deps ship with the `agentic` extra; `run_deliverable()`
 returns a `subprocess.CompletedProcess`-shaped result and raises
 `subprocess.TimeoutExpired` on timeout, so the gate branches on nothing.
 
-A per-run Jupyter SERVER (notebook_server.py) for cell-by-cell MCP authoring is
-a separate, opt-in aid — see `live_authoring_server_enabled()`.
+Agents author the notebook cell-by-cell via the structured AddPipelineCell /
+SetNotebookIntro closures (pure nbformat) — there is no live Jupyter server.
 """
 from __future__ import annotations
 
@@ -18,11 +18,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import settings
-
 __all__ = [
     "notebook_available",
-    "live_authoring_server_enabled",
     "required_deliverable_name",
     "run_deliverable",
     "build_notebook",
@@ -45,10 +42,17 @@ def notebook_deliverable_spec() -> str:
         "THIS run there is exactly one deliverable, pipeline.ipynb, and no\n"
         "pipeline.py and no solution.md. It is the single merged\n"
         "artifact — the writeup AND the runnable, lazily-reproducible recipe in\n"
-        "one. It is a SCIENTIFIC NARRATIVE, not a dumped script. Author it with\n"
-        "WriteDeliverable('pipeline.ipynb', <nbformat-v4 JSON>) (or the Jupyter\n"
-        "tools when available); never hand-write fragile JSON — build valid\n"
-        "nbformat v4.\n\n"
+        "one. It is a SCIENTIFIC NARRATIVE, not a dumped script. AUTHOR IT WITH\n"
+        "THE STRUCTURED TOOLS — they make the structure unforgeable plumbing:\n"
+        "  - SetNotebookIntro(problem, hypotheses): the two leading narrative\n"
+        "    cells (call once, early).\n"
+        "  - AddPipelineCell(phase, why, code): one pillar cell + its REQUIRED\n"
+        "    WHY-explainer; phase in {doe, data_generation, ml, optimization,\n"
+        "    analysis}. Cells stay in canonical order; re-calling a phase\n"
+        "    replaces it. Because the pillar name and the rationale are required\n"
+        "    arguments, you cannot ship a structureless notebook or omit the WHY.\n"
+        "Do NOT hand-write notebook JSON. (WriteDeliverable('pipeline.ipynb', …)\n"
+        "remains a raw fallback, but prefer the structured tools.)\n\n"
         "STRUCTURE (the Popperian spine + f3dasm's four pillars). Each code cell\n"
         "carries name metadata = its pillar so the structure is machine-checkable:\n"
         "  1. md  '# Problem & objective'  — question, min/max, success criterion.\n"
@@ -77,7 +81,7 @@ def notebook_deliverable_spec() -> str:
 
 
 def notebook_available() -> bool:
-    """True iff the agentic-notebook extra (nbclient + nbformat) is importable."""
+    """True iff nbclient + nbformat are importable (ship with the agentic extra)."""
     try:
         import nbclient  # noqa: F401
         import nbformat  # noqa: F401
@@ -90,14 +94,6 @@ def required_deliverable_name() -> str:
     """The single run deliverable. The system is committed to the notebook —
     pipeline.ipynb is THE deliverable (there is no pipeline.py / solution.md)."""
     return "pipeline.ipynb"
-
-
-def live_authoring_server_enabled() -> bool:
-    """Whether to start a per-run Jupyter SERVER so agents can author the
-    notebook cell-by-cell via the Jupyter MCP. This is an OPTIONAL authoring aid
-    (default off) — the notebook deliverable + nbclient gate work without it
-    (agents author via the notebook tools / nbformat). Requires the extra."""
-    return settings.get_bool("notebook_mcp_authoring", False) and notebook_available()
 
 
 @contextlib.contextmanager

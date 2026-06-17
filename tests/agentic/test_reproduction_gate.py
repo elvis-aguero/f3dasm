@@ -289,7 +289,7 @@ def test_required_deliverable_is_always_notebook():
     assert required_deliverable_name() == "pipeline.ipynb"
     # A stray config flag must not flip it back to a script.
     try:
-        settings.configure({"notebook_mcp_authoring": True})
+        settings.configure({"debug": True})
         assert required_deliverable_name() == "pipeline.ipynb"
     finally:
         settings.configure({})

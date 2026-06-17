@@ -2078,6 +2078,110 @@ def build_routing_tools(node) -> dict:
                 "Fix the exact problem below and CheckDeliverable() again:\n\n"
                 + problem + footer)
 
+    # ── Structured notebook authoring ────────────────────────────────────────
+    # The four f3dasm pillars + the Popperian spine are PLUMBING here: the cell
+    # name (= pillar) and the WHY-explainer are REQUIRED arguments, so the agent
+    # cannot author a structureless notebook or forget the rationale. Each call
+    # builds/updates study_dir/pipeline.ipynb in canonical order via nbformat —
+    # no hand-written JSON, no live kernel.
+    _PILLARS = ("doe", "data_generation", "ml", "optimization", "analysis")
+    _NB_ORDER = ["problem", "hypotheses"]
+    for _p in _PILLARS:
+        _NB_ORDER += [f"{_p}__why", _p]
+
+    def _load_or_new_notebook():
+        import nbformat
+        nb_path = Path(node._study_dir) / "pipeline.ipynb"
+        if nb_path.exists():
+            try:
+                return nbformat.read(str(nb_path), as_version=4), nb_path
+            except Exception:  # noqa: BLE001 — corrupt → start clean
+                pass
+        nb = nbformat.v4.new_notebook()
+        nb.metadata["kernelspec"] = {"name": "python3",
+                                     "display_name": "Python 3",
+                                     "language": "python"}
+        return nb, nb_path
+
+    def _emit_notebook(by_name: dict, nb, nb_path):
+        """Re-emit cells in canonical order (named cells first, then any extras
+        — e.g. a runtime provenance stamp — preserved at the end)."""
+        import nbformat
+        ordered = [by_name[k] for k in _NB_ORDER if k in by_name]
+        extras = [c for c in nb.cells
+                  if (c.get("metadata", {}) or {}).get("name") not in by_name]
+        nb.cells = ordered + extras
+        nbformat.write(nb, str(nb_path))
+
+    def _by_name(nb) -> dict:
+        out = {}
+        for c in nb.cells:
+            nm = (c.get("metadata", {}) or {}).get("name")
+            if nm:
+                out[nm] = c
+        return out
+
+    def SetNotebookIntro(problem: str, hypotheses: str) -> str:
+        """Set the notebook's leading narrative cells (creates pipeline.ipynb if
+        absent): a '# Problem & objective' markdown cell (the question, min/max,
+        success criterion) and a '## Hypotheses' cell (registered hypotheses +
+        their falsifiable predictions — the Popperian setup). Call once early;
+        re-calling replaces them. Add the executable pillars with
+        AddPipelineCell()."""
+        import nbformat
+        prefix = node._drain_notifications()
+        if node._study_dir is None:
+            return "ERROR: study_dir not available."
+        nb, nb_path = _load_or_new_notebook()
+        by = _by_name(nb)
+        pc = nbformat.v4.new_markdown_cell(
+            "# Problem & objective\n\n" + problem.strip())
+        pc.metadata["name"] = "problem"
+        hc = nbformat.v4.new_markdown_cell(
+            "## Hypotheses\n\n" + hypotheses.strip())
+        hc.metadata["name"] = "hypotheses"
+        by["problem"], by["hypotheses"] = pc, hc
+        _emit_notebook(by, nb, nb_path)
+        return prefix + "Set pipeline.ipynb intro (Problem & Hypotheses)."
+
+    def AddPipelineCell(phase: str, why: str, code: str) -> str:
+        """Add (or replace) one f3dasm-pillar cell in pipeline.ipynb, preceded by
+        its WHY-explainer. `phase` MUST be one of: doe, data_generation, ml,
+        optimization, analysis. `why` is the rationale markdown (cite the
+        literature; if the pillar was not run, say 'NOT executed (budget)' and
+        why). `code` is the cell's Python. Cells are kept in canonical pillar
+        order regardless of call order; re-calling a phase replaces it. The
+        analysis cell must derive the headline from the ledger and print exactly
+        'REPRODUCED: <value>'. Creates pipeline.ipynb if absent."""
+        import nbformat
+        prefix = node._drain_notifications()
+        if node._study_dir is None:
+            return "ERROR: study_dir not available."
+        phase = (phase or "").strip()
+        if phase not in _PILLARS:
+            return (f"ERROR: phase must be one of {_PILLARS}, got {phase!r}. "
+                    "These are f3dasm's four pillars + analysis.")
+        if not (why or "").strip():
+            return ("ERROR: `why` is required — every pillar cell needs its "
+                    "rationale (the WHY-explainer the writeup always lacked).")
+        if not (code or "").strip():
+            return f"ERROR: `code` is empty for phase {phase!r}."
+        nb, nb_path = _load_or_new_notebook()
+        by = _by_name(nb)
+        wc = nbformat.v4.new_markdown_cell(f"### {phase}\n\n" + why.strip())
+        wc.metadata["name"] = f"{phase}__why"
+        cc = nbformat.v4.new_code_cell(code)
+        cc.metadata["name"] = phase
+        cc.metadata["tags"] = [phase]
+        by[f"{phase}__why"], by[phase] = wc, cc
+        _emit_notebook(by, nb, nb_path)
+        present = [p for p in _PILLARS if p in by]
+        missing = [p for p in _PILLARS if p not in by]
+        return (prefix + f"Added {phase} cell to pipeline.ipynb. "
+                f"Pillars present: {present}."
+                + (f" Still missing: {missing}." if missing else
+                   " All pillars present — verify with CheckDeliverable()."))
+
     if "Done" in _agent_tools:
         closures["Done"] = Done
     if "WriteNote" in _agent_tools:
@@ -2088,6 +2192,10 @@ def build_routing_tools(node) -> dict:
         closures["WriteDeliverable"] = WriteDeliverable
     if "CheckDeliverable" in _agent_tools:
         closures["CheckDeliverable"] = CheckDeliverable
+    if "AddPipelineCell" in _agent_tools:
+        closures["AddPipelineCell"] = AddPipelineCell
+    if "SetNotebookIntro" in _agent_tools:
+        closures["SetNotebookIntro"] = SetNotebookIntro
     # ConsultHandbook is injected universally at adapter construction
     # (agent_runtime._make_adapter) — no per-node duplication here.
 
