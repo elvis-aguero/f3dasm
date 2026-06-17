@@ -87,7 +87,8 @@ agentic-extra = [
 agentic-notebook = [
   "nbclient>=0.7",
   "nbformat>=5.9",
-  "ipykernel>=6.0"
+  "ipykernel>=6.0",
+  "jupyter-server>=2.0"
 ]
 all = [
   "abaqus2py>=1.0.0",

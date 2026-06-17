@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import uuid
 from datetime import datetime, timezone
@@ -413,6 +414,7 @@ class AgenticRun:
             else cfg.get("review_statement", True)
         )
         self._run_dir = None  # set in execute()
+        self._notebook_server = None  # per-run Jupyter server (notebook mode)
 
     def execute(self) -> str:
         """Run the agentic loop; return the final report text.
@@ -578,6 +580,25 @@ class AgenticRun:
 
         # Durable checkpoint to disk so the run survives a crash; resume passes
         # None as input (LangGraph convention: replay from last checkpoint).
+        # Notebook mode: start ONE per-run Jupyter server so the strategizer +
+        # implementers can author pipeline.ipynb via the Jupyter MCP. Launched
+        # with the run's env so authoring kernels resolve the canonical store.
+        # Best-effort: a start failure degrades to WriteDeliverable authoring
+        # (Phase A still works headlessly via nbclient) — it never fails the run.
+        from .notebook_exec import notebook_mode_enabled
+        if notebook_mode_enabled():
+            try:
+                from .notebook_server import NotebookServer
+                _nb_env = dict(os.environ)
+                _nb_env["F3DASM_CANONICAL_STORE"] = str(canonical_cfg["store_dir"])
+                _nb_env["F3DASM_RUN_CONFIG"] = str(debug_dir / "run_config.json")
+                self._notebook_server = NotebookServer(run_dir, env=_nb_env).start()
+                log.info(f"Notebook server up at {self._notebook_server.url}")
+            except Exception:  # noqa: BLE001
+                self._notebook_server = None
+                log.warning("notebook server failed to start; agents will author "
+                            "pipeline.ipynb via WriteDeliverable", exc_info=True)
+
         from langgraph.checkpoint.sqlite import SqliteSaver
         ckpt_path = debug_dir / "checkpoints.sqlite"
         log.info("Invoking graph")
@@ -626,6 +647,10 @@ class AgenticRun:
                 except OSError:
                     pass
                 raise
+            finally:
+                # Tear down the per-run Jupyter server (post-processing stamps the
+                # notebook file via nbformat — it does not need the live server).
+                self._stop_notebook_server()
         # Merge per-call telemetry into an analysis-ready summary.json (additive,
         # off the decision path — a failure here must not fail the run).
         try:
@@ -831,6 +856,16 @@ class AgenticRun:
             pass
         return problem + addendum
 
+    def _stop_notebook_server(self) -> None:
+        """Idempotently tear down the per-run Jupyter server, if any."""
+        nb = getattr(self, "_notebook_server", None)
+        if nb is not None:
+            self._notebook_server = None
+            try:
+                nb.stop()
+            except Exception:  # noqa: BLE001
+                pass
+
     def _make_adapter(self, name: str, agent: Agent):
         run_dir = self._run_dir
 
@@ -902,13 +937,36 @@ class AgenticRun:
 
         adapter_cls = get_adapter_class(backend)
         native = adapter_cls.select_native_tools(agent.tools)
+
+        # Notebook mode: wire the Jupyter MCP (a MINIMAL 5-tool allowlist) into
+        # the authoring agents so they build pipeline.ipynb cell-by-cell on the
+        # per-run server. execute_code/delete/move/restart/connect are
+        # deliberately NOT granted (noise + oracle-bypass surface; the runtime
+        # owns the connection). Falls back silently to WriteDeliverable authoring
+        # when no server is up.
+        _mcp = dict(getattr(agent, "mcp_servers", {}))
+        _allowed = list(getattr(agent, "extra_allowed_tools", frozenset()))
+        _nb_srv = getattr(self, "_notebook_server", None)
+        if _nb_srv is not None and getattr(agent, "role", None) in (
+                "strategizer", "implementer"):
+            _mcp["jupyter"] = {
+                "type": "stdio", "command": "uvx",
+                "args": ["jupyter-mcp-server@latest"],
+                "env": {**_nb_srv.mcp_env(), "ALLOW_IMG_OUTPUT": "true"},
+            }
+            _allowed += [
+                "mcp__jupyter__use_notebook", "mcp__jupyter__insert_cell",
+                "mcp__jupyter__execute_cell", "mcp__jupyter__read_notebook",
+                "mcp__jupyter__edit_cell_source",
+            ]
+
         adapter = adapter_cls(
             model=model,
             system_prompt=system_prompt,
             study_dir=cwd,
             native_tools=native,
-            extra_mcp_servers=dict(getattr(agent, "mcp_servers", {})),
-            extra_allowed_tools=list(getattr(agent, "extra_allowed_tools", frozenset())),
+            extra_mcp_servers=_mcp,
+            extra_allowed_tools=_allowed,
             persistent=_persistent,
             max_history_pairs=_max_history_pairs,
         )
