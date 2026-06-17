@@ -602,19 +602,20 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
     def _missing_deliverables(self, state: AgenticState) -> list[str]:
         """Return required deliverable paths not present at study_dir yet.
 
-        pipeline.py is always required — the single deliverable, written via
-        WriteDeliverable() before Done() is accepted. It is the human-readable
-        f3dasm Pipeline AND the reproduction: the runtime executes it lazily
-        (see _reproduction_gate) to verify the headline re-derives from the
+        The single deliverable (pipeline.ipynb in notebook mode, else
+        pipeline.py) is always required, written before Done() is accepted. It is
+        the human-readable recipe AND the reproduction: the runtime executes it
+        lazily (see _reproduction_gate) to verify the headline re-derives from the
         ledger with zero new evals. Additional paths can be declared in
         state['required_deliverables'].
         """
+        from ..notebook_exec import required_deliverable_name
         study_dir = Path(state.get("study_dir", "."))
         # WriteDeliverable writes BARE names to study_dir/ (it rejects path
-        # separators), and solution.md lands at study_dir/ too. Normalise any
-        # configured path to its basename so a stray 'workspace/…' prefix in a
-        # study config can't spuriously flag a present deliverable as missing.
-        required = ["pipeline.py"] + list(
+        # separators). Normalise any configured path to its basename so a stray
+        # 'workspace/…' prefix in a study config can't spuriously flag a present
+        # deliverable as missing.
+        required = [required_deliverable_name()] + list(
             state.get("required_deliverables") or [])
         seen: set[str] = set()
         missing: list[str] = []
@@ -657,8 +658,16 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
             Path(self._study_dir) if getattr(self, "_study_dir", None) is not None
             else Path((state or {}).get("study_dir", "."))
         )
-        pipeline_py = study_dir / "pipeline.py"
-        if not pipeline_py.exists():
+        # Resolve the deliverable by what's present: a notebook is preferred when
+        # it exists, else the script. The gate executes whichever it finds (by
+        # suffix) — so notebook and script studies both work, and absence is left
+        # to _missing_deliverables.
+        pipeline_py = next(
+            (study_dir / n for n in ("pipeline.ipynb", "pipeline.py")
+             if (study_dir / n).exists()),
+            None,
+        )
+        if pipeline_py is None:
             return None  # absence is handled by _missing_deliverables
         notes = self._current_notes_dir
         if notes is None:
@@ -739,14 +748,15 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                 if self._budget_seconds else 300.0
             )
             try:
-                proc = subprocess.run(
-                    [sys.executable, str(pipeline_py)],
-                    cwd=str(sandbox), env=env,
-                    capture_output=True, text=True, timeout=_timeout,
-                )
+                # Executor-agnostic: a .ipynb runs via nbclient (in-env kernel),
+                # a .py via subprocess — both return a CompletedProcess and raise
+                # TimeoutExpired on timeout, so the asserts below are unchanged.
+                from ..notebook_exec import run_deliverable
+                proc = run_deliverable(
+                    pipeline_py, cwd=sandbox, env=env, timeout=_timeout)
             except subprocess.TimeoutExpired:
                 return (
-                    f"pipeline.py did not finish within {_timeout:.0f}s. A "
+                    f"{pipeline_py.name} did not finish within {_timeout:.0f}s. A "
                     "reproduction must be lightweight — load the ledger and skip "
                     "finished evals and heavy refits (cache-or-load surrogates). "
                     "Make it lazy.")

@@ -8,6 +8,7 @@ These tests drive each control-flow branch with real subprocess execution.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from f3dasm._src.agentic.backends.base import Agent, Edge, Graph
@@ -268,3 +269,109 @@ def test_load_or_create_pipeline_regenerates_from_empty(tmp_path):
     # the empty store was populated from scratch — the script regenerates
     _, out = ExperimentData.from_file(project_dir=empty_store).to_pandas()
     assert len(out) == 2
+
+
+# ── Spec-04: notebook deliverable (executor-agnostic gate) ────────────────────
+import nbformat  # noqa: E402
+from f3dasm._src.agentic import settings  # noqa: E402
+from f3dasm._src.agentic.notebook_exec import (  # noqa: E402
+    build_notebook, required_deliverable_name, run_deliverable,
+)
+
+
+def _write_nb(study_dir, cells):
+    nbformat.write(build_notebook(cells), str(study_dir / "pipeline.ipynb"))
+
+
+def test_required_deliverable_is_notebook_when_extra_active():
+    """_required_deliverable_name flips to pipeline.ipynb only when the
+    notebook_deliverable flag is on (nbclient is installed in this env)."""
+    try:
+        settings.configure({"notebook_deliverable": True})
+        assert required_deliverable_name() == "pipeline.ipynb"
+        settings.configure({})
+        assert required_deliverable_name() == "pipeline.py"
+    finally:
+        settings.configure({})
+
+
+def test_repro_gate_executes_notebook_lazily(tmp_path):
+    """A notebook that loads the ledger and self-asserts the headline → PASS,
+    zero new rows (mirror of test_gate_passes_for_clean_lazy_pipeline)."""
+    node, study_dir = _setup(tmp_path)
+    _write_nb(study_dir, [
+        {"type": "markdown", "source": "# Problem\nminimise f."},
+        {"type": "code", "name": "analyze", "source": "print('REPRODUCED: 1.0')"},
+    ])
+    assert node._reproduction_gate({"study_dir": str(study_dir)}) is None
+
+
+def test_repro_gate_fails_when_notebook_adds_evals(tmp_path):
+    """A NON-lazy notebook that stamps a new eval → caught as not-lazy."""
+    node, study_dir = _setup(tmp_path)
+    _write_nb(study_dir, [{"type": "code", "name": "run", "source": (
+        "import os\n"
+        "from f3dasm._src.agentic.instrumented import InstrumentedDataGenerator\n"
+        "from f3dasm._src.core import DataGenerator\n"
+        "from f3dasm._src.experimentsample import ExperimentSample, JobStatus\n"
+        "class G(DataGenerator):\n"
+        "    def execute(self, s, **k):\n"
+        "        s._output_data['f'] = 1.0; s.job_status = JobStatus.FINISHED; return s\n"
+        "g = InstrumentedDataGenerator(inner=G(), store_dir=os.environ['F3DASM_CANONICAL_STORE'],\n"
+        "                              delegation_id='D777', flush_every=1)\n"
+        "g.execute(ExperimentSample(_input_data={'x0': 9.0}, _output_data={}, job_status=JobStatus.OPEN))\n"
+        "g.flush()\n"
+        "print('REPRODUCED: 1.0')\n")}])
+    problem = node._reproduction_gate({"study_dir": str(study_dir)})
+    assert problem is not None and "lazy" in problem.lower()
+
+
+def test_repro_gate_env_vars_reach_kernel(tmp_path):
+    """The notebook kernel must see F3DASM_CANONICAL_STORE (env propagation is a
+    known footgun); a cell asserting it errors → gate FAIL if it didn't reach."""
+    node, study_dir = _setup(tmp_path)
+    _write_nb(study_dir, [{"type": "code", "name": "analyze", "source": (
+        "import os\n"
+        "assert os.environ['F3DASM_CANONICAL_STORE'], 'env not propagated'\n"
+        "print('REPRODUCED: 1.0')\n")}])
+    # PASS proves the env var was visible inside the kernel.
+    assert node._reproduction_gate({"study_dir": str(study_dir)}) is None
+
+
+def test_shared_assert_helper_is_executor_agnostic(tmp_path):
+    """run_deliverable gives a CompletedProcess with the same shape + headline
+    for an equivalent .py and .ipynb (DRY guard on the executor split)."""
+    sandbox = tmp_path / "sb"; sandbox.mkdir()
+    env = dict(os.environ, F3DASM_CANONICAL_STORE=str(sandbox))
+    py = tmp_path / "d.py"; py.write_text("print('REPRODUCED: 1.0')\n")
+    nbformat.write(build_notebook(
+        [{"type": "code", "source": "print('REPRODUCED: 1.0')"}]), str(tmp_path / "d.ipynb"))
+    r_py = run_deliverable(py, cwd=sandbox, env=env, timeout=120)
+    r_nb = run_deliverable(tmp_path / "d.ipynb", cwd=sandbox, env=env, timeout=120)
+    assert r_py.returncode == 0 == r_nb.returncode
+    assert "REPRODUCED: 1.0" in r_py.stdout and "REPRODUCED: 1.0" in r_nb.stdout
+
+
+def test_write_deliverable_accepts_ipynb(tmp_path):
+    """WriteDeliverable now accepts .ipynb (valid nbformat JSON); malformed
+    notebook JSON is rejected at write time, not deferred to the gate."""
+    study_dir = tmp_path / "study"; study_dir.mkdir()
+
+    class A(Agent):
+        role = "strategizer"
+        tools = frozenset({"Done", "WriteNote", "WriteDeliverable"})
+        description = "s"
+
+    class B(Agent):
+        description = "i"
+
+    spec = Graph(nodes={"strategizer": A(), "implementer": B()},
+                 edges=(Edge("strategizer", "implementer"),), entry="strategizer")
+    node = StrategizerNode(_StubAdapter(), name="strategizer",
+                           outgoing=["implementer"], spec=spec, study_dir=study_dir)
+    wd = node.adapter.closure_tools["WriteDeliverable"]
+
+    good = nbformat.writes(build_notebook([{"type": "code", "source": "print(1)"}]))
+    assert "Written" in wd("pipeline.ipynb", good)
+    assert (study_dir / "pipeline.ipynb").exists()
+    assert "ERROR" in wd("bad.ipynb", "{ this is not notebook json }")

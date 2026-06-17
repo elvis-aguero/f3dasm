@@ -80,6 +80,15 @@ agentic = [
 agentic-extra = [
   "docling>=2.0.0; sys_platform != 'darwin' or platform_machine == 'arm64'"
 ]
+# Notebook deliverable: the agentic run ships a single pipeline.ipynb that the
+# reproduction gate executes lazily via nbclient. Opt-in and orthogonal to
+# f3dasm core; the feature is gated on import availability so a non-notebook
+# install still produces/gates pipeline.py.
+agentic-notebook = [
+  "nbclient>=0.7",
+  "nbformat>=5.9",
+  "ipykernel>=6.0"
+]
 all = [
   "abaqus2py>=1.0.0",
   "matplotlib>=3.7.5",

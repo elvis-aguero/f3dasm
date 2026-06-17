@@ -2004,7 +2004,7 @@ def build_routing_tools(node) -> dict:
         if node._study_dir is None:
             return "ERROR: study_dir not available."
 
-        allowed_exts = {".py", ".md"}
+        allowed_exts = {".py", ".md", ".ipynb"}
         p = Path(filename)
         if p.suffix not in allowed_exts:
             return (
@@ -2012,6 +2012,19 @@ def build_routing_tools(node) -> dict:
             )
         if "/" in filename or "\\" in filename:
             return "ERROR: filename must be a bare name (no path separators)."
+
+        # A .ipynb must be valid notebook JSON — reject a malformed notebook here
+        # (a fallback to the Jupyter MCP authoring path) rather than letting the
+        # gate fail opaquely later.
+        if p.suffix == ".ipynb":
+            try:
+                import nbformat
+                nbformat.reads(content, as_version=4)
+            except Exception as exc:  # noqa: BLE001
+                return (
+                    f"ERROR: {filename!r} is not valid notebook JSON ({exc}). "
+                    "Author it with the Jupyter tools, or write valid nbformat v4."
+                )
 
         # Write directly to study_dir/ — the user-visible output location.
         target = Path(node._study_dir) / p.name
