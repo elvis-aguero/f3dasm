@@ -545,3 +545,34 @@ def test_readnote_directory_returns_listing(tmp_path):
     assert "worker_code.py" in results[0], (
         f"Expected the directory's files listed, got: {results[0]!r}"
     )
+
+
+def test_readnote_rejects_paths_escaping_study_dir(tmp_path):
+    """Health-run-1 hang: ReadNote('/') resolved to the filesystem root
+    (Path(study)/'/' == Path('/')) and rglob('*') walked the WHOLE filesystem,
+    hanging the run. ReadNote must contain to the study dir and reject escapes
+    fast — never walk outside it."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    (tmp_path / "pipeline.py").write_text("# test\n")
+    results: list[str] = []
+
+    class EscapeAdapter(StubAdapter):
+        def invoke(self, messages):
+            self.invoke_count += 1
+            # the exact trigger + a ..-escape; both must return fast, no hang
+            results.append(self.closure_tools["ReadNote"]("/"))
+            results.append(self.closure_tools["ReadNote"]("../../../../etc"))
+            self.closure_tools["Done"](summary="done")
+            self.closure_tools["Done"](summary="done")
+            return "done"
+
+    node = StrategizerNode(
+        EscapeAdapter(), name="strategizer", outgoing=["implementer"],
+        spec=_minimal_spec(), study_dir=str(tmp_path))
+    node(_make_state(study_dir=tmp_path))
+
+    assert len(results) == 2
+    for r in results:
+        assert "outside the study directory" in r, (
+            f"escape not contained, got: {r!r}")
