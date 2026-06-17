@@ -92,8 +92,8 @@ steps and how model selection works.
 > and a runnable example pinned by `tests/agentic/test_study_contract.py`).
 
 ```bash
-# existing study
-uv run python -m f3dasm.agentic studies/agentic_black_box_8d
+# existing study (default e2e — fast 3-D black-box run)
+uv run python -m f3dasm.agentic studies/agentic_black_box_3d
 
 # your own
 mkdir studies/my_problem
@@ -749,7 +749,8 @@ tests/agentic/              # unit + integration + wet tests
 
 | Study | Description |
 |---|---|
-| `agentic_black_box_8d` | 8-D black-box optimisation; compiled evaluator |
+| `agentic_black_box_3d` | 3-D black-box optimisation; compiled evaluator (**default e2e** — fast) |
+| `agentic_black_box_8d` | 8-D variant of the above (larger, slower) |
 | `agentic_supercompressible_3d` / `_7d` | metamaterial design (Bessa benchmark); lookup pool |
 | `agentic_modular_resonance` | integer optimisation; agent-authored `DataGenerator` |
 | `agentic_project_euler_078` | smoke test (no f3dasm DOE) |
