@@ -874,6 +874,15 @@ class AgenticRun:
             persistent=_persistent,
             max_history_pairs=_max_history_pairs,
         )
+        # Universal read-only handbook lookup: EVERY node's adapter gets it
+        # here, equally, at construction (copy() returns self, so the
+        # per-invocation worker/critic paths inherit it). Single injection
+        # point — do not duplicate it per path. The tool's description is owned
+        # by _consult_handbook's docstring (the backend infers the schema from
+        # the callable).
+        from .nodes.parsing import _consult_handbook
+        adapter.closure_tools["ConsultHandbook"] = _consult_handbook
+
         extra_closures = agent.build_closure_tools(
             self.study_dir,
             lit_reviewer_notes_dir=lit_reviewer_notes_dir,

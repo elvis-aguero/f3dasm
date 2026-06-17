@@ -15,7 +15,6 @@ from ...tool_catalog import tool_examples
 from .._constants import backstop_enabled, run_backstop_multiple
 from ..parsing import (
     _classify_response,
-    _consult_handbook,
     _parse_verdict,
     _reconcile_delegation_evals,
     _stamped_eval_count,
@@ -585,8 +584,8 @@ def build_routing_tools(node) -> dict:
             worker.closure_tools["ReportEvals"] = ReportEvals  # not wrapped: never errors
             worker.closure_tools["ReportProgress"] = ReportProgress  # not wrapped
             worker.closure_tools["FollowUp"] = node._wrap_closure(FollowUp, target)
-            # On-demand handbook lookup, available to every worker.
-            worker.closure_tools["ConsultHandbook"] = _consult_handbook
+            # ConsultHandbook is injected universally at adapter construction
+            # (agent_runtime._make_adapter) — every node gets it equally there.
             try:
                 from ...agent_prompts import IMPLEMENTER_REPORT_RETRY_PROMPT
                 from ...backends.base import (
@@ -2051,8 +2050,8 @@ def build_routing_tools(node) -> dict:
         closures["WriteDeliverable"] = WriteDeliverable
     if "CheckDeliverable" in _agent_tools:
         closures["CheckDeliverable"] = CheckDeliverable
-    # On-demand handbook lookup, available to the strategizer too.
-    closures["ConsultHandbook"] = _consult_handbook
+    # ConsultHandbook is injected universally at adapter construction
+    # (agent_runtime._make_adapter) — no per-node duplication here.
 
     # Hypothesis closures: always built but functionally inert without a
     # ledger (notes_dir only provided to the entry node).

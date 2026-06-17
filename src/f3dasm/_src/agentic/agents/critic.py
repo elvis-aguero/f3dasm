@@ -118,6 +118,17 @@ For every claim or conclusion in the document, ask:
   reproducible from the store (criterion 6).  At most, note an
   unledgered headline-relevant computation as the criterion-6 / criterion-1
   finding it already is — do not double-count it as a budgeting defect.
+- HANDBOOK POINTER (OPTIONAL, advisory — NEVER changes the verdict).
+  If the deliverable passes the gate but falls short of a project standard you
+  can name (e.g. pipeline.py reproduces but is not the composable, multi-phase
+  recipe described in the handbook), you MAY add a short constructive pointer:
+  at most THREE lines, naming the relevant handbook chapter (use
+  ConsultHandbook to find/confirm the id) and what to align. Phrase it as
+  guidance, not a finding — e.g. "Pointer: see handbook
+  'pipeline-building-patterns' — pipeline.py reproduces but is LHS-only; the
+  standard is a composable create→surrogate→optimize→analyze recipe." Omit it
+  when nothing applies. This NEVER turns a PASS into a REVISE/REJECT and is not
+  a CRITICAL/MAJOR/MINOR finding — it is a hint for the next iteration.
 - VERDICT MODE: the task message carries a mode tag that determines
   whether PASS is available.
   * <mode>FEEDBACK</mode> — a synchronous, find-only audit triggered by
@@ -145,6 +156,10 @@ For every claim or conclusion in the document, ask:
 PASS   — no CRITICAL or MAJOR findings; conclusion stands as stated.
 REVISE — MAJOR findings present; conclusion needs qualification.
 REJECT — CRITICAL finding present; conclusion is not supported.
+
+### Handbook pointer (OPTIONAL — omit entirely if nothing applies)
+At most 3 lines of advisory guidance naming a handbook chapter the deliverable
+should align with next. NEVER affects the verdict above; not a finding.
 
 ### Numbers
 findings_critical: <int>
@@ -175,7 +190,8 @@ class AdversarialCritiqueAgent(Agent):
     Findings are labelled CRITICAL / MAJOR / MINOR with a final PASS /
     REVISE / REJECT verdict.
 
-    Pure read-only: Read + Glob only, no write or execution tools.
+    Pure read-only: Read + Glob + ConsultHandbook (handbook lookup), no write
+    or execution tools.
     """
 
     system_prompt = ADVERSARIAL_CRITIQUE_SYSTEM_PROMPT
