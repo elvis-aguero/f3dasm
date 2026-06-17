@@ -116,6 +116,10 @@ def test_noninteractive_writes_report_and_proceeds_unchanged(tmp_path):
 
 def test_interactive_refine_appends_clarifications(tmp_path, monkeypatch):
     run = _run(tmp_path, interactive=True)
+    # interactive now requires a real TTY (a headless run is forced
+    # non-interactive so input() can't block — see test_headless_interactive).
+    # Under pytest there is no TTY, so force it on to exercise the refine path.
+    run._interactive = True
     debug = tmp_path / "debug"
     debug.mkdir()
     adapter = _FakeAdapter(json.dumps({

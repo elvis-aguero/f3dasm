@@ -389,7 +389,16 @@ class AgenticRun:
         )
 
         self._graph_spec = graph or _default_graph()
-        self._interactive = interactive
+        # `interactive` requires a real terminal: a headless/background run (no
+        # TTY) has a stdin that blocks on read but never EOFs, so any input()
+        # would hang the whole run forever. The in-graph FollowUp path already
+        # guards on isatty(); the pre-run problem-statement review keys off
+        # self._interactive alone, so fold the TTY check in HERE so EVERY
+        # input() path is non-interactive when there is no terminal.
+        import sys as _sys
+        self._interactive = bool(interactive) and (
+            getattr(_sys.stdin, "isatty", lambda: False)()
+        )
         self._max_ask = max_ask
         self._container = container
         self._container_image = container_image
