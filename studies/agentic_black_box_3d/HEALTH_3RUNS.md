@@ -23,6 +23,7 @@ Per-run deep audit (self-directed):
 | Run | run_id | outcome | evals | cost | wall | provenance | solution.md | pipeline.py (valid/faithful) | handbook pointer? | key friction |
 |-----|--------|---------|-------|------|------|------------|-------------|------------------------------|-------------------|--------------|
 | 1 | 20260617T122559 | GATED | 355 | $0.91 | 33:56 | 0 orphans ✅ | healthy (headline = ledger min exactly) | reproduces ✅ but LHS-only + **broken create branch** | critic *used* handbook, pointer NOT emitted | MILESTONE_BLOCK:2, ERROR_RETURN:1 |
+| 2 | 20260617T130405 | GATED (4 critic calls, REJECT→PASS) | 250 | $1.54 | 37:42 | 0 orphans ✅ (D004=RUNNING, traceable) | states coords ✅ but thin; metadata bug (0 delegations) | **pure analysis script — NO get_evaluator** (Criterion-6 anti-pattern, passed as "honest") | **pointer FIRED** ✅ (on H3 criterion, Charter §4) | SCIENCE_DRIFT:12, CONSISTENCY_FLAG:1, REPRO_GATE_BOUNCE:1, ERROR_RETURN:5 |
 
 ---
 
@@ -59,3 +60,41 @@ no retrospective text.) Note: the datagenerator correctly used `add_float`; the
 STRATEGIZER introduced the fake `add_continuous_input` when assembling pipeline.py.
 
 ---
+
+## Run 2 — deep audit
+
+**Outcome:** GATED but only after **4 critic calls** (REJECT → … → PASS). High
+friction: SCIENCE_DRIFT:12, CONSISTENCY_FLAG:1, REPRO_GATE_BOUNCE:1, ERROR_RETURN:5.
+Worse science: ledger min **−0.36** (250 LHS evals; much of the run spent fighting
+the gate, not optimizing). 0 orphans (D004 logged RUNNING → traceable).
+
+**Wins (the new machinery works):**
+- The **optional Handbook pointer FIRED** (call_004): a 3-line advisory citing
+  "hypothesis-registration-criteria-validity" to fix H3's falsification criterion
+  before Phase 3 — advisory, didn't change the PASS verdict. Exactly as designed.
+- The critic (call_002) **caught the thin/false pipeline**: 4-phase docstring but
+  dead, never-called `fit_surrogate`/`optimize_with_bo`; the `add_continuous_*`
+  vs `add_float` API mismatch (same fake-API class as h1); H3 criterion ≠
+  prediction (Charter §4); H2/H3 confounding; and a headline-vs-ledger x-coord
+  mismatch (the stale-draft-before-verify issue recurs).
+
+**The collapse, though:** the agent "resolved" the dead-code MAJOR not by
+implementing the phases but by **stripping pipeline.py to a pure read-only
+analysis script** — `load ledger → idxmin → print`, **zero get_evaluator()**, no
+Pipeline/Step. That is the Criterion-6 anti-pattern ("read-only analysis script…
+is a CRITICAL finding"), yet the critic PASSED it: *"fails the regeneration
+criterion … no longer an overclaim problem … resolved by honest restatement."*
+**The deliverable bar collapsed to "reproduces + honest about being a stub."**
+
+**Root tension RESURFACED (strategizer's own CONSISTENCY flag):** *"pipeline.py
+must be a faithful, COMPOSABLE pipeline of the WHOLE process (create → sample →
+run → fit surrogate → optimize → analyze)" — but the campaign is incomplete (only
+Phase 1).* When budget runs out before the method completes, the agent cannot
+ship a whole-process pipeline, so it ships either a false 4-phase shell (REJECTED)
+or an honest analysis script (PASSED). The regenerate-vs-lazy tension I thought
+ROOT 2 closed re-appears whenever the SCIENCE is incomplete.
+
+**solution.md quality:** better than h1 — it now **states the coordinates**
+(`x = [+2.516, +1.273, −2.885]`, forced by the critic's x-coord CRITICAL). But
+still no landscape characterization (where to look), generic "Phases 2–4 PENDING"
+next steps, and a metadata bug (`total_delegations: 0` despite 3+).
