@@ -197,3 +197,74 @@ def test_gate_rejects_ledger_tampering(tmp_path):
     )
     problem = node._reproduction_gate({"study_dir": str(study_dir)})
     assert problem is not None and "modified" in problem.lower()
+
+
+# ── ROOT 2 proof: ONE load-or-create script satisfies BOTH checks ─────────────
+# The deliverable spec is non-contradictory iff a single composable pipeline.py
+# can BOTH (a) reproduce lazily on a shipped ledger (zero new evals, headline
+# grounded) AND (b) regenerate the campaign from an empty store. We prove it by
+# building exactly that script and exercising both paths — no assertion, the
+# gate and the subprocess are the evidence.
+
+_LOAD_OR_CREATE_PIPELINE = (
+    "import os\n"
+    "from f3dasm._src.experimentdata import ExperimentData\n"
+    "store = os.environ['F3DASM_CANONICAL_STORE']\n"
+    "def _n_finished(s):\n"
+    "    try:\n"
+    "        return len(ExperimentData.from_file(project_dir=s).to_pandas()[1])\n"
+    "    except Exception:\n"
+    "        return 0\n"
+    "if _n_finished(store) > 0:\n"
+    "    data = ExperimentData.from_file(project_dir=store)   # LOAD: lazy, 0 new\n"
+    "else:\n"
+    "    from f3dasm._src.agentic.instrumented import InstrumentedDataGenerator\n"
+    "    from f3dasm._src.core import DataGenerator\n"
+    "    from f3dasm._src.experimentsample import ExperimentSample, JobStatus\n"
+    "    class _Sum(DataGenerator):\n"
+    "        def execute(self, s, **k):\n"
+    "            s._output_data['f'] = sum(s._input_data.values())\n"
+    "            s.job_status = JobStatus.FINISHED\n"
+    "            return s\n"
+    "    g = InstrumentedDataGenerator(inner=_Sum(), store_dir=store,\n"
+    "                                  delegation_id='D001', flush_every=1)\n"
+    "    for i in range(2):\n"
+    "        g.execute(ExperimentSample(_input_data={'x0': float(i)},\n"
+    "                  _output_data={}, job_status=JobStatus.OPEN))\n"
+    "    g.flush()\n"
+    "    data = ExperimentData.from_file(project_dir=store)    # CREATE: regenerate\n"
+    "_, out = data.to_pandas()\n"
+    "print(f\"REPRODUCED: {float(out['f'].max())}\")\n"
+)
+
+
+def test_load_or_create_pipeline_passes_gate_lazily(tmp_path):
+    """(a) On a SHIPPED ledger, the load-or-create script takes the LOAD branch:
+    zero new evals + headline grounded → the real gate PASSES."""
+    node, study_dir = _setup(tmp_path)                 # seeds 2 finished rows
+    (study_dir / "pipeline.py").write_text(_LOAD_OR_CREATE_PIPELINE)
+    assert node._reproduction_gate({"study_dir": str(study_dir)}) is None
+
+
+def test_load_or_create_pipeline_regenerates_from_empty(tmp_path):
+    """(b) The SAME script, pointed at an EMPTY store, takes the CREATE branch:
+    it regenerates the campaign (2 finished rows) and prints the headline."""
+    import os
+    import subprocess
+    import sys
+
+    from f3dasm._src.experimentdata import ExperimentData
+
+    pipeline = tmp_path / "pipeline.py"
+    pipeline.write_text(_LOAD_OR_CREATE_PIPELINE)
+    empty_store = tmp_path / "fresh_store"               # does not exist yet
+
+    env = dict(os.environ, F3DASM_CANONICAL_STORE=str(empty_store))
+    proc = subprocess.run(
+        [sys.executable, str(pipeline)], capture_output=True, text=True, env=env)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "REPRODUCED: 1.0" in proc.stdout            # headline derived, not hardcoded
+    # the empty store was populated from scratch — the script regenerates
+    _, out = ExperimentData.from_file(project_dir=empty_store).to_pandas()
+    assert len(out) == 2

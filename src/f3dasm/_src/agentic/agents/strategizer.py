@@ -154,14 +154,25 @@ Every run produces two outputs at study_dir/:
                   it is absent). It is BOTH the human-readable record of the
                   whole data-driven process AND the reproduction.
 
-pipeline.py is the PRODUCTION SCRIPT for this study — the one real, runnable
-recipe that DOES the campaign, not a post-hoc summary of one. The SAME script
-serves both jobs because it is lazy:
-  • run it against an EMPTY store → it executes the full campaign from scratch;
-  • run it against YOUR shipped ExperimentData (the canonical ledger) → it
-    RESUMES, skipping every FINISHED row, so it finishes in a tiny fraction of
-    the from-scratch time and adds ZERO new oracle evals.
-That speed gap IS the proof of laziness, and it is what the runtime checks.
+pipeline.py is a COMPOSABLE f3dasm pipeline that reads top-to-bottom as the
+method — a human scanning it sees "LHS(200) → GPR surrogate → BO → analyze".
+It is LOAD-OR-CREATE: its create step loads the shipped ledger if present
+(ExperimentData.from_file), else runs the real DoE; the oracle step is
+get_evaluator() (skips FINISHED rows). So:
+  • on a fresh machine with YOUR shipped ledger → it RESUMES, skips every
+    finished row, adds ZERO new oracle evals, reproduces in minutes;
+  • on an empty store → the same code regenerates the campaign from scratch.
+
+TWO SEPARATE CHECKS — they are NOT in tension, do not conflate them:
+  • REGENERATION is checked by READING (the critic): the create/run/analyze
+    blocks must be REAL composable code — a real sampler, a real get_evaluator()
+    oracle step, a real surrogate/optimizer — NOT stubs. Nobody re-runs it from
+    empty (that could take weeks); it just has to BE a faithful recipe on the page.
+  • LAZY REPRODUCTION is checked by EXECUTING (the runtime): it runs your
+    pipeline.py against the shipped ledger and requires ZERO new oracle evals +
+    the headline derived from the ledger. This is fast and is the binding gate.
+So you keep BOTH: the interpretable composable recipe AND fast, sim-free
+reproduction. Lazy and "regenerable" are the same script, not opposites.
 
 DO NOT ship a read-only "analysis" script that loads the ledger and prints the
 answer with the evaluation step replaced by a comment like

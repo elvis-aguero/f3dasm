@@ -69,22 +69,33 @@ For every claim or conclusion in the document, ask:
    outputs?  Flag any discrepancy between claimed and observed values.
 
 6. REPRODUCIBILITY GATE (binding)
-   pipeline.py must exist AND, read as a human would, be a faithful f3dasm
-   Pipeline of the whole process that re-derives the headline FROM the
-   canonical ledger — loading it (ExperimentData.from_file), reaching the
-   oracle only via a REAL get_evaluator() run step, computing the value from
-   ledgered rows, NOT hardcoding it. pipeline.py must be the PRODUCTION SCRIPT
-   that DOES the campaign — runnable from an empty store to regenerate the data
-   AND lazily resumable on the shipped ledger (skipping FINISHED rows, so a
-   re-run is far faster and adds zero evals). Absence, a hardcoded headline, a
-   headline that cannot be reconstructed from ledgered rows, a pipeline that
-   would re-evaluate the oracle / refit heavy models on a re-run (not lazy), OR
-   a read-only "analysis" script whose evaluation step is stubbed out (e.g. a
-   comment "# in production this would call get_evaluator()" in place of a live
-   run block) is a CRITICAL finding. NOTE: the runtime EXECUTES pipeline.py lazily after this gate
-   (asserting zero new evals + self-assert) as the binding check — your job
-   is to judge readability, faithfulness, and that the headline derives from
-   the ledger. This gate — provenance + replicability — is how scientific
+   pipeline.py must exist AND, read as a human would, be a faithful, COMPOSABLE
+   f3dasm Pipeline of the whole process — it reads top-to-bottom as the method
+   (DoE → oracle → surrogate/optimizer → analysis). It is LOAD-OR-CREATE: its
+   create step loads the canonical ledger (ExperimentData.from_file) if present;
+   its oracle step reaches the objective ONLY via a REAL get_evaluator() run
+   step (lazy — skips FINISHED rows); its analysis derives the headline from
+   ledgered rows, NOT hardcoded.
+
+   These are TWO SEPARATE checks — do not conflate them:
+   • REGENERATION (you check by READING): the create/run/analyze blocks must be
+     REAL composable code — a real sampler, a real get_evaluator() oracle step,
+     a real surrogate/optimizer — so the script COULD regenerate from an empty
+     store. You do NOT require it to be re-run from empty (that may take weeks);
+     you require it to BE a faithful recipe on the page. A read-only "analysis"
+     script whose evaluation step is stubbed out (a comment "# in production
+     this would call get_evaluator()", a fake objective, a phase that returns
+     early without evaluating) FAILS this — it can reproduce but is not the
+     method. A raw-evaluator import (bypassing get_evaluator()) also FAILS.
+   • LAZY REPRODUCTION (the runtime checks by EXECUTING): after this gate the
+     runtime runs pipeline.py against the shipped ledger and asserts ZERO new
+     oracle evals + the self-asserted headline. This is the binding dynamic
+     check; your job is the static read above.
+
+   Absence, a hardcoded headline, a headline that cannot be reconstructed from
+   ledgered rows, a pipeline that would re-evaluate the oracle / refit heavy
+   models on a re-run (not lazy), or a stubbed/raw-import oracle step is a
+   CRITICAL finding. This gate — provenance + replicability — is how scientific
    integrity is enforced, NOT the eval count.
 </adversarial_checklist>
 

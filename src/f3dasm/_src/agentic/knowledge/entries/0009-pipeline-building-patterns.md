@@ -9,20 +9,36 @@ the bessagroup `l2co_experiments` study suite. (Those run on SLURM via Hydra;
 our agentic runs are **local** — ignore the cluster/Hydra machinery and keep the
 composition idioms below. Build the pipeline in code, not YAML.)
 
-## Canonical skeleton: create → run → collect
-A pipeline is an ordered list of `Step`s; the recurring shape is *build the DoE,
-evaluate every row through the oracle, collect the results*. The **run step is
+## Canonical skeleton: LOAD-OR-CREATE → run → analyze
+A pipeline is an ordered list of `Step`s. The deliverable shape is *load the
+ledger if it exists else build the DoE, evaluate every OPEN row through the
+oracle, derive the headline from the ledger*. The **run step is
 `get_evaluator()`** — the one door to the registered ground-truth oracle. You do
 NOT write your own `Oracle(DataGenerator)`; the datagenerator agent already built
 and registered it, and `get_evaluator()` returns it as a ready Step block that
 meters every call into the run's canonical store with provenance.
 
+The create step is **LOAD-OR-CREATE** — this is what makes ONE script both
+regenerate from scratch AND reproduce lazily. It is NOT two scripts and NOT a
+contradiction: on a fresh machine with the shipped ledger it loads it (and the
+run step skips every FINISHED row → zero new oracle evals, reproduces in
+minutes); on an empty store the SAME code builds the DoE and the run step
+evaluates it for real.
+
 ```python
-from f3dasm import Pipeline, Step, CollectArrayResults, ExperimentData, create_sampler
+import os
+from f3dasm import Pipeline, Step, ExperimentData, create_sampler
 from f3dasm.agentic import get_evaluator
 from f3dasm.design import Domain
 
-def create_experimentdata(project_dir):                 # Step 1: the DoE
+def create_experimentdata(project_dir):                 # Step 1: LOAD-OR-CREATE
+    store = os.environ.get("F3DASM_CANONICAL_STORE", project_dir)
+    try:                                                # shipped ledger present?
+        if len(ExperimentData.from_file(project_dir=store).to_pandas()[1]) > 0:
+            ExperimentData.from_file(project_dir=store).store(project_dir)
+            return                                      # → run step skips FINISHED: 0 new evals
+    except Exception:
+        pass                                            # empty store → build it from scratch
     domain = Domain()
     domain.add_float("x0", -5.0, 5.0); domain.add_float("x1", -5.0, 5.0)
     domain.add_output("f")                              # declare outputs up front
@@ -32,10 +48,14 @@ def create_experimentdata(project_dir):                 # Step 1: the DoE
     data = sampler.call(data=data, n_samples=50)
     data.store(project_dir)
 
+def analyze(project_dir):                               # Step 3: derive headline FROM the ledger
+    _, out = ExperimentData.from_file(project_dir=project_dir).to_pandas()
+    print(f"REPRODUCED: {float(out['f'].min())}")       # derive it; NEVER hardcode
+
 Pipeline(name="solve", steps=[
-    Step(name="create", block=create_experimentdata),
-    Step(name="run",    block=get_evaluator(), parallel=True),  # ← the ONE oracle door
-    Step(name="post",   block=CollectArrayResults()),
+    Step(name="create",  block=create_experimentdata),         # load-or-create
+    Step(name="run",     block=get_evaluator(), parallel=True),# ← the ONE oracle door (lazy)
+    Step(name="analyze", block=analyze),                       # self-asserting headline
 ]).run(mode="local", project_job="run_001")
 ```
 
@@ -43,7 +63,9 @@ Pipeline(name="solve", steps=[
 the run config to resolve the registered source and the canonical store). Every
 row it evaluates is ledgered automatically — derive your headline from that
 canonical store (what the runtime reproduces from), never from hardcoded
-numbers or a step's local scratch copy.
+numbers or a step's local scratch copy. The runtime reproduces by running THIS
+script against the shipped ledger and asserting zero new evals + your
+`REPRODUCED:` line — the load-or-create create step is exactly what passes it.
 
 ## The composition API (the actual idioms)
 - **`Step(block=, name=, parallel=, kwargs=)`** wraps a callable, a `Block`, or a
@@ -97,12 +119,15 @@ you like — just don't confuse it with the canonical ledger.
 - Don't carry `Loop` state in memory — persist to the ED, `mark_all("open")`.
 - Don't hardcode the headline — derive it from the canonical store.
 - Don't ship a read-only analysis script whose run step is a comment
-  (`# in production this would call get_evaluator()`). `pipeline.py` is the
-  **production script**: the same lazy recipe runs the full campaign from an
-  empty store AND resumes near-instantly on the shipped ledger (FINISHED rows
-  skipped → far faster, zero new evals). A real `get_evaluator()` block costs
-  nothing when the ledger is full but is what makes the script regenerate, not
-  just summarise. The runtime executes it and asserts zero new evals.
+  (`# in production this would call get_evaluator()`), and don't make a create
+  step that ALWAYS rebuilds the DoE (it re-evaluates on a re-run → not lazy).
+  Use the **load-or-create** create step above: it loads the shipped ledger if
+  present (run step skips FINISHED rows → zero new evals, reproduces fast) and
+  builds the DoE only on an empty store. One script, both behaviours — "lazy"
+  and "regenerable" are the same code path, not opposites. A real
+  `get_evaluator()` block costs nothing when the ledger is full but is what
+  makes the script regenerate, not just summarise. The runtime executes it
+  against the shipped ledger and asserts zero new evals.
 - The oracle run step is ALWAYS `get_evaluator()` — never a hand-written
   `DataGenerator`, never the raw evaluator, never a redirected store. That one
   door is what makes the result ledgered and reproducible; see
