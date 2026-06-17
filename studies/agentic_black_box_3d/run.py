@@ -29,6 +29,10 @@ from f3dasm.agentic import (
 STUDY_DIR = Path(__file__).parent
 BUDGET_SECONDS = 15 * 60  # 15 minutes
 MODEL = "claude-haiku-4-5-20251001"
+# EXPERIMENT: run the STRATEGIZER (the orchestrator) on Sonnet while every other
+# node stays on MODEL (Haiku). Single-variable A/B vs the Haiku-strategizer
+# baseline (health-runs h1–h3). Set to None to revert the strategizer to MODEL.
+STRATEGIZER_MODEL = "claude-sonnet-4-6"
 
 # ── clean previous artifacts ──────────────────────────────────────────────────
 for path in [
@@ -44,7 +48,7 @@ for path in [
 # ── graph ─────────────────────────────────────────────────────────────────────
 graph = Graph(
     nodes={
-        "strategizer":       StrategizerAgent(),
+        "strategizer":       StrategizerAgent(model=STRATEGIZER_MODEL),
         "literature_reviewer": LiteratureReviewAgent(),
         "datagenerator":     DataGeneratorAgent(),
         "implementer":       ImplementerAgent(),
