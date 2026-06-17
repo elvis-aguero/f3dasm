@@ -2026,7 +2026,8 @@ def build_routing_tools(node) -> dict:
         except Exception as exc:  # noqa: BLE001
             return (
                 f"ERROR: {filename!r} is not valid notebook JSON ({exc}). "
-                "Author it with the Jupyter tools, or write valid nbformat v4."
+                "Prefer the structured tools (SetNotebookIntro / "
+                "AddPipelineCell); if you author raw, write valid nbformat v4."
             )
 
         # Write directly to study_dir/ — the user-visible output location.

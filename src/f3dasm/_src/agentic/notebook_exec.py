@@ -32,27 +32,53 @@ __all__ = [
 # Popperian loop (hypotheses → falsification attempt → verdict); the body mirrors
 # f3dasm's four pillars (Phase enum: doe / data_generation / ml / optimization),
 # each a name-tagged code cell preceded by a WHY explainer markdown cell.
-def notebook_deliverable_spec() -> str:
+def notebook_deliverable_spec(role: str = "strategizer") -> str:
     """The deliverable contract — injected into the relevant agent prompts so
-    the .ipynb is a reproducible scientific narrative, not a ported .py."""
+    the .ipynb is a reproducible scientific narrative, not a ported .py.
+
+    Role-aware: ONLY the strategizer authors the notebook (it alone is granted
+    SetNotebookIntro / AddPipelineCell), so only it gets the "author with these
+    tools" imperative. The implementer (writes phase code to its workspace) and
+    the critic (judges the notebook) get the same STRUCTURE + RULES so their
+    work fits / is judged against it — but no instruction to call tools they do
+    not have."""
+    if role == "strategizer":
+        intro = (
+            "DELIVERABLE = pipeline.ipynb. This SUPERSEDES every 'pipeline.py' /\n"
+            "WriteDeliverable('pipeline.py') / solution.md instruction above —\n"
+            "for THIS run there is exactly one deliverable, pipeline.ipynb, and\n"
+            "no pipeline.py and no solution.md. It is the single merged artifact\n"
+            "— the writeup AND the runnable, lazily-reproducible recipe in one. A\n"
+            "SCIENTIFIC NARRATIVE, not a dumped script. AUTHOR IT WITH THE\n"
+            "STRUCTURED TOOLS — they make the structure unforgeable plumbing:\n"
+            "  - SetNotebookIntro(problem, hypotheses): the two leading narrative\n"
+            "    cells (call once, early).\n"
+            "  - AddPipelineCell(phase, why, code): one pillar cell + its REQUIRED\n"
+            "    WHY-explainer; phase in {doe, data_generation, ml, optimization,\n"
+            "    analysis}. Cells stay in canonical order; re-calling a phase\n"
+            "    replaces it. Because the pillar name and the rationale are\n"
+            "    required arguments, you cannot ship a structureless notebook or\n"
+            "    omit the WHY. Do NOT hand-write notebook JSON.\n"
+            "    (WriteDeliverable('pipeline.ipynb', …) is a raw fallback only.)\n\n"
+        )
+    elif role == "implementer":
+        intro = (
+            "DELIVERABLE CONTEXT: the run's single deliverable is pipeline.ipynb,\n"
+            "which the STRATEGIZER assembles from your work (you do NOT author it\n"
+            "— you have no notebook tools). Write your phase code so it drops\n"
+            "cleanly into one of the pillar cells below; return runnable,\n"
+            "non-stub code that reaches the oracle ONLY via get_evaluator().\n\n"
+        )
+    else:  # critic / reviewer
+        intro = (
+            "DELIVERABLE CONTEXT: the run's single deliverable is pipeline.ipynb\n"
+            "(no pipeline.py, no solution.md — the notebook's markdown IS the\n"
+            "writeup). You JUDGE it against the structure below; you do not author\n"
+            "it.\n\n"
+        )
     return (
         "\n<deliverable_format>\n"
-        "DELIVERABLE = pipeline.ipynb. This SUPERSEDES every 'pipeline.py' /\n"
-        "WriteDeliverable('pipeline.py') / solution.md instruction above — for\n"
-        "THIS run there is exactly one deliverable, pipeline.ipynb, and no\n"
-        "pipeline.py and no solution.md. It is the single merged\n"
-        "artifact — the writeup AND the runnable, lazily-reproducible recipe in\n"
-        "one. It is a SCIENTIFIC NARRATIVE, not a dumped script. AUTHOR IT WITH\n"
-        "THE STRUCTURED TOOLS — they make the structure unforgeable plumbing:\n"
-        "  - SetNotebookIntro(problem, hypotheses): the two leading narrative\n"
-        "    cells (call once, early).\n"
-        "  - AddPipelineCell(phase, why, code): one pillar cell + its REQUIRED\n"
-        "    WHY-explainer; phase in {doe, data_generation, ml, optimization,\n"
-        "    analysis}. Cells stay in canonical order; re-calling a phase\n"
-        "    replaces it. Because the pillar name and the rationale are required\n"
-        "    arguments, you cannot ship a structureless notebook or omit the WHY.\n"
-        "Do NOT hand-write notebook JSON. (WriteDeliverable('pipeline.ipynb', …)\n"
-        "remains a raw fallback, but prefer the structured tools.)\n\n"
+        + intro +
         "STRUCTURE (the Popperian spine + f3dasm's four pillars). Each code cell\n"
         "carries name metadata = its pillar so the structure is machine-checkable:\n"
         "  1. md  '# Problem & objective'  — question, min/max, success criterion.\n"

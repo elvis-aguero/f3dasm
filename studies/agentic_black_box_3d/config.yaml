@@ -7,7 +7,8 @@ eval_budget: 1000
 # vars override). debug=true captures per-turn strategizer/critic transcripts.
 runtime:
   debug: true
-  notebook_deliverable: true   # deliverable is pipeline.ipynb (gated via nbclient)
+  # The deliverable is always pipeline.ipynb (gated via nbclient). Agents author
+  # it cell-by-cell via the structured tools (SetNotebookIntro/AddPipelineCell).
 
 evaluator:
   entrypoint: "workspace/evaluator.py:evaluate_kw"

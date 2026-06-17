@@ -138,13 +138,14 @@ def test_literature_review_wet(tmp_path):
                     _time.sleep(0.5)
 
             summary = worker_report or "Literature review complete."
-            # pipeline.py is a hard Done() requirement.
-            if "WriteDeliverable" in self.closure_tools:
-                self.closure_tools["WriteDeliverable"](
-                    "pipeline.py",
-                    "# Reproduce: re-run the literature review "
-                    "delegation in this test.\n",
-                )
+            # pipeline.ipynb is a hard Done() requirement — author it via the
+            # structured tools (a minimal self-asserting analysis cell).
+            if "AddPipelineCell" in self.closure_tools:
+                self.closure_tools["SetNotebookIntro"](
+                    "Literature review of the problem.", "n/a")
+                self.closure_tools["AddPipelineCell"](
+                    "analysis", "re-run the literature review delegation",
+                    "print('REPRODUCED: 0.0')")
             # Two-shot Done(): first call → warning; second → closes.
             # If delegation is still working, wait briefly and retry.
             r1 = self.closure_tools["Done"](summary=summary)
@@ -247,11 +248,12 @@ def test_literature_review_wet(tmp_path):
         f"matched only {matched} from {literature_signals}\n\nReport:\n{report[:500]}"
     )
 
-    # 5. solution.md token table written (at study root since 7cab624)
-    solution_md = study / "solution.md"
-    assert solution_md.exists()
-    sol_text = solution_md.read_text()
-    assert "## Token usage" in sol_text
+    # 5. token table stamped into the deliverable notebook (there is no
+    #    solution.md — the notebook's markdown IS the writeup).
+    import nbformat
+    nb = nbformat.read(str(study / "pipeline.ipynb"), as_version=4)
+    md = "\n\n".join(c.source for c in nb.cells if c.cell_type == "markdown")
+    assert "## Token usage" in md
 
     # 6. delegation log has the literature review delegation
     jsonl = run_dir / "debug" / "delegation_log.jsonl"

@@ -58,7 +58,8 @@ def test_documented_config_keys_resolve_through_agenticrun():
     assert run._backend == "claude"
     assert "haiku" in run._model
     assert run._eval_budget == 200
-    # pipeline.py is auto-required (not listed); solution.md is auto-written.
+    # pipeline.ipynb is auto-required (not listed in _required_deliverables,
+    # which holds only EXTRA deliverables); the notebook is the only output.
     assert run._required_deliverables == []
 
 

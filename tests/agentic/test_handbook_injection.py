@@ -55,5 +55,29 @@ def test_notebook_spec_always_injected(tmp_path):
         b = run._make_adapter("strategizer", StrategizerAgent())
         assert "DELIVERABLE = pipeline.ipynb" in b.system_prompt
         assert "name='doe'" in b.system_prompt  # four-pillar template present
+        # Only the strategizer is told to AUTHOR with the structured tools.
+        assert "AUTHOR IT WITH THE\nSTRUCTURED TOOLS" in b.system_prompt
+        assert "AddPipelineCell(phase, why, code)" in b.system_prompt
     finally:
         settings.configure({})
+
+
+def test_notebook_spec_is_role_aware(tmp_path):
+    """The implementer/critic get the STRUCTURE but NOT the 'author it with the
+    structured tools' imperative — those tools are granted only to the
+    strategizer, so telling the others to call them would be a dead instruction.
+    """
+    from f3dasm._src.agentic.agents.critic import AdversarialCritiqueAgent
+    from f3dasm._src.agentic.agents.implementer import ImplementerAgent
+
+    run = AgenticRun(study_dir=tmp_path)
+    run._run_dir = None
+    run._graph_spec = _NoOutgoing()
+
+    impl = run._make_adapter("implementer", ImplementerAgent())
+    crit = run._make_adapter("critic", AdversarialCritiqueAgent())
+    for p in (impl.system_prompt, crit.system_prompt):
+        assert "pipeline.ipynb" in p              # they know the deliverable
+        assert "name='doe'" in p                  # and its structure
+        assert "AUTHOR IT WITH" not in p          # but are NOT told to author it
+        assert "AddPipelineCell(phase, why, code)" not in p

@@ -848,13 +848,14 @@ class AgenticRun:
             else:
                 cwd = workspace_dir
 
-        # The deliverable is pipeline.ipynb. Inject its contract into the agents
-        # that author/judge it (strategizer assembles it, the implementer
-        # contributes phase code, the critic judges it).
+        # The deliverable is pipeline.ipynb. Inject its contract — ROLE-AWARE:
+        # only the strategizer authors it (it alone has the notebook tools); the
+        # implementer/critic get the same structure framed for their job (fit
+        # your code to it / judge against it), never an "author it" imperative.
         from .notebook_exec import notebook_deliverable_spec
-        if getattr(agent, "role", None) in (
-                "strategizer", "implementer", "critic"):
-            system_prompt = system_prompt + notebook_deliverable_spec()
+        _role = getattr(agent, "role", None)
+        if _role in ("strategizer", "implementer", "critic"):
+            system_prompt = system_prompt + notebook_deliverable_spec(_role)
 
         model = agent.model or self._model
         backend = agent.backend or self._backend

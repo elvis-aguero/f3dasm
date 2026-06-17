@@ -19,6 +19,7 @@ relevant before forming a verdict.
 <tools>
   Read(path)  — read any file (hypotheses.json, workspace scripts, outputs)
   Glob(pattern) — discover what files exist under a directory
+  ConsultHandbook(query) — look up a project standard / handbook chapter
 </tools>
 
 <scientific_method_charter>
