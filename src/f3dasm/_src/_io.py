@@ -61,6 +61,11 @@ DOMAIN_FILENAME = "domain"
 INPUT_DATA_FILENAME = "input"
 OUTPUT_DATA_FILENAME = "output"
 JOBS_FILENAME = "jobs"
+# Sentinel marking a PROTECTED store (the agentic canonical ledger). When a
+# project_dir contains this file, ExperimentData.store() refuses any write that
+# would SHRINK it — so an agent's partial .store() can't clobber the metered
+# rows that get_evaluator() accumulated. Absent → store() behaves normally.
+PROTECTED_STORE_SENTINEL = ".f3dasm_protected"
 
 RESOLUTION_MATPLOTLIB_FIGURE = 300
 MAX_TRIES = 20

@@ -38,6 +38,7 @@ from ._io import (
     JOBS_FILENAME,
     MAX_TRIES,
     OUTPUT_DATA_FILENAME,
+    PROTECTED_STORE_SENTINEL,
     ReferenceValue,
     ToDiskValue,
     _project_dir_factory,
@@ -901,6 +902,30 @@ class ExperimentData:
 
         # Create the experimentdata subfolder if it does not exist
         subdirectory.mkdir(parents=True, exist_ok=True)
+
+        # PROTECTED canonical store guard: if this project_dir is marked
+        # protected (the agentic ledger), refuse a write that would SHRINK it.
+        # The instrumented oracle writer always stores a superset (canon+batch),
+        # so it passes; an agent's partial `.store(canonical_dir)` would drop
+        # metered rows and is rejected here instead of silently truncating.
+        if (self._project_dir / PROTECTED_STORE_SENTINEL).exists():
+            existing_out = (
+                subdirectory / OUTPUT_DATA_FILENAME).with_suffix(".csv")
+            if existing_out.exists():
+                try:
+                    with open(existing_out) as _f:
+                        existing_rows = max(sum(1 for _ in _f) - 1, 0)  # -header
+                except OSError:
+                    existing_rows = 0
+                if len(self) < existing_rows:
+                    raise RuntimeError(
+                        "Refusing to overwrite the PROTECTED canonical store at "
+                        f"{self._project_dir}: it holds {existing_rows} rows but "
+                        f"this store() would write only {len(self)}, destroying "
+                        f"{existing_rows - len(self)} metered evaluations. The "
+                        "canonical store is written ONLY via get_evaluator(); "
+                        "store your own ExperimentData to a different project_dir."
+                    )
 
         # # Store all objects to keep references
         # self.store_objects()

@@ -87,6 +87,11 @@ def _init_canonical_store(
 
     store_dir = run_dir / "experiment_data"
     store_dir.mkdir(parents=True, exist_ok=True)
+    # Mark this as the PROTECTED canonical store: ExperimentData.store() will
+    # refuse any write that would shrink it, so a stray agent .store() can't
+    # clobber the metered ledger (only get_evaluator() should write here).
+    from .._io import PROTECTED_STORE_SENTINEL
+    (store_dir / PROTECTED_STORE_SENTINEL).touch()
 
     eval_cfg = evaluator_config or {}
 
