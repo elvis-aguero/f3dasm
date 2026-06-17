@@ -420,6 +420,23 @@ def build_routing_tools(node) -> dict:
                 "reconciled": False,
             }
 
+        # Provenance: log a RUNNING entry NOW, at dispatch — before the worker
+        # runs and flushes ledger rows. If this delegation is cancelled or
+        # killed mid-flight (wall/eval budget), its ledgered evals stay traceable
+        # to a logged delegation instead of becoming orphan rows. The terminal
+        # DONE/FAILED record (same id) supersedes this via last-wins collapse.
+        if node._delegation_log is not None:
+            node._delegation_log.record_started(
+                id=delegation_id,
+                from_node=node._name,
+                to_node=target,
+                task=intent,
+                hypothesis_ids=h_ids,
+                started_at=started_at,
+                is_falsification_attempt=bool(is_falsification_attempt),
+                phase=_phase,
+            )
+
         # Build task message
         edge = node._spec.edge(node._name, target)
         preamble = edge.preamble if edge else ""
@@ -1497,8 +1514,24 @@ def build_routing_tools(node) -> dict:
             # spent so it judges the BEST HONEST conclusion reachable
             # within budget, rather than demanding falsification work the
             # budget no longer allows (which strands the close).
+            # Eval count = canonical ledger rows (the single source of truth),
+            # NOT the sum of logged delegations' self-reported evals: a
+            # delegation killed/cancelled mid-flight flushes rows whose evals
+            # never reach the log, so the log-sum undercounts and the budget
+            # silently overruns. Read the store directly; fall back to the
+            # log-sum only for lookup-direct studies that wrote no store.
             _spent = 0
-            if node._delegation_log is not None:
+            _notes_sp = getattr(node, "_current_notes_dir", None)
+            if _notes_sp is not None:
+                try:
+                    from ...instrumented import RunStateSummary
+                    _sm = RunStateSummary.from_store(
+                        _notes_sp.parent.parent / "experiment_data")
+                    if _sm is not None:
+                        _spent = int(_sm.n_rows)
+                except Exception:  # noqa: BLE001
+                    _spent = 0
+            if _spent == 0 and node._delegation_log is not None:
                 _spent = sum(
                     (r.get("evals") or 0)
                     for r in node._delegation_log.query_all()

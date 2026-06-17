@@ -880,6 +880,21 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
 
         eval_budget = state.get("eval_budget")
         evals_used = state.get("evals_used", 0)
+        # The canonical ledger is the source of truth: a killed/cancelled
+        # delegation flushes rows the state accumulator never sees, so the
+        # accumulator undercounts and the budget warning never fires. Prefer the
+        # ledger count (max() keeps the accumulator for lookup-direct studies
+        # with no instrumented store).
+        try:
+            from ..instrumented import RunStateSummary
+            _nd = getattr(self, "_current_notes_dir", None)
+            if _nd is not None:
+                _sm = RunStateSummary.from_store(
+                    _nd.parent.parent / "experiment_data")
+                if _sm is not None:
+                    evals_used = max(evals_used, int(_sm.n_rows))
+        except Exception:  # noqa: BLE001
+            pass
         if eval_budget is not None and evals_used >= eval_budget:
             budget_warnings.append({
                 "role": "user",

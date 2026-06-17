@@ -1050,9 +1050,9 @@ def test_delegate_writes_delegation_jsonl_on_done(tmp_path):
     )
     node(make_state())
     assert jsonl_path.exists(), "delegation_log.jsonl was not created"
-    lines = jsonl_path.read_text().strip().splitlines()
-    assert len(lines) == 1
-    rec = _json.loads(lines[0])
+    records = delegation_log.query_all()   # collapsed last-wins (one per id)
+    assert len(records) == 1
+    rec = records[0]
     assert rec["from_node"] == "strategizer"
     assert rec["to_node"] == "implementer"
     assert rec["hypothesis_ids"] == ["H1", "H2"]
@@ -1612,7 +1612,7 @@ def test_delegation_jsonl_contains_token_fields(tmp_path):
     node(make_state())
 
     assert jsonl_path.exists(), "delegation_log.jsonl was not created"
-    rec = _json.loads(jsonl_path.read_text().strip().splitlines()[0])
+    rec = delegation_log.query_all()[0]   # collapsed terminal record (one per id)
     assert rec["tokens_in"] == 77
     assert rec["tokens_out"] == 33
     assert rec["cost_usd"] == 0.005

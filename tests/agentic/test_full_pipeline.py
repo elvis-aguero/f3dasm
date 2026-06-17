@@ -143,20 +143,28 @@ def test_triggered_by_links_delegation(pipeline_run):
 
 
 def test_delegation_log_created(pipeline_run):
-    """delegation_log.jsonl exists under debug/ with two records."""
+    """delegation_log.jsonl exists under debug/ with two logical records.
+
+    (The raw file also carries dispatch-time RUNNING entries; query_all()
+    collapses last-wins to one record per delegation — see provenance fix.)"""
+    from f3dasm._src.agentic.delegation_log import DelegationLog
     _, study = pipeline_run
     debug = next((study / "runs").iterdir()) / "debug"
-    lines = (debug / "delegation_log.jsonl").read_text().strip().splitlines()
-    assert len(lines) == 2
+    records = DelegationLog(debug / "delegation_log.jsonl").query_all()
+    assert len(records) == 2
 
 
 def test_delegation_records_have_token_fields(pipeline_run):
-    """Each delegation record has non-zero tokens_in and tokens_out."""
+    """Each COMPLETED delegation record has non-zero tokens_in and tokens_out.
+
+    (Dispatch-time RUNNING entries legitimately carry 0 tokens; query_all()
+    collapses to the terminal record per delegation.)"""
+    from f3dasm._src.agentic.delegation_log import DelegationLog
     _, study = pipeline_run
     debug = next((study / "runs").iterdir()) / "debug"
-    lines = (debug / "delegation_log.jsonl").read_text().strip().splitlines()
-    for line in lines:
-        rec = json.loads(line)
+    for rec in DelegationLog(debug / "delegation_log.jsonl").query_all():
+        if rec["status"] != "DONE":
+            continue
         assert rec["tokens_in"] > 0, f"tokens_in missing in {rec['id']}"
         assert rec["tokens_out"] > 0, f"tokens_out missing in {rec['id']}"
         assert rec["cost_usd"] is not None
