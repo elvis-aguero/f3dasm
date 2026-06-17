@@ -868,6 +868,18 @@ class AgenticRun:
             else:
                 cwd = workspace_dir
 
+        # Notebook mode: the deliverable is pipeline.ipynb. Inject its contract
+        # into the agents that author/judge it (strategizer assembles it, the
+        # implementer contributes phase code, the critic judges it). Default-off,
+        # so script-mode prompts are untouched.
+        from .notebook_exec import (
+            notebook_deliverable_spec,
+            notebook_mode_enabled,
+        )
+        if notebook_mode_enabled() and getattr(agent, "role", None) in (
+                "strategizer", "implementer", "critic"):
+            system_prompt = system_prompt + notebook_deliverable_spec()
+
         model = agent.model or self._model
         backend = agent.backend or self._backend
 

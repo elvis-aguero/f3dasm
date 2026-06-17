@@ -132,3 +132,28 @@ you like — just don't confuse it with the canonical ledger.
   `DataGenerator`, never the raw evaluator, never a redirected store. That one
   door is what makes the result ledgered and reproducible; see
   [[evaluate-through-get-evaluator]] and [[surrogates-are-off-ledger]].
+
+## When the deliverable is a notebook (`pipeline.ipynb`)
+In notebook mode the single deliverable is `pipeline.ipynb` — the writeup AND the
+lazily-reproducible recipe in one. Build it as valid nbformat v4 (never
+hand-write fragile JSON). It is a **scientific narrative**: its spine is the
+Popperian loop, its body mirrors the four f3dasm pillars, and each code cell
+carries `metadata.name` = its pillar so the structure is machine-checkable.
+
+Cell order:
+1. `# Problem & objective` (md) — question, min/max, success criterion.
+2. `## Hypotheses` (md) — registered hypotheses + falsifiable predictions.
+3. WHY-explainer (md) + code `name="doe"` — Domain + sampler, **load-or-create**.
+4. WHY-explainer (md) + code `name="data_generation"` — `get_evaluator()` only (lazy).
+5. WHY-explainer (md) + code `name="ml"` — fit the surrogate.
+6. WHY-explainer (md) + code `name="optimization"` — acquisition / BO loop.
+7. `## Verdict & result` (md) + code `name="analysis"` — per-hypothesis
+   SUPPORTED/FALSIFIED + WHY; derive the headline from the ledger and print
+   `REPRODUCED: <value>`.
+
+The four pillar cells are ALWAYS present; a pillar you did not run stays present
+with its explainer stating "NOT executed (budget)" — never silently drop one.
+Every WHY-explainer justifies the choice (cite the literature). Same lazy +
+zero-new-eval reproduction contract as `pipeline.py`: the runtime executes the
+notebook against the shipped ledger and asserts zero new oracle evals + the
+grounded `REPRODUCED:` line.

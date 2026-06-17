@@ -28,7 +28,55 @@ __all__ = [
     "required_deliverable_name",
     "run_deliverable",
     "build_notebook",
+    "notebook_deliverable_spec",
 ]
+
+
+# The canonical notebook structure — ONE source, referenced by the agent prompt
+# (notebook_deliverable_spec), KB 0009, and any fallback builder. The spine is the
+# Popperian loop (hypotheses → falsification attempt → verdict); the body mirrors
+# f3dasm's four pillars (Phase enum: doe / data_generation / ml / optimization),
+# each a name-tagged code cell preceded by a WHY explainer markdown cell.
+def notebook_deliverable_spec() -> str:
+    """The deliverable contract for notebook mode — injected into the relevant
+    agent prompts so the .ipynb is a reproducible scientific narrative, not a
+    ported .py. Mode-specific: only shown when notebook mode is active."""
+    return (
+        "\n<deliverable_format>\n"
+        "DELIVERABLE = pipeline.ipynb. This SUPERSEDES every 'pipeline.py' /\n"
+        "WriteDeliverable('pipeline.py') / solution.md instruction above — for\n"
+        "THIS run there is exactly one deliverable, pipeline.ipynb, and no\n"
+        "pipeline.py and no solution.md. It is the single merged\n"
+        "artifact — the writeup AND the runnable, lazily-reproducible recipe in\n"
+        "one. It is a SCIENTIFIC NARRATIVE, not a dumped script. Author it with\n"
+        "WriteDeliverable('pipeline.ipynb', <nbformat-v4 JSON>) (or the Jupyter\n"
+        "tools when available); never hand-write fragile JSON — build valid\n"
+        "nbformat v4.\n\n"
+        "STRUCTURE (the Popperian spine + f3dasm's four pillars). Each code cell\n"
+        "carries name metadata = its pillar so the structure is machine-checkable:\n"
+        "  1. md  '# Problem & objective'  — question, min/max, success criterion.\n"
+        "  2. md  '## Hypotheses'          — registered hypotheses + falsifiable\n"
+        "         predictions (the Popperian setup; mirror the hypothesis ledger).\n"
+        "  3. md WHY-explainer + code name='doe'             — Domain + sampler\n"
+        "         (LOAD-OR-CREATE: load the ledger if present, else build the DoE).\n"
+        "  4. md WHY-explainer + code name='data_generation' — evaluate via\n"
+        "         get_evaluator() ONLY (lazy: skips FINISHED rows → 0 new on re-run).\n"
+        "  5. md WHY-explainer + code name='ml'              — fit the surrogate.\n"
+        "  6. md WHY-explainer + code name='optimization'    — acquisition / BO loop.\n"
+        "  7. md '## Verdict & result' + code name='analysis' — for each hypothesis\n"
+        "         state SUPPORTED/FALSIFIED + WHY from the evidence; derive the\n"
+        "         headline FROM the ledger and print exactly 'REPRODUCED: <value>'.\n\n"
+        "RULES:\n"
+        "- The four pillar cells (doe/data_generation/ml/optimization) are ALWAYS\n"
+        "  present. A pillar you did NOT run stays present but its explainer says\n"
+        "  plainly 'NOT executed (budget)'. Never silently drop a pillar.\n"
+        "- Every WHY-explainer justifies the methodological choice (cite the\n"
+        "  literature you gathered) — this is the rationale, not just description.\n"
+        "- LAZY + reproducible: the runtime executes the notebook against the\n"
+        "  shipped ledger and requires ZERO new oracle evals + the REPRODUCED line\n"
+        "  grounded in the ledger. Reach the oracle ONLY via get_evaluator().\n"
+        "</deliverable_format>\n"
+    )
 
 
 def notebook_available() -> bool:

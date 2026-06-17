@@ -39,3 +39,25 @@ def test_make_adapter_injects_consult_handbook(tmp_path, name, agent):
     # It is the shared handbook function (one source), not a per-agent copy.
     from f3dasm._src.agentic.nodes.parsing import _consult_handbook
     assert adapter.closure_tools["ConsultHandbook"] is _consult_handbook
+
+
+def test_notebook_spec_injected_only_in_notebook_mode(tmp_path):
+    """The pipeline.ipynb deliverable contract is injected into the strategizer
+    prompt ONLY when notebook mode is on — default (.py) prompts are untouched."""
+    from f3dasm._src.agentic import settings
+    from f3dasm._src.agentic.agents.strategizer import StrategizerAgent
+
+    run = AgenticRun(study_dir=tmp_path)
+    run._run_dir = None
+    run._graph_spec = _NoOutgoing()
+    try:
+        settings.configure({})  # default: script mode
+        a = run._make_adapter("strategizer", StrategizerAgent())
+        assert "pipeline.ipynb" not in a.system_prompt
+
+        settings.configure({"notebook_deliverable": True})
+        b = run._make_adapter("strategizer", StrategizerAgent())
+        assert "DELIVERABLE = pipeline.ipynb" in b.system_prompt
+        assert "name='doe'" in b.system_prompt  # four-pillar template present
+    finally:
+        settings.configure({})
