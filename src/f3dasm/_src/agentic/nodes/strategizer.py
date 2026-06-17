@@ -498,8 +498,14 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                 "prediction. Linking does NOT record a verdict."
             )
 
-        def HypothesisList() -> str:
-            """List all hypotheses with id, status, belief, statement."""
+        def HypothesisList(hypothesis_ids: list | None = None) -> str:
+            """List all hypotheses with id, status, belief, statement.
+
+            Takes no real arguments — it always lists ALL hypotheses. The
+            optional `hypothesis_ids` is accepted-and-ignored so a stray kwarg
+            (agents confuse this with Delegate/AskForFeedback) returns the list
+            instead of crashing the turn with a TypeError.
+            """
             if node._ledger is None:
                 return (
                     "ERROR: hypothesis ledger not available in this run."

@@ -252,3 +252,16 @@ def test_posthoc_link_satisfies_supported_without_attack(tmp_path):
     n._delegation_log.mark_attempt("D001", hid)
     rules2 = {v.rule for v in mon.evaluate()}
     assert "SUPPORTED_WITHOUT_ATTACK" not in rules2
+
+
+def test_hypothesis_list_tolerates_stray_kwarg(tmp_path):
+    """ROOT 4: HypothesisList takes no real args, but agents confuse it with
+    Delegate/AskForFeedback and pass hypothesis_ids. That stray kwarg must be
+    absorbed (list ALL hypotheses) — never crash the turn with a TypeError."""
+    n = _node(tmp_path)
+    hid = _propose(n)
+    hlist = n.adapter.closure_tools["HypothesisList"]
+    out = hlist(hypothesis_ids=[hid])          # the exact observed fumble
+    assert not out.startswith("ERROR")
+    assert hid in out                          # listed despite the bad kwarg
+    assert hlist() == out                      # arg is ignored: identical to no-arg
