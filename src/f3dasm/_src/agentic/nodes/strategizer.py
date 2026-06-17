@@ -1018,6 +1018,40 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         # no separate post-accept repro check here; this branch handles only
         # deliverable presence and un-accepted termination.
 
+        # ── Transient: delegations still running ──────────────────────────────
+        # A healthy delegation still in flight is WORK IN PROGRESS, not a failed
+        # finish: the deliverables usually depend on its result, and it WILL
+        # report. Re-prompt to poll WITHOUT consuming the bounded finish-attempt
+        # budget — otherwise a slow-but-healthy delegation (run-4: D004 at ~2.5
+        # evals/s, ~100s from done, with wall budget to spare) burns 3 "finish
+        # attempts" across turns and force-terminates the run UNGATED. The run's
+        # time backstop (run_backstop_multiple x budget, checked each turn)
+        # bounds a delegation that truly hangs.
+        if not accepted:
+            with self._registry_lock:
+                _working_now = [
+                    d for d, e in self._registry.items()
+                    if e["status"] in ("Working", "FollowUp")
+                ]
+            if _working_now:
+                msg = (
+                    f"Delegations still running: {_working_now}. They are"
+                    " progressing — poll with GetStatus() and call Done() only"
+                    " once they report (then write any remaining deliverables"
+                    " from their results). Do NOT close early. This wait does"
+                    " NOT count against your finish attempts; the run's time"
+                    " budget is the backstop."
+                )
+                if missing:
+                    msg += (
+                        "\n\nStill to write AFTER they finish: "
+                        + ", ".join(missing)
+                    )
+                return Command(
+                    goto=self._name,
+                    update={"messages": [ai_msg, HumanMessage(content=msg)]},
+                )
+
         # ── Bounded re-prompt on unaccepted termination ───────────────────────
         if (not accepted or missing) and self._finish_attempts < 3:
             self._finish_attempts += 1

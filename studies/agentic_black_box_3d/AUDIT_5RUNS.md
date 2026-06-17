@@ -23,6 +23,7 @@ NOTE: `run.py` wipes `runs/` each launch — audit + persist BEFORE relaunching.
 | 1 | 20260617T004224 | UNGATED | REJECT (4 crit) | 4 | **1523 (+52%)** | $1.77 | 22:09 | **D003: 915 orphan rows** | MILESTONE_BLOCK:1, ERROR_RETURN:7, SCIENCE_DRIFT:6, CONSISTENCY_FLAG:1 |
 | 2 | 20260617T012012 | UNGATED | MAJOR (criticals fixed) | 9 | 543 (in budget ✅) | $1.45 | 22:03 | **0 orphans ✅** (D003 traceable=RUNNING) | ERROR_RETURN:5, MILESTONE_BLOCK:1, SCIENCE_DRIFT:5, CONSISTENCY_FLAG:1 |
 | 3 | 20260617T015040 | **GATED ✅** | PASS | 6 | 384 ✅ | $1.15 | 32:26 | 0 orphans ✅ | ERROR_RETURN:**1**, MILESTONE_BLOCK:1, SCIENCE_DRIFT:**2** (no consistency flag) |
+| 4 | 20260617T023021 | UNGATED (premature kill) | 0 consults | 5 | 697 | $0.70 | **9:14** | n/a (never closed) | MILESTONE_BLOCK:1 — *died at finish-attempt 3/3 while D004 healthy* |
 
 ---
 
@@ -126,3 +127,24 @@ doubt system, not agent fault):
 
 Tests: `test_worker_write_strips_redundant_delegation_prefix`; Domain export
 checked. 926 passed.
+
+### After Run 4 — a running delegation must not burn the finish-attempt budget
+Run 4 died at **9:14** (6 min of the 15-min wall budget UNUSED), critic_consults=0
+— it never closed. Ground truth: the strategizer hit `_finish_attempts` 3/3 while
+**D004 was healthy and progressing** (697 evals at ~2.5/s, ~100s from done). The
+`_finish_attempts<3` gate (strategizer.py) lumps a TRANSIENT condition
+("delegations still running") with genuinely-stuck failures (missing deliverable,
+critic refusal): every strategizer turn that ends while D004 runs burns one
+finish attempt → 3 turns → force-terminate UNGATED. Beyond reasonable doubt a
+system premature-kill: the agent did the right thing (polled, waited), the
+deliverables depend on D004's output, and the wall budget had room.
+
+Fix (`strategizer.py`): when the sole blocker is a still-running delegation,
+re-prompt to poll WITHOUT consuming the finish-attempt budget. The run's time
+backstop (run_backstop_multiple × budget, checked each turn) still bounds a true
+hang. Test: `test_running_delegation_does_not_burn_finish_attempts` (5 poll turns
+→ 0 attempts consumed, never terminates). 927 passed.
+
+**Note:** run-4 friction was otherwise minimal (just MILESTONE_BLOCK:1) — the
+prior fixes held; this was a distinct, newly-exposed back door (a single big
+delegation rather than several small ones triggered it).

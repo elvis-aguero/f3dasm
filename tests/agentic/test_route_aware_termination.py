@@ -397,6 +397,48 @@ def test_working_delegations_survive_loopback():
         assert node._registry["D001"]["status"] == "Working"
 
 
+def test_running_delegation_does_not_burn_finish_attempts():
+    """Run-4 back door: a healthy delegation still in flight must NOT consume the
+    bounded finish-attempt budget. Waiting it out is work, not a failed finish —
+    otherwise a slow-but-healthy delegation force-terminates the run UNGATED with
+    wall budget to spare. The run's time backstop bounds a true hang instead."""
+    from f3dasm._src.agentic.nodes import StrategizerNode
+
+    study_dir = Path(tempfile.mkdtemp(prefix="f3dasm_rat_"))
+    (study_dir / "pipeline.py").write_text("# test\n")
+    adapter = StubAdapter(response="Polling D004.")
+    node = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"],
+        spec=_minimal_spec())
+
+    fake_event = threading.Event()
+    with node._registry_lock:
+        node._registry["D004"] = {
+            "status": "Working", "result": None, "evals": 0,
+            "hypothesis_ids": [], "started_at": "2026-01-01T00:00:00+00:00",
+            "start_time": time.monotonic(), "followup_event": fake_event,
+            "followup_question": None, "followup_answer": None,
+            "followup_count": 0,
+        }
+        node._threads["D004"] = threading.Thread(target=lambda: None)
+
+    # Many turns while D004 keeps running → always loops back, NEVER terminates,
+    # NEVER increments _finish_attempts (the old behavior died after 3).
+    state = _make_state(study_dir=study_dir)
+    for _ in range(5):
+        cmd = node(state)
+        assert cmd.goto == "strategizer", f"expected poll loopback, got {cmd.goto!r}"
+        assert node._finish_attempts == 0, (
+            f"a running delegation burned a finish attempt: {node._finish_attempts}"
+        )
+        msgs = [m.content for m in cmd.update.get("messages", [])
+                if isinstance(m, HumanMessage)]
+        assert any("still running" in m.lower() for m in msgs), msgs
+        state = _make_state(
+            study_dir=study_dir,
+            messages=list(state["messages"]) + list(cmd.update.get("messages", [])))
+
+
 # ---------------------------------------------------------------------------
 # 4. Ledger duplicate-statement guard
 # ---------------------------------------------------------------------------
