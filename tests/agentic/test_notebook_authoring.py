@@ -121,9 +121,27 @@ def test_intro_recall_replaces_not_duplicates(tmp_path):
 def test_authored_notebook_passes_the_gate(tmp_path):
     """A notebook authored purely through the closures runs through the
     reproduction gate (a real, executable deliverable)."""
+    from f3dasm._src.agentic.instrumented import InstrumentedDataGenerator
+    from f3dasm._src.core import DataGenerator
+    from f3dasm._src.experimentsample import ExperimentSample, JobStatus
+
     run_dir = tmp_path / "runs" / "A0"
     (run_dir / "debug" / "strategizer_notes").mkdir(parents=True)
-    (run_dir / "experiment_data").mkdir()
+    store_dir = run_dir / "experiment_data"
+    store_dir.mkdir()
+
+    class _Sum(DataGenerator):
+        def execute(self, s, **k):
+            s._output_data["f"] = sum(s._input_data.values())
+            s.job_status = JobStatus.FINISHED
+            return s
+
+    gen = InstrumentedDataGenerator(
+        inner=_Sum(), store_dir=store_dir, delegation_id="D001", flush_every=1)
+    gen.execute(ExperimentSample(
+        _input_data={"x0": 1.0}, _output_data={}, job_status=JobStatus.OPEN))
+    gen.flush()
+
     n = _node(tmp_path)
     n._study_dir = tmp_path
     n._current_notes_dir = run_dir / "debug" / "strategizer_notes"

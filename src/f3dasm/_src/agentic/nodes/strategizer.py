@@ -721,6 +721,12 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         # checking a non-lazy pipeline pollutes + inflates the canonical store
         # (and CheckDeliverable could be looped to balloon it without bound).
         before_n, before_hash, extrema = _ledger_snapshot(store_dir)
+        if before_n == 0:
+            return (
+                "Canonical store has no rows — the campaign has not been "
+                "evaluated yet. Run the delegation pipeline first so the "
+                "ledger is populated, then the notebook can be reproduced "
+                "lazily against those rows.")
         sandbox = Path(tempfile.mkdtemp(prefix="f3dasm_repro_"))
         try:
             sb_store = sandbox / "experiment_data"

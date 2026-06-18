@@ -118,6 +118,22 @@ def test_gate_skips_without_run_context(tmp_path):
     assert node._reproduction_gate({"study_dir": str(study_dir)}) is None
 
 
+def test_empty_ledger_rejected_by_gate(tmp_path):
+    """Gate rejects when the canonical store has no rows — the campaign hasn't
+    run yet, so there is nothing to ground the headline against."""
+    study_dir = tmp_path / "study"; study_dir.mkdir()
+    run_dir = tmp_path / "runs" / "T0"
+    (run_dir / "debug" / "strategizer_notes").mkdir(parents=True)
+    # Deliberately do NOT seed the store — leave it absent/empty.
+    node = StrategizerNode(
+        _StubAdapter(), name="strategizer", outgoing=["implementer"],
+        spec=_spec(), study_dir=study_dir)
+    node._current_notes_dir = run_dir / "debug" / "strategizer_notes"
+    (study_dir / "pipeline.py").write_text("print('REPRODUCED: 0.0')\n")
+    problem = node._reproduction_gate({"study_dir": str(study_dir)})
+    assert problem is not None and "no rows" in problem.lower()
+
+
 # ── gate hardening (controlled reproduction) ──────────────────────────────────
 
 def test_gate_rejects_fabricated_headline(tmp_path):

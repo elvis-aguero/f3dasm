@@ -55,9 +55,10 @@ evals: 10
 class ScriptedStrategistAdapter:
     """Runs a deterministic hypothesis→delegate→update→done sequence."""
 
-    def __init__(self):
+    def __init__(self, run=None):
         self.closure_tools: dict = {}
         self.route_watcher = None
+        self._run = run  # optional AgenticRun ref for canonical store seeding
         self.last_usage: dict = {
             "input_tokens": 200,
             "output_tokens": 80,
@@ -149,6 +150,28 @@ class ScriptedStrategistAdapter:
                  "source": "print('REPRODUCED: 0.0')"},
             ])
             tools["WriteDeliverable"]("pipeline.ipynb", nbformat.writes(nb))
+            # Seed the canonical store so the reproduction gate can verify
+            # grounding (the mock worker never calls get_evaluator()).
+            _run = self._run
+            _run_dir = getattr(_run, "_run_dir", None) if _run else None
+            if _run_dir is not None:
+                from pathlib import Path as _Path
+                from f3dasm._src.agentic.instrumented import InstrumentedDataGenerator
+                from f3dasm._src.core import DataGenerator
+                from f3dasm._src.experimentsample import ExperimentSample, JobStatus
+                class _Stub(DataGenerator):
+                    def execute(self, s, **k):
+                        s._output_data["f"] = 0.0
+                        s.job_status = JobStatus.FINISHED
+                        return s
+                _store = _Path(_run_dir) / "experiment_data"
+                _gen = InstrumentedDataGenerator(
+                    inner=_Stub(), store_dir=_store,
+                    delegation_id="D001", flush_every=1)
+                _gen.execute(ExperimentSample(
+                    _input_data={"x0": 0.0}, _output_data={},
+                    job_status=JobStatus.OPEN))
+                _gen.flush()
 
         tools["Done"](summary="H1 falsified. H2 supported. Optimal design confirmed.")  # first: warning
         tools["Done"](summary="H1 falsified. H2 supported. Optimal design confirmed.")  # second: accepted

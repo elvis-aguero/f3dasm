@@ -56,10 +56,9 @@ def _graph_spec() -> Graph:
 def pipeline_run(tmp_path):
     """AgenticRun with mock adapters; returns (run, study_dir) after execute()."""
     study = _make_study(tmp_path)
-    strat = ScriptedStrategistAdapter()
-    worker = MockWorkerAdapter()
-
     run = AgenticRun(study_dir=study, graph=_graph_spec())
+    strat = ScriptedStrategistAdapter(run=run)
+    worker = MockWorkerAdapter()
 
     def _mock_make_adapter(name, agent):
         return strat if name == "strategizer" else worker
