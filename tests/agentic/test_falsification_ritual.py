@@ -237,21 +237,28 @@ def test_done_gate_warns_on_dangling_falsification(tmp_path):
 # 5. science_monitor self-heals once a post-hoc link is made
 # --------------------------------------------------------------------------
 
-def test_posthoc_link_satisfies_supported_without_attack(tmp_path):
+def test_supported_blocked_without_attack_then_allowed_after_link(tmp_path):
+    """SUPPORTED_WITHOUT_ATTACK is now a hard block at the HypothesisUpdate
+    data boundary (not a science monitor nag). Verify:
+    1. HypothesisUpdate returns ERROR for SUPPORTED with no falsification attack.
+    2. After marking D001 as a falsification attempt, the update succeeds.
+    """
     n = _node(tmp_path)
     hid = _propose(n)
     _done_record(n)
-    # close the hypothesis SUPPORTED citing the delegation
-    n.adapter.closure_tools["HypothesisUpdate"](
+    # 1. No falsification attempt yet → blocked
+    out = n.adapter.closure_tools["HypothesisUpdate"](
         hid, "SUPPORTED", "survived", 0.8,
         {"delegation": "D001", "numbers": {"best f": 1.5}})
-    mon = n._science_monitor
-    rules = {v.rule for v in mon.evaluate()}
-    assert "SUPPORTED_WITHOUT_ATTACK" in rules
-    # post-hoc link the delegation as the attempt → rule self-heals
+    assert out.startswith("ERROR:"), (
+        f"Expected block before falsification attempt, got: {out!r}")
+    # 2. Mark D001 as a falsification attempt → now allowed
     n._delegation_log.mark_attempt("D001", hid)
-    rules2 = {v.rule for v in mon.evaluate()}
-    assert "SUPPORTED_WITHOUT_ATTACK" not in rules2
+    out2 = n.adapter.closure_tools["HypothesisUpdate"](
+        hid, "SUPPORTED", "survived falsification", 0.8,
+        {"delegation": "D001", "numbers": {"best f": 1.5}})
+    assert not out2.startswith("ERROR:"), (
+        f"Expected success after falsification attempt, got: {out2!r}")
 
 
 def test_hypothesis_list_tolerates_stray_kwarg(tmp_path):

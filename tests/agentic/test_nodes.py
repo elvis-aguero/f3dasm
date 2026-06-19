@@ -2597,19 +2597,17 @@ _GOOD_WORKER_REPORT = (
 )
 
 
-def test_monitor_violation_appears_in_next_tool_result(tmp_path):
-    """SUPPORTED_WITHOUT_ATTACK violation appears in next draining tool result.
+def test_supported_without_attack_blocked_at_boundary(tmp_path):
+    """SUPPORTED_WITHOUT_ATTACK is now a hard block at HypothesisUpdate.
 
-    Flow: propose H1, delegate with wait=True (worker returns a Report
-    WITHOUT is_falsification_attempt), update H1 to SUPPORTED citing
-    that delegation, then call WriteNote() (a draining closure) — assert
-    its result contains '[SCIENCE MONITOR — SUPPORTED_WITHOUT_ATTACK]'.
+    Flow: propose H1, delegate with wait=True (not a falsification attempt),
+    attempt to update H1 to SUPPORTED — HypothesisUpdate must return an
+    ERROR string directly (not a science monitor drain message).
     """
     from f3dasm._src.agentic.nodes import StrategizerNode
     from f3dasm._src.agentic.delegation_log import DelegationLog
 
-    drain_results: list[str] = []
-    delegation_ids: list[str] = []
+    update_results: list[str] = []
 
     class MonitorAdapter(StubAdapter):
         def invoke(self, messages):
@@ -2619,8 +2617,6 @@ def test_monitor_violation_appears_in_next_tool_result(tmp_path):
                 prediction="best_y will be ~1.47",
                 prior=0.6,
             )
-            # wait=True, not a falsification attempt
-            # D001 is the first delegation in this run
             self.closure_tools["Delegate"](
                 target="implementer",
                 intent="run sweep",
@@ -2629,24 +2625,14 @@ def test_monitor_violation_appears_in_next_tool_result(tmp_path):
                 wait=True,
                 is_falsification_attempt=False,
             )
-            d_id = "D001"
-            delegation_ids.append(d_id)
-            # Update to SUPPORTED citing that delegation
-            self.closure_tools["HypothesisUpdate"](
+            r = self.closure_tools["HypothesisUpdate"](
                 hypothesis_id="H1",
                 status="SUPPORTED",
                 comment="numbers match",
                 posterior=0.85,
-                evidence={
-                    "delegation": d_id,
-                    "numbers": {"best_y": 1.47},
-                },
+                evidence={"delegation": "D001", "numbers": {"best_y": 1.47}},
             )
-            # WriteNote is a draining closure — monitor text appears here
-            r = self.closure_tools["WriteNote"](
-                "scratch.md", "x"
-            )
-            drain_results.append(r)
+            update_results.append(r)
             self.closure_tools["Done"](summary="done")
             return "Done."
 
@@ -2667,22 +2653,18 @@ def test_monitor_violation_appears_in_next_tool_result(tmp_path):
     node._current_notes_dir = tmp_path
     node(make_state(study_dir=str(tmp_path)))
 
-    assert drain_results, "WriteNote was never called"
-    assert any(
-        "[SCIENCE MONITOR — SUPPORTED_WITHOUT_ATTACK]" in r
-        for r in drain_results
-    ), (
-        f"Expected SUPPORTED_WITHOUT_ATTACK in drain result, got:"
-        f" {drain_results!r}"
+    assert update_results, "HypothesisUpdate was never called"
+    assert any(r.startswith("ERROR:") for r in update_results), (
+        f"Expected HypothesisUpdate to return ERROR when no falsification "
+        f"attempt exists, got: {update_results!r}"
     )
 
 
-def test_monitor_error_returned_inline_on_update(tmp_path):
-    """HypothesisUpdate citing nonexistent D999 returns inline error.
+def test_phantom_delegation_blocked_inline_on_update(tmp_path):
+    """HypothesisUpdate citing nonexistent D999 returns an inline ERROR.
 
-    The ledger accepts the update (D-id validity is a monitor concern).
-    The return value of HypothesisUpdate must contain
-    '[SCIENCE MONITOR — EVIDENCE_DELEGATION_EXISTS]'.
+    The check is now at the data boundary — the error is returned by
+    HypothesisUpdate directly, not via the science monitor.
     """
     from f3dasm._src.agentic.nodes import StrategizerNode
     from f3dasm._src.agentic.delegation_log import DelegationLog
@@ -2697,12 +2679,11 @@ def test_monitor_error_returned_inline_on_update(tmp_path):
                 prediction="none found",
                 prior=0.5,
             )
-            # Update citing a non-existent delegation D999
             r = self.closure_tools["HypothesisUpdate"](
                 hypothesis_id="H1",
-                status="SUPPORTED",
+                status="FALSIFIED",
                 comment="trust me",
-                posterior=0.8,
+                posterior=0.1,
                 evidence={"delegation": "D999"},
             )
             update_results.append(r)
@@ -2726,21 +2707,18 @@ def test_monitor_error_returned_inline_on_update(tmp_path):
     node(make_state(study_dir=str(tmp_path)))
 
     assert update_results, "HypothesisUpdate was never called"
-    assert any(
-        "[SCIENCE MONITOR — EVIDENCE_DELEGATION_EXISTS]" in r
-        for r in update_results
-    ), (
-        f"Expected EVIDENCE_DELEGATION_EXISTS inline, got:"
+    assert any(r.startswith("ERROR:") and "D999" in r for r in update_results), (
+        f"Expected ERROR mentioning D999 from data-boundary check, got:"
         f" {update_results!r}"
     )
 
 
-def test_science_drift_written_to_diagnostics(tmp_path):
-    """SCIENCE_DRIFT record appears in diagnostics.jsonl.
+def test_boundary_errors_do_not_write_science_drift(tmp_path):
+    """Data-boundary HypothesisUpdate errors must NOT write to diagnostics.jsonl.
 
-    After a HypothesisUpdate citing nonexistent D999, the monitor fires
-    EVIDENCE_DELEGATION_EXISTS and the diagnostics writer writes a record
-    with error_type == 'SCIENCE_DRIFT' and a 'rule' field.
+    EVIDENCE_DELEGATION_EXISTS and SUPPORTED_WITHOUT_ATTACK are hard blocks
+    at the tool level — they return an inline ERROR and do not go through the
+    science monitor's diagnostics writer.
     """
     from f3dasm._src.agentic.nodes import StrategizerNode
     from f3dasm._src.agentic.delegation_log import DelegationLog
@@ -2753,11 +2731,12 @@ def test_science_drift_written_to_diagnostics(tmp_path):
                 prediction="none found",
                 prior=0.5,
             )
+            # D999 does not exist — blocked at boundary, not via monitor
             self.closure_tools["HypothesisUpdate"](
                 hypothesis_id="H1",
-                status="SUPPORTED",
-                comment="fabricated",
-                posterior=0.8,
+                status="FALSIFIED",
+                comment="phantom delegation",
+                posterior=0.1,
                 evidence={"delegation": "D999"},
             )
             self.closure_tools["Done"](summary="done")
@@ -2785,22 +2764,17 @@ def test_science_drift_written_to_diagnostics(tmp_path):
     node(make_state(study_dir=str(tmp_path)))
 
     diag_path = debug_dir / "diagnostics.jsonl"
-    assert diag_path.exists(), (
-        f"diagnostics.jsonl not created at {diag_path}"
-    )
-    records = [
-        _json.loads(line)
-        for line in diag_path.read_text().strip().splitlines()
-    ]
-    drift_records = [
-        r for r in records
-        if r.get("error_type") == "SCIENCE_DRIFT"
-    ]
-    assert drift_records, (
-        f"No SCIENCE_DRIFT record found; records: {records!r}"
-    )
-    assert "rule" in drift_records[0], (
-        f"SCIENCE_DRIFT record missing 'rule': {drift_records[0]!r}"
+    # If diagnostics.jsonl doesn't exist, no drift records were written — pass.
+    if not diag_path.exists():
+        return
+    drift_rules = set()
+    for line in diag_path.read_text().strip().splitlines():
+        r = _json.loads(line)
+        if r.get("error_type") == "SCIENCE_DRIFT":
+            drift_rules.add(r.get("rule"))
+    assert "EVIDENCE_DELEGATION_EXISTS" not in drift_rules, (
+        "EVIDENCE_DELEGATION_EXISTS should not reach diagnostics.jsonl — "
+        "it is an inline boundary error, not a monitor violation."
     )
 
 

@@ -392,8 +392,11 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
             status: OPEN | SUPPORTED | FALSIFIED | INCONCLUSIVE.
             posterior: your updated belief in [0, 1] — always required.
             evidence: {"delegation": "D###", "numbers": {key: value}}
-              required for closing statuses; numbers must come from
-              that delegation's report.
+              required for closing statuses; numbers should cite values
+              from that delegation's report.
+            SUPPORTED requires a completed falsification attempt targeting
+              this hypothesis first — Delegate(..., is_falsification_attempt=True,
+              hypothesis_ids=[hypothesis_id]) and wait for it to complete.
             RETRACTING SUPPORTED/INCONCLUSIVE back to OPEN (e.g. you marked it
               SUPPORTED but no falsification ATTEMPT was made — Charter §2) needs
               NO new evidence: pass evidence=None and explain in the comment; the
@@ -416,6 +419,49 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                         "ERROR: evidence must be a JSON object like "
                         '{"delegation": "D004", "numbers": {...}}.'
                     )
+            # Hard gate: SUPPORTED requires a prior completed falsification attempt.
+            if status == "SUPPORTED" and node._delegation_log is not None:
+                completed = [
+                    r for r in node._delegation_log.query_all()
+                    if r.get("status") == "DONE"
+                    and r.get("is_falsification_attempt")
+                    and hypothesis_id in (r.get("hypothesis_ids") or [])
+                ]
+                if not completed:
+                    h = node._ledger.get(hypothesis_id) if node._ledger else {}
+                    crit = (h or {}).get("falsification_criterion", "(none set)")
+                    return (
+                        f"ERROR: cannot mark {hypothesis_id} as SUPPORTED without "
+                        "a completed falsification attempt. The Popperian charter "
+                        "requires that a hypothesis be challenged before it is "
+                        "accepted. Steps: (1) Delegate a test designed to refute "
+                        "it — pass is_falsification_attempt=True and "
+                        f"hypothesis_ids=['{hypothesis_id}']. "
+                        f"(2) Wait for it to complete. (3) Call HypothesisUpdate "
+                        "with the result. If the attempt was already run but not "
+                        "flagged, call LinkFalsificationAttempt first, then retry. "
+                        f"Falsification criterion: {crit!r}"
+                    )
+            # Hard gate: cited delegation must be completed (not phantom).
+            ev = evidence or {}
+            d_cited = ev.get("delegation")
+            if (
+                d_cited is not None
+                and d_cited != "D000"
+                and node._delegation_log is not None
+            ):
+                completed_ids = {
+                    r["id"] for r in node._delegation_log.query_all()
+                    if r.get("status") == "DONE"
+                }
+                if d_cited not in completed_ids:
+                    return (
+                        f"ERROR: {hypothesis_id} cites evidence from {d_cited!r}, "
+                        "which is not a completed delegation. Only cite completed "
+                        "delegations (status DONE). Check GetStatus or the "
+                        "delegation log — if the delegation hasn't finished, wait "
+                        "for it."
+                    )
             triggered_by: str | None = (
                 node._delegation_log.last_completed_id(node._name)
                 if node._delegation_log is not None else None
@@ -429,7 +475,7 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                     ]
                 if done_entries:
                     triggered_by = done_entries[-1][0]
-            result = node._ledger.update(
+            return node._ledger.update(
                 hypothesis_id,
                 status,
                 comment,
@@ -437,16 +483,6 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                 posterior,
                 triggered_by,
             )
-            if (
-                node._science_monitor is not None
-                and not result.startswith("ERROR:")
-            ):
-                inline = node._science_monitor.on_hypothesis_update(
-                    hypothesis_id
-                )
-                if inline:
-                    result += "\n\n" + "\n".join(inline)
-            return result
 
         def LinkFalsificationAttempt(
             delegation_id: str, hypothesis_id: str

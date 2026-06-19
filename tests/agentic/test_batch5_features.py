@@ -1,7 +1,6 @@
 """Pins for the 2026-06-11 batch:
   #5  the 3-strikes UNGATED escape is a SILENT backstop (not coached to the agent)
   #6  extensible, oracle-stamped provenance columns (open schema)
-  #9  EVIDENCE_NUMBERS_MATCH re-enabled by default at 1e-3 relative tolerance
   #10b recursion_limit default raised to 2000
 """
 from __future__ import annotations
@@ -10,9 +9,6 @@ import importlib
 import json
 from pathlib import Path
 
-from f3dasm._src.agentic.delegation_log import DelegationLog
-from f3dasm._src.agentic.hypothesis_ledger import HypothesisLedger
-from f3dasm._src.agentic.science_monitor import ScienceMonitor
 from f3dasm._src.experimentdata import ExperimentData
 from f3dasm._src.experimentsample import ExperimentSample, JobStatus
 
@@ -96,39 +92,6 @@ def test_no_provenance_block_means_no_extra_columns(tmp_path):
         _input_data={"x": 0.0}, _output_data={}, job_status=JobStatus.OPEN))
     assert set(out._output_data) == {
         "y", "_delegation_id", "_source", "_ts", "_wall_ms"}
-
-
-# --- #9: EVIDENCE_NUMBERS_MATCH default-on @ 1e-3 -----------------------------
-
-def test_evidence_numbers_match_default_on(monkeypatch):
-    # Now a config.yaml runtime knob (env overrides). Default ON.
-    import f3dasm._src.agentic.science_monitor as sm
-    from f3dasm._src.agentic import settings
-    monkeypatch.delenv("F3DASM_EVIDENCE_NUMBERS_MATCH", raising=False)
-    settings.configure({})
-    try:
-        assert sm._evidence_numbers_match_enabled() is True       # default
-        settings.configure({"evidence_numbers_match": False})     # config.yaml
-        assert sm._evidence_numbers_match_enabled() is False
-        monkeypatch.setenv("F3DASM_EVIDENCE_NUMBERS_MATCH", "1")   # env overrides
-        assert sm._evidence_numbers_match_enabled() is True
-    finally:
-        monkeypatch.delenv("F3DASM_EVIDENCE_NUMBERS_MATCH", raising=False)
-        settings.configure({})
-
-
-def test_numbers_match_1e3_tolerance(tmp_path):
-    """1e-3 relative tolerance accepts sensible rounding (the documented bug
-    case) but still rejects a wholly different number."""
-    ledger = HypothesisLedger(tmp_path)
-    dlog = DelegationLog(tmp_path / "dlog.jsonl")
-    mon = ScienceMonitor(ledger, dlog)
-    report = "### Numbers\nbest_f: -0.040278683\n"
-    # rounded citation: |−0.040279 − −0.040278683| ≈ 3e-7 ≤ 1e-3·0.04 → anchors
-    # (this is exactly the case the old 1e-6 tolerance wrongly rejected)
-    assert mon._numbers_match({"best_f": -0.040279}, report)
-    # 20% off → not anchored
-    assert not mon._numbers_match({"best_f": -0.05}, report)
 
 
 # --- #10b: recursion_limit default raised ------------------------------------

@@ -115,12 +115,13 @@ class ScriptedStrategistAdapter:
             posterior=0.05,
         )
 
-        # Step 5: delegate to confirm H2
+        # Step 5: delegate to confirm H2 (must be a falsification attempt)
         result2 = tools["Delegate"](
             target="implementer",
             intent="Verify taper ratio effect on coilability in workspace/D002/",
             expected_report="Confirm or deny taper ratio hypothesis.",
             hypothesis_ids=[h2],
+            is_falsification_attempt=True,
         )
         d2_id = re.search(r"D\d{3}", result2).group()
 
