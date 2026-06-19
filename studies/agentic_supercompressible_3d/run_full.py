@@ -65,6 +65,31 @@ def _watchdog() -> None:
         f"\nWATCHDOG: run exceeded {WATCHDOG_SECONDS}s wall-clock — force-exiting.",
         flush=True,
     )
+    try:
+        import csv as _csv
+        import json as _json
+        import sys as _sys
+        runs_dir = STUDY_DIR / "runs"
+        run_dirs = sorted(d for d in runs_dir.iterdir() if d.is_dir()) if runs_dir.exists() else []
+        if run_dirs:
+            _rd = run_dirs[-1]
+            (_rd / "debug").mkdir(parents=True, exist_ok=True)
+            (_rd / "debug" / "run_status.json").write_text(
+                _json.dumps({"status": "watchdog_killed"})
+            )
+            _sys.path.insert(0, str(STUDY_DIR.parent))
+            import run_ledger as _rl
+            _row = _rl.extract(_rd)
+            _row["commit"] = _rl._git_short_sha()
+            _new = not _rl.LEDGER.exists()
+            with _rl.LEDGER.open("a", newline="") as _f:
+                _w = _csv.DictWriter(_f, fieldnames=_rl.COLUMNS)
+                if _new:
+                    _w.writeheader()
+                _w.writerow(_row)
+            print(f"WATCHDOG: ledger row appended for {_rd.name}", flush=True)
+    except Exception as _e:
+        print(f"WATCHDOG: cleanup failed: {_e}", flush=True)
     os._exit(2)
 
 
