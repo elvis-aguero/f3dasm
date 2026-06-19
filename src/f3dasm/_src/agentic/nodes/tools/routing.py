@@ -1239,6 +1239,51 @@ def build_routing_tools(node) -> dict:
             "other work."
         )
 
+    def Wait(delegation_id: str) -> str:
+        """Block until delegation_id finishes (Done or Errored), then return
+        its result. Use instead of polling with GetStatus() — holds the current
+        turn open with no extra turns consumed.
+
+        Returns the same text as GetStatus() once the delegation completes."""
+        import time as _time
+        prefix = node._drain_notifications()
+        with node._registry_lock:
+            entry = node._registry.get(delegation_id)
+            if entry is None:
+                return prefix + (
+                    f"ERROR: unknown delegation {delegation_id!r}. "
+                    f"Known: {list(node._registry)}"
+                )
+            if entry["status"] in ("Done", "Errored"):
+                cp = entry.get("checkpoint", "")
+                body = f"{entry['status']}\n\n{entry.get('result', '')}"
+                return prefix + body + (("\n\n" + cp) if cp else "")
+            t = node._threads.get(delegation_id)
+
+        if t is not None:
+            while t.is_alive():
+                t.join(timeout=10.0)
+                with node._notifications_lock:
+                    _notifs = list(node._notifications)
+                    node._notifications.clear()
+                for _n in _notifs:
+                    prefix += _n + "\n\n"
+                if (
+                    node._budget_seconds is not None
+                    and node._run_start is not None
+                    and _time.time() - node._run_start >= node._budget_seconds
+                ):
+                    return prefix + (
+                        f"[Wait] Budget expired while waiting for {delegation_id}. "
+                        "Use GetStatus() to check the final state."
+                    )
+
+        with node._registry_lock:
+            entry = node._registry.get(delegation_id, {})
+        cp = entry.get("checkpoint", "")
+        body = f"{entry.get('status', 'Unknown')}\n\n{entry.get('result', '')}"
+        return prefix + body + (("\n\n" + cp) if cp else "")
+
     def Reply(delegation_id: str, answer: str) -> str:
         """Answer a worker's FollowUp question and unblock it.
 
@@ -1690,9 +1735,14 @@ def build_routing_tools(node) -> dict:
         if notes_dir is None:
             return "ERROR: notes_dir not set (run_dir missing from state)."
         bare = Path(path).name
-        if not bare.endswith(".md"):
-            bare = bare + ".md"
-        target = Path(notes_dir) / bare
+        if bare.endswith(".ipynb"):
+            if study_dir is None:
+                return prefix + "ERROR: study_dir not set — cannot write .ipynb."
+            target = Path(study_dir).resolve() / bare
+        else:
+            if not bare.endswith(".md"):
+                bare = bare + ".md"
+            target = Path(notes_dir) / bare
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(body, encoding="utf-8")
         return prefix + f"Written: {target}"
@@ -1957,6 +2007,7 @@ def build_routing_tools(node) -> dict:
         "Delegate": Delegate,
         "GetStatus": GetStatus,
         "CancelDelegation": CancelDelegation,
+        "Wait": Wait,
         "Reply": Reply,
         "FollowUp": FollowUp,
         "RecallStore": RecallStore,

@@ -607,8 +607,19 @@ class AgenticRun:
                     })
                 except Exception:  # noqa: BLE001
                     log.warning("resume state refresh failed", exc_info=True)
+            _needs_jup = any(
+                getattr(a, "needs_jupyter_server", False)
+                for a in self._graph_spec.nodes.values()
+            )
+            if _needs_jup:
+                from .notebook_server import JupyterServer as _JS
+                _jup_ctx = _JS()
+            else:
+                from contextlib import nullcontext as _nc
+                _jup_ctx = _nc()
             try:
-                result = graph.invoke(graph_input, config=config)
+                with _jup_ctx:
+                    result = graph.invoke(graph_input, config=config)
             except BaseException as _exc:  # noqa: BLE001
                 # Any unhandled crash (GraphRecursionError, KeyboardInterrupt,
                 # OOM, …): record a resumable status so resume_from is always
@@ -880,10 +891,14 @@ class AgenticRun:
         adapter_cls = get_adapter_class(backend)
         native = adapter_cls.select_native_tools(agent.tools)
 
-        # The notebook is authored via the structured AddPipelineCell /
-        # SetNotebookIntro closures (pure nbformat) — no live Jupyter server.
         _mcp = dict(getattr(agent, "mcp_servers", {}))
         _allowed = list(getattr(agent, "extra_allowed_tools", frozenset()))
+        if getattr(agent, "needs_jupyter_server", False):
+            from .notebook_server import get_jupyter_mcp_config
+            try:
+                _mcp["jupyter"] = get_jupyter_mcp_config()
+            except RuntimeError:
+                pass  # no server running (unit test / dry-run)
 
         adapter = adapter_cls(
             model=model,

@@ -984,6 +984,7 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                 if d in self._registry
             }
         with self._notifications_lock:
+            _pending_notifs = list(self._notifications)
             self._notifications.clear()
 
         # ── No-canonical-source nudge (soft, ≤3×) ─────────────────────────
@@ -1033,9 +1034,11 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                 backlog_announce = [{"role": "user", "content": _bl}]
             self._backlog_announced = True
 
+        _notif_msgs = [{"role": "user", "content": n} for n in _pending_notifs]
         messages = (
             _to_adapter_messages(state["messages"])
             + budget_warnings + registration_nudge + backlog_announce
+            + _notif_msgs
         )
         # DEBUG: stream this strategizer turn's full reasoning + tool-calls
         # to debug/transcripts/strategizer/turn_NNN.jsonl.

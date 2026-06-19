@@ -373,9 +373,19 @@ class StrategizerAgent(Agent):
     system_prompt = STRATEGIZER_SYSTEM_PROMPT
     tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
                        "WriteDeliverable", "CheckDeliverable",
-                       "SetNotebookIntro", "AddPipelineCell"})
+                       "SetNotebookIntro", "AddPipelineCell", "Wait"})
     reset_on_checkpoint = False
     role = "strategizer"
+    needs_jupyter_server = True
+    mcp_servers: dict = {"jupyter": {"command": "uvx", "args": ["jupyter-mcp-server"]}}
+    extra_allowed_tools: frozenset = frozenset({
+        "mcp__jupyter__use_notebook",
+        "mcp__jupyter__insert_cell",
+        "mcp__jupyter__execute_cell",
+        "mcp__jupyter__read_notebook",
+        "mcp__jupyter__read_cell",
+        "mcp__jupyter__list_notebooks",
+    })
     description = (
         "Orchestrates the run: forms hypotheses, plans delegations, "
         "synthesises evidence into a final conclusion. Entry node."
