@@ -8,7 +8,10 @@ Topology:
     datagenerator → literature_reviewer
 """
 
+import os
 import shutil
+import threading
+import time
 from pathlib import Path
 
 from f3dasm.agentic import (
@@ -23,7 +26,8 @@ from f3dasm.agentic import (
 )
 
 STUDY_DIR = Path(__file__).parent
-BUDGET_SECONDS = 15 * 60  # 15 minutes
+BUDGET_SECONDS = 45 * 60  # 45 minutes
+WATCHDOG_SECONDS = 60 * 60
 MODEL = "claude-haiku-4-5-20251001"
 
 # ── clean previous artifacts ──────────────────────────────────────────────────
@@ -57,8 +61,18 @@ graph = Graph(
     entry="strategizer",
 )
 
+def _watchdog() -> None:
+    time.sleep(WATCHDOG_SECONDS)
+    print(
+        f"\nWATCHDOG: run exceeded {WATCHDOG_SECONDS}s wall-clock — force-exiting.",
+        flush=True,
+    )
+    os._exit(2)
+
+
 # ── run ───────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    threading.Thread(target=_watchdog, daemon=True).start()
     result = AgenticRun(
         study_dir=STUDY_DIR,
         graph=graph,

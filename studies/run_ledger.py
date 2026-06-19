@@ -53,6 +53,7 @@ def extract(run_dir: Path) -> dict:
     # outcome
     status_f = debug / "run_status.json"
     sol = run_dir.parent.parent / "solution.md"
+    nb = run_dir.parent.parent / "pipeline.ipynb"
     if status_f.exists():
         try:
             row["outcome"] = json.loads(status_f.read_text()).get(
@@ -68,6 +69,14 @@ def extract(run_dir: Path) -> dict:
         row["outcome"] = "UNGATED"
     elif sol.exists():
         row["outcome"] = "GATED"
+    elif nb.exists():
+        # Notebook deliverable: stamped = gate passed (GATED), absent stamp = FAILED
+        try:
+            import nbformat as _nbf
+            _nb = _nbf.read(str(nb), as_version=4)
+            row["outcome"] = "GATED" if _nb.metadata.get("agentic", {}).get("run") else "FAILED"
+        except Exception:
+            row["outcome"] = "FAILED"
     else:
         row["outcome"] = "no_solution"
 
@@ -92,7 +101,7 @@ def extract(run_dir: Path) -> dict:
               and r.get("_source") != "precomputed_pool"]
         row["mean_wall_ms"] = round(sum(wm) / len(wm), 3) if wm else ""
 
-    # tokens / cost / wall from solution.md metadata
+    # tokens / cost / wall from solution.md or pipeline.ipynb metadata
     if sol.exists():
         t = sol.read_text()
         row["input_tokens"] = _solution_field(t, "input_tokens").replace(",", "")
@@ -100,6 +109,21 @@ def extract(run_dir: Path) -> dict:
             t, "output_tokens").replace(",", "")
         row["cost_usd"] = _solution_field(t, "estimated_cost").lstrip("$")
         row["time_used"] = _solution_field(t, "time_used")
+    elif nb.exists():
+        try:
+            import nbformat as _nbf
+            _nb = _nbf.read(str(nb), as_version=4)
+            # Token usage cell is the last markdown cell appended by agent_runtime
+            for _c in reversed(_nb.cells):
+                if _c.cell_type == "markdown" and "## Token usage" in _c.source:
+                    _t = _c.source
+                    row["input_tokens"] = _solution_field(_t, "input_tokens").replace(",", "")
+                    row["output_tokens"] = _solution_field(_t, "output_tokens").replace(",", "")
+                    row["cost_usd"] = _solution_field(_t, "estimated_cost").lstrip("$")
+                    row["time_used"] = _solution_field(_t, "time_used")
+                    break
+        except Exception:
+            pass
 
     # milestones
     ms = debug / "strategizer_notes" / "milestones.json"

@@ -669,7 +669,7 @@ class AgenticRun:
             f"## Run metadata\n\n"
             f"- timestamp: {now_ts}\n"
             f"- model: {self._model}\n"
-            f"- total_delegations: {result.get('total_delegations', 0)}\n"
+            f"- total_delegations: {len(delegation_log.query_all())}\n"
             f"- evals_used: {evals}\n"
             f"- run_dir: {run_dir}\n"
             f"- time_used: {h:02d}:{m:02d}:{s:02d}\n\n"

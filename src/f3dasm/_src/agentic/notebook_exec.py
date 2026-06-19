@@ -102,6 +102,16 @@ def notebook_deliverable_spec(role: str = "strategizer") -> str:
         "- LAZY + reproducible: the runtime executes the notebook against the\n"
         "  shipped ledger and requires ZERO new oracle evals + the REPRODUCED line\n"
         "  grounded in the ledger. Reach the oracle ONLY via get_evaluator().\n"
+        "- NEVER call data.store() after evaluator.call(). The InstrumentedDataGenerator\n"
+        "  behind get_evaluator() already writes FINISHED rows to the canonical store.\n"
+        "  Calling data.store() afterwards overwrites those FINISHED rows with\n"
+        "  IN_PROGRESS — silently corrupting the ledger. Reload if you need the\n"
+        "  updated outputs: ExperimentData.from_file(project_dir=canonical_store).\n"
+        "- GUARD OPTIONAL IMPORTS. Heavy packages (torch, botorch, gpytorch, jax)\n"
+        "  are NOT guaranteed to be installed. An unconditional 'import torch' at the\n"
+        "  top of a cell causes returncode=1 and forces a gate-bounce correction\n"
+        "  delegation. Always guard: 'import importlib.util; if\n"
+        "  importlib.util.find_spec(\"torch\") is None: # use sklearn/scipy fallback'.\n"
         "</deliverable_format>\n"
     )
 

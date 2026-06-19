@@ -344,3 +344,97 @@ def test_cancel_single_shot_when_no_ledgered_evals(tmp_path):
     out = n.adapter.closure_tools["CancelDelegation"]("D003")
     assert n._registry["D003"]["status"] == "Cancelled"
     assert "HOLD" not in out
+
+
+def test_ghost_delegation_flushed_interrupted_at_run_close(tmp_path):
+    """Working delegation at run-close gets an INTERRUPTED record in the log.
+
+    Root cause: daemon threads are killed at process exit before they write
+    their DONE entry, leaving a ghost RUNNING entry. The close path must flush
+    an INTERRUPTED terminal record for every still-Working entry so
+    query_all() (last-wins) collapses to a closed state rather than RUNNING.
+
+    The adapter bypasses Done() and sets _route["kind"] = "done" directly —
+    reproducing the pre-fix scenario where Done() accepted without first
+    checking for still-running delegations.
+    """
+    import time as _t
+
+    from f3dasm._src.agentic.backends.base import Agent, Edge, Graph
+    from f3dasm._src.agentic.delegation_log import DelegationLog
+
+    run_dir = tmp_path / "runs" / "T0"
+    (run_dir / "debug" / "strategizer_notes").mkdir(parents=True)
+    # pipeline.ipynb must exist so _missing_deliverables() doesn't block close
+    _write_nb(tmp_path, "print('REPRODUCED: 1.0')")
+
+    dlog_path = run_dir / "debug" / "delegation_log.jsonl"
+    dlog = DelegationLog(dlog_path)
+
+    class A(Agent):
+        role = "strategizer"
+        tools = frozenset({"Done", "WriteDeliverable", "CheckDeliverable"})
+        description = "strategizer"
+
+    class B(Agent):
+        role = "implementer"
+        description = "implementer"
+
+    spec = Graph(
+        nodes={"strategizer": A(), "implementer": B()},
+        edges=(Edge("strategizer", "implementer"),), entry="strategizer",
+    )
+
+    class _BypassDoneAdapter(_Stub):
+        """Simulates the pre-fix scenario: closes without checking _working_now."""
+        _node_ref = None
+
+        def invoke(self, messages):
+            # Set route directly — bypasses Done()'s soft nudge for Working
+            # delegations (which didn't exist at the time of the original bug).
+            self._node_ref._route["kind"] = "done"
+            self._node_ref._route["summary"] = "test close"
+            return "Done."
+
+    adapter = _BypassDoneAdapter()
+    n = StrategizerNode(
+        adapter, name="strategizer", outgoing=["implementer"], spec=spec,
+        worker_adapters={"implementer": _Stub()},
+        delegation_log=dlog, study_dir=str(tmp_path),
+    )
+    adapter._node_ref = n
+    n._current_notes_dir = run_dir / "debug" / "strategizer_notes"
+
+    # Seed the ghost: Working entry in the registry with no matching thread.
+    n._registry["D004"] = {
+        "status": "Working", "result": None, "evals": 0,
+        "target": "implementer", "hypothesis_ids": [],
+        "is_falsification_attempt": False, "phase": None,
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "start_time": _t.monotonic(),
+    }
+
+    n({
+        "messages": [],
+        "study_dir": str(tmp_path),
+        "done": False,
+        "last_report": None,
+        "total_delegations": 0,
+        "budget_seconds": None,
+        "budget_usd": None,
+        "run_dir": str(run_dir),
+        "eval_budget": None,
+        "evals_used": 0,
+        "start_time": _t.time(),
+        "return_to": None,
+        "required_deliverables": None,
+        "experiment_data_dir": str(run_dir / "experiment_data"),
+        "token_totals": None,
+        "error_counts": None,
+    })
+
+    entries = {e["id"]: e for e in dlog.query_all()}
+    assert "D004" in entries, "D004 missing from delegation log"
+    assert entries["D004"]["status"] == "INTERRUPTED", (
+        f"expected INTERRUPTED, got {entries['D004']['status']}"
+    )

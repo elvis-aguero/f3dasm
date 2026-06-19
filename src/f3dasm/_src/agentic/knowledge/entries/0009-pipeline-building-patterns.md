@@ -132,6 +132,25 @@ you like — just don't confuse it with the canonical ledger.
   `DataGenerator`, never the raw evaluator, never a redirected store. That one
   door is what makes the result ledgered and reproducible; see
   [[evaluate-through-get-evaluator]] and [[surrogates-are-off-ledger]].
+- **Never call `data.store()` after `evaluator.call()`**. The
+  `InstrumentedDataGenerator` behind `get_evaluator()` already writes FINISHED
+  rows into the canonical store inside each `flush()`. Calling `data.store()`
+  on the *local* `data` object afterwards overwrites those FINISHED rows with
+  IN_PROGRESS — corrupting job statuses silently. The canonical store is
+  write-only via `get_evaluator()`. If you need the updated outputs locally,
+  reload: `data = ExperimentData.from_file(project_dir=canonical_store)`.
+- **Never import a library without checking it is installed**. Heavy optional
+  packages (`torch`, `botorch`, `gpytorch`, `jax`) are NOT in the base
+  environment. Unconditionally importing them breaks the gate with a
+  `ModuleNotFoundError` and forces a correction delegation. Check first:
+  ```python
+  import importlib.util
+  if importlib.util.find_spec("torch") is None:
+      # fall back to sklearn / scipy
+  ```
+  or use `try/except ImportError`. Never write `import torch` at the top of a
+  notebook cell without a fallback — the gate runs in the same environment and
+  will fail if the package is absent.
 
 ## When the deliverable is a notebook (`pipeline.ipynb`)
 In notebook mode the single deliverable is `pipeline.ipynb` — the writeup AND the

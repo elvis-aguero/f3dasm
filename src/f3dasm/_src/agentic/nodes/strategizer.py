@@ -1145,6 +1145,43 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                 + summary
             )
 
+        # Flush ghost delegations: daemon threads that are still alive when the
+        # run closes are killed by the interpreter at process exit — their _run()
+        # never reaches the DONE/FAILED record write, leaving orphan RUNNING
+        # entries in the log. Write an INTERRUPTED terminal record for each so
+        # query_all() (last-wins) collapses to a closed state instead of RUNNING.
+        with self._registry_lock:
+            _live = [
+                (did, dict(entry))
+                for did, entry in self._registry.items()
+                if entry.get("status") in ("Working", "FollowUp")
+            ]
+        if _live and self._delegation_log is not None:
+            _now = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
+            for _did, _entry in _live:
+                self._delegation_log.record(
+                    id=_did,
+                    from_node=self._name,
+                    to_node=_entry.get("target", "unknown"),
+                    task="",
+                    deliverable=(
+                        "INTERRUPTED: run closed while this delegation was "
+                        "still running (background thread killed at process exit)"
+                    ),
+                    hypothesis_ids=_entry.get("hypothesis_ids") or [],
+                    started_at=_entry.get("started_at") or "",
+                    completed_at=_now,
+                    status="INTERRUPTED",
+                    tokens_in=0,
+                    tokens_out=0,
+                    cost_usd=None,
+                    is_falsification_attempt=bool(
+                        _entry.get("is_falsification_attempt")
+                    ),
+                    evals=_entry.get("evals", 0),
+                    phase=_entry.get("phase"),
+                )
+
         return Command(
             goto=END,
             update={
