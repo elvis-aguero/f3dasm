@@ -158,8 +158,22 @@ PREFER f3dasm primitives over raw numpy/scipy equivalents.
   # store with ExperimentData.from_file(); write your own only elsewhere.
 
 ─── INITIAL SPACE-FILLING DESIGN (DoE-execution) ───────────────────────
-  # You execute the initial design: sample + evaluate (see core idioms above
-  # for the verified create_sampler/sampler.call form).
+  # BUILD A FRESH DOMAIN — never reuse the domain from the canonical store.
+  # ExperimentData.from_file() is for reading existing evaluations; its
+  # domain carries column declarations, NOT necessarily the correct bounds.
+  # Always construct the domain from the problem description:
+  #   domain = Domain()
+  #   for name in ("x1", "x2", "x3"):
+  #       domain.add_float(name, -5.0, 5.0)
+  #   domain.add_output("f")
+  # then build fresh data: data = ExperimentData(domain=domain)
+  # Using loaded_data.domain for a new sampler call may silently produce
+  # 0 new samples if the bounds are missing (no error — silent no-op).
+  #
+  # MODULE PATHS: use 'from f3dasm import ExperimentData, create_sampler'
+  # There is NO f3dasm.sampling submodule — 'from f3dasm.sampling import ...'
+  # raises ModuleNotFoundError. No private APIs either: no _to_dataframe(),
+  # no _input_data, no data._src — use to_numpy() and to_pandas() only.
   data = ExperimentData(domain=d)
   sampler = create_sampler("latin_sampler", seed=0)
   data = sampler.call(data=data, n_samples=500)
