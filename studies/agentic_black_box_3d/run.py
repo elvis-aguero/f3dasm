@@ -36,6 +36,27 @@ MODEL = "claude-haiku-4-5-20251001"
 # Sonnet for the orchestrator A/B; reverted to Haiku for the notebook e2e.)
 STRATEGIZER_MODEL = None
 
+# ── dirty-tree guard ─────────────────────────────────────────────────────────
+# The ledger stamps the current git SHA as provenance; a dirty working tree
+# means that SHA cannot reproduce this run.
+import subprocess as _sp
+
+_dirty = _sp.run(
+    ["git", "status", "--porcelain"],
+    capture_output=True,
+    text=True,
+    cwd=str(STUDY_DIR),
+).stdout.strip()
+if _dirty:
+    print(
+        "ERROR: uncommitted changes detected — refusing to start.\n"
+        "Commit or stash all changes before launching a run.\n"
+        f"\n{_dirty}",
+        flush=True,
+    )
+    raise SystemExit(1)
+del _sp, _dirty
+
 # ── clean previous artifacts ──────────────────────────────────────────────────
 for path in [
     STUDY_DIR / "runs",
