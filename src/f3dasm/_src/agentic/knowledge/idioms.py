@@ -35,7 +35,9 @@ trust these over any remembered signature):
     data = sampler.call(data=data, n_samples=8)
 
     # Read arrays: to_numpy() takes NO argument and returns (X, y) as a tuple.
-    # NOT data.to_numpy("input").
+    # NOT data.to_numpy("input"). Use X, y = ... or _, y = ... for discard.
+    # NEVER write `from f3dasm import _` — `_` is Python discard syntax, not
+    # an f3dasm export. It will raise ImportError.
     X, y = data.to_numpy()
 
     # Wrap proposed candidate points (e.g. from an acquisition function) into
