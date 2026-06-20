@@ -158,6 +158,43 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         self.adapter.closure_tools.update(self._build_routing_closures())
         self.adapter.route_watcher = lambda: self._route.get("kind") == "done"
 
+    # ── Authoritative delegation status (audit BF-0) ─────────────────────────
+    # The persistent delegation_log owns existence + terminal status: it
+    # survives node reconstruction and background threads write their terminal
+    # DONE/FAILED record to it. The in-memory _registry is ONLY a cache of live
+    # execution state (threads, streamed results) and can lag or be rebuilt
+    # empty — so any "does D exist / is it terminal" question reads the log.
+    def _log_status(self, delegation_id: str) -> tuple[str | None, str]:
+        """Return (status, deliverable) for *delegation_id* from the persistent
+        log, or (None, "") if the log has no such delegation."""
+        if self._delegation_log is None:
+            return None, ""
+        for r in self._delegation_log.query_all():
+            if r.get("id") == delegation_id:
+                return r.get("status"), (r.get("deliverable") or "")
+        return None, ""
+
+    def _pending_delegations(self) -> list[str]:
+        """In-flight delegations, reconciled against the authoritative log.
+
+        A delegation the log shows terminal (DONE/FAILED) is never reported
+        pending, even if the in-memory cache still says "Working". That stale
+        state is what made Done()'s liveness gate refuse forever and kill run4
+        by watchdog after it had already found the optimum (audit BF-0/BF-2).
+        """
+        with self._registry_lock:
+            pending = [
+                d for d, e in self._registry.items()
+                if e.get("status") == "Working"
+            ]
+        if self._delegation_log is not None:
+            terminal = {
+                r["id"] for r in self._delegation_log.query_all()
+                if r.get("status") in ("DONE", "FAILED")
+            }
+            pending = [d for d in pending if d not in terminal]
+        return pending
+
     def _find_datagenerator_name(self) -> str | None:
         """Name of the first connected datagenerator worker, or None.
 

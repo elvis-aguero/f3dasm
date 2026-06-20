@@ -1015,6 +1015,21 @@ def build_routing_tools(node) -> dict:
         with node._registry_lock:
             entry = node._registry.get(delegation_id)
             if entry is None:
+                # Cache miss: consult the authoritative log. The in-memory
+                # registry can be rebuilt empty after a node reconstruction
+                # while the log retains every delegation — this is the
+                # "Known IDs: []" symptom (audit BF-0).
+                _lstatus, _ldeliv = node._log_status(delegation_id)
+                if _lstatus == "DONE":
+                    return prefix + f"Done\n\n{_ldeliv}"
+                if _lstatus == "FAILED":
+                    return prefix + f"Errored:\n{_ldeliv}"
+                if _lstatus == "RUNNING":
+                    return prefix + (
+                        "Working (still running; live progress is unavailable "
+                        "after a session rebuild — re-poll shortly and the "
+                        "result will appear here when it completes)"
+                    )
                 known = list(node._registry)
                 return (
                     prefix +
@@ -1315,11 +1330,12 @@ def build_routing_tools(node) -> dict:
         for sequential execution.
         """
         prefix = node._drain_notifications()
-        with node._registry_lock:
-            pending = [
-                did for did, e in node._registry.items()
-                if e["status"] == "Working"
-            ]
+        # Liveness reconciled against the authoritative persistent log: a
+        # delegation the log shows terminal is never "pending", so a stale
+        # in-memory cache can no longer make Done() refuse forever (audit
+        # BF-0/BF-2: the run4 deadlock, where a finished delegation read
+        # "Working" until the watchdog killed the run UNGATED).
+        pending = node._pending_delegations()
         if pending:
             # Soft nudge (NOT an "ERROR:" return, so it isn't counted as a
             # tool error): closing now is premature, but offer the three real
