@@ -110,6 +110,8 @@ def notebook_deliverable_spec(role: str = "strategizer") -> str:
         "  at the top of that cell: `canonical_store = os.environ['F3DASM_CANONICAL_STORE']`.\n"
         "  Do NOT rely on a variable set in a previous cell — the gate re-executes cells\n"
         "  independently and a failed earlier cell can leave later ones without the variable.\n"
+        "  NEVER use `__file__` as a fallback — `__file__` is undefined in Jupyter kernels\n"
+        "  and raises NameError. Use `os.environ['F3DASM_CANONICAL_STORE']` only (no default).\n"
         "- The four pillar cells (doe/data_generation/ml/optimization) are ALWAYS\n"
         "  present. A pillar you did NOT run stays present but its explainer says\n"
         "  plainly 'NOT executed (budget)'. Never silently drop a pillar.\n"
