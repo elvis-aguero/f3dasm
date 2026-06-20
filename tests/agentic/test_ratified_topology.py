@@ -300,6 +300,21 @@ def test_strategizer_implementer_owns_all_evaluation():
 # 6. Implementer prompt: merged scope coverage
 # ---------------------------------------------------------------------------
 
+def test_strategizer_prompt_uses_verified_read_api():
+    """Audit BF-4: the strategizer authors pipeline.ipynb, so its inline f3dasm
+    examples must use the verified API — not the non-existent forms
+    data.sample(...) / to_numpy("output") / get_n_best_output(name, n=) /
+    create_sampler("lhs"). Verified against the installed f3dasm.
+    """
+    from f3dasm._src.agentic.agents.strategizer import STRATEGIZER_SYSTEM_PROMPT
+    p = STRATEGIZER_SYSTEM_PROMPT
+    assert "data.sample(" not in p
+    assert 'to_numpy("output")' not in p
+    assert 'get_n_best_output("' not in p   # name-first arg order is wrong
+    assert 'sampler="lhs"' not in p
+    assert "create_sampler" in p
+
+
 def test_implementer_prompt_covers_sampling():
     from f3dasm._src.agentic.agents.implementer import IMPLEMENTER_SYSTEM_PROMPT
     # Verified sampling API (create_sampler -> Block.call), injected via

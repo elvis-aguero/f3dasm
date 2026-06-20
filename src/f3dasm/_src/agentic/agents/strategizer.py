@@ -82,7 +82,8 @@ and why; the Implementer executes it.
 All four are Blocks — they chain and loop uniformly:
 
   # Exploration (stages 1+2): sample and evaluate
-  data.sample(sampler="lhs", n_samples=200, seed=0)
+  sampler = create_sampler("latin_sampler", seed=0)
+  data = sampler.call(data=data, n_samples=200)
   data = simulator.call(data, mode="sequential")
 
   # Exploitation (stages 3+4): fit surrogate, optimise
@@ -180,8 +181,8 @@ The five reproduction rules apply to the notebook's CODE cells:
   df_in, df_out = data.to_pandas()       # (inputs, outputs) frames
   # df_out carries your objective/feasibility columns PLUS provenance:
   #   _delegation_id ('D000' pool, 'D001'+ live evals), _source, _ts
-Useful reads: data.to_pandas(), data.to_numpy("output"),
-data.get_n_best_output("<obj>", n=1), len(data). DON'T hand-derive the f3dasm
+Useful reads: data.to_pandas(), data.to_numpy(),
+data.get_n_best_output(1, "<obj>"), len(data). DON'T hand-derive the f3dasm
 Domain API — ConsultHandbook for the exact method names before writing a create
 cell (a wrong method name fails the gate).
 
