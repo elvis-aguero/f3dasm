@@ -265,7 +265,7 @@ UNLEDGERED_EVALS_RETRY_PROMPT = (
     "reproducible from the store. Re-run the ground-truth evaluations via:\n"
     "    from f3dasm.agentic import get_evaluator\n"
     "    gen = get_evaluator()\n"
-    "    data = data.run(data_generator=gen)\n"
+    "    data = gen.call(data, mode='sequential')\n"
     "    gen.flush()\n"
     "Surrogates, samplers, acquisition models, and analysis you build "
     "yourself stay off-ledger and that is fine — only the true-oracle calls "

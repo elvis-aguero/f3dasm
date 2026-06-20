@@ -470,9 +470,10 @@ _ORACLE_NUDGE_MESSAGE = (
     "ledger, so any number they produce cannot anchor the headline — "
     "pipeline.ipynb will fail to reproduce it and the critic will reject the "
     "run. Reach the true oracle ONLY via:  from f3dasm.agentic import "
-    "get_evaluator; gen = get_evaluator(); data = data.run(data_generator="
-    "gen); gen.flush().  Surrogates/optimisers/acquisition models you build "
-    "yourself stay off-ledger and that is fine — only true-oracle calls must "
+    "get_evaluator; gen = get_evaluator(); data = gen.call(data, "
+    "mode='sequential'); gen.flush().  Surrogates/optimisers/acquisition "
+    "models you build yourself stay off-ledger and that is fine — only "
+    "true-oracle calls must "
     "go through get_evaluator()."
 )
 

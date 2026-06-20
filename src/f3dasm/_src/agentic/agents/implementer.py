@@ -122,8 +122,8 @@ PREFER f3dasm primitives over raw numpy/scipy equivalents.
   from f3dasm.agentic import get_evaluator
 
   gen = get_evaluator()                 # resolves the registered oracle
-  data = data.run(data_generator=gen)   # or gen.call(data, mode=...)
-  gen.flush()                           # flush buffered rows at end
+  data = gen.call(data, mode="sequential")   # the one oracle door
+  gen.flush()                                # flush buffered rows at end
 
   # get_evaluator() reads run_config.json automatically, stamps provenance,
   # and meters every call into the ground-truth ledger. NEVER import or call a

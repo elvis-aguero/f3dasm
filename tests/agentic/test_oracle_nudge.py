@@ -38,7 +38,7 @@ class TestDetector:
     # ---- must NOT fire on the correct path or innocent text ----------------
     def test_silent_on_get_evaluator(self):
         cmd = ("from f3dasm.agentic import get_evaluator\n"
-               "gen = get_evaluator()\ndata = data.run(data_generator=gen)\n"
+               "gen = get_evaluator()\ndata = gen.call(data, mode='sequential')\n"
                "gen.flush()")
         assert detect_raw_oracle_access("Bash", {"command": cmd}) is None
 
@@ -153,3 +153,43 @@ class TestNudgeFiringsAreLogged:
         assert b.events
         b.reset()
         assert b.events == []
+
+
+class TestCorrectPathApiIsReal:
+    """Regression (audit BF-5): the get_evaluator() guidance agents are shown
+    must use the REAL call form, never ``ExperimentData.run(data_generator=...)``
+    — verified absent from the installed f3dasm (DataGenerator.call(data,
+    mode=...) is the only door). The broken form had propagated into the
+    raw-oracle nudge, the unledgered-evals retry prompt, the implementer
+    system prompt, and handbook entry 0001.
+    """
+
+    def test_nudge_message_uses_real_api(self):
+        from f3dasm._src.agentic.backends.base import _ORACLE_NUDGE_MESSAGE
+        assert "data.run(" not in _ORACLE_NUDGE_MESSAGE
+        assert "gen.call(" in _ORACLE_NUDGE_MESSAGE
+
+    def test_unledgered_retry_prompt_uses_real_api(self):
+        from f3dasm._src.agentic.agent_prompts import (
+            UNLEDGERED_EVALS_RETRY_PROMPT,
+        )
+        assert "data.run(" not in UNLEDGERED_EVALS_RETRY_PROMPT
+        assert "gen.call(" in UNLEDGERED_EVALS_RETRY_PROMPT
+
+    def test_implementer_prompt_uses_real_api(self):
+        from f3dasm._src.agentic.agents.implementer import (
+            IMPLEMENTER_SYSTEM_PROMPT,
+        )
+        assert "data.run(" not in IMPLEMENTER_SYSTEM_PROMPT
+
+    def test_handbook_entry_uses_real_api(self):
+        from pathlib import Path
+
+        import f3dasm._src.agentic.knowledge as _kb
+        entry = (
+            Path(_kb.__file__).parent
+            / "entries" / "0001-evaluate-through-get-evaluator.md"
+        )
+        text = entry.read_text(encoding="utf-8")
+        assert "data.run(" not in text
+        assert "gen.call(" in text

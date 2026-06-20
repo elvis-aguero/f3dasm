@@ -13,7 +13,7 @@ reproducible from the store.
 ```python
 from f3dasm.agentic import get_evaluator
 gen = get_evaluator()
-data = data.run(data_generator=gen)
+data = gen.call(data, mode="sequential")
 gen.flush()
 ```
 
