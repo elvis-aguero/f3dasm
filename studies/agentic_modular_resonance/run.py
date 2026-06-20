@@ -40,9 +40,9 @@ for path in [
     STUDY_DIR / "replicate.py",
 ]:
     if path.is_dir():
-        shutil.rmtree(path)
+        shutil.rmtree(path, ignore_errors=True)
     elif path.exists():
-        path.unlink()
+        path.unlink(missing_ok=True)
 
 # ── graph ─────────────────────────────────────────────────────────────────────
 graph = Graph(
