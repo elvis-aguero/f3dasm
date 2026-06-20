@@ -35,6 +35,7 @@ from filelock import FileLock
 
 from ..core import DataGenerator
 from ..design.domain import Domain
+from ..design.parameter import Parameter
 from ..errors import EmptyFileError, ReachMaximumTriesError
 from ..experimentdata import ExperimentData
 from ..experimentsample import ExperimentSample, JobStatus
@@ -219,8 +220,25 @@ class InstrumentedDataGenerator(DataGenerator):
     # ------------------------------------------------------------------
 
     def _build_batch_domain(self) -> Domain:
-        """Build a Domain that covers inner outputs + provenance cols."""
+        """Build a Domain that covers inner inputs + outputs + provenance cols.
+
+        Input columns are declared as base Parameter() (no bounds). This is
+        intentional: the batch domain is merged with the canonical store's
+        domain on every flush, which already carries the correct typed
+        parameters (ContinuousParameter with bounds, etc.). Declaring the
+        input keys here ensures that on the very first flush — when no
+        canonical store exists yet — the written domain.json at least has
+        the input column names, preventing a later from_file() load from
+        silently omitting them and causing samplers to no-op without error.
+        """
         d = Domain()
+        # Declare input columns (base Parameter — bounds come from the
+        # canonical domain on merge, not from this batch).
+        all_input_keys: set[str] = set()
+        for sample in self._buffer:
+            all_input_keys.update(sample._input_data.keys())
+        for key in sorted(all_input_keys):
+            d._add(key, Parameter())
         # Collect all output keys from the buffer.
         all_keys: set[str] = set()
         for sample in self._buffer:
