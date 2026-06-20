@@ -60,6 +60,16 @@ trust these over any remembered signature):
     # After outputs exist, best-N by an output column:
     #   best = data.get_n_best_output(5, "y")   # (n_samples, output_name)
 
+    # sklearn GaussianProcessRegressor: does NOT accept n_jobs (parallelism kwarg).
+    # Correct signature — only these kwargs are valid:
+    #   from sklearn.gaussian_process import GaussianProcessRegressor
+    #   from sklearn.gaussian_process.kernels import Matern
+    #   gpr = GaussianProcessRegressor(
+    #       kernel=Matern(nu=2.5), n_restarts_optimizer=5, alpha=1e-6,
+    #       normalize_y=True, random_state=0,
+    #   )
+    # WRONG: GaussianProcessRegressor(..., n_jobs=4)  → TypeError
+
     # @datagenerator: return SCALARS, not dicts.
     # output_names=['y'] already maps name→value; return the value directly.
     #   CORRECT:   @datagenerator(output_names=['y'])
