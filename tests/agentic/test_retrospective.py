@@ -41,6 +41,47 @@ class TestSectionExtractor:
         assert not re.search(r"CONSISTENCY:\s*flagged", ok, re.I)
 
 
+class TestReportValidationUsesAgentSections:
+    """Audit BF-10: the worker report validator must check each agent against
+    ITS OWN declared sections, not the implementer-shaped default. worker.py
+    used to call _classify_response(text) with no sections, so a correct critic
+    report (Findings/Verdict, no Conclusions/Files touched) was flagged
+    malformed and handed the implementer retry prompt (the routing.py Delegate
+    path already passed report_sections; worker.py did not — the O40 asymmetry).
+    """
+
+    _CRITIC_REPORT = (
+        "## Report\n\n### Actions taken\n- read\n\n### Findings\n- none\n\n"
+        "### Verdict\nPASS\n\n### Numbers\nverdict: PASS\n\n"
+        "### Retrospective\n- CONSISTENCY: ok\n- DECISION: x\n- FRICTION: none\n"
+        "- BLOCKED: none\n"
+    )
+
+    def test_correct_critic_report_passes_against_its_own_sections(self):
+        from f3dasm._src.agentic.agents.critic import AdversarialCritiqueAgent
+        from f3dasm._src.agentic.nodes.parsing import _classify_response
+        sections = list(AdversarialCritiqueAgent.report_sections)
+        assert _classify_response(self._CRITIC_REPORT, sections) is None
+
+    def test_same_report_wrongly_flagged_by_implementer_default(self):
+        from f3dasm._src.agentic.nodes.parsing import _classify_response
+        # The default (implementer-shaped) demands Conclusions/Files touched,
+        # which a critic never emits — the misclassification BF-10 prevents.
+        assert _classify_response(self._CRITIC_REPORT) is not None
+
+    def test_worker_node_stores_report_sections(self):
+        from f3dasm._src.agentic.nodes.worker import WorkerNode
+
+        class _Adapter:
+            def __init__(self):
+                self.closure_tools = {}
+                self.native_tools = []
+
+        node = WorkerNode(_Adapter(), name="critic",
+                          report_sections=("### Findings", "### Verdict"))
+        assert node._report_sections == ("### Findings", "### Verdict")
+
+
 class TestPromptsCarryRetrospective:
     def test_implementer_claude_prompt(self):
         from f3dasm._src.agentic.agents.implementer import (

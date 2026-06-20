@@ -56,7 +56,7 @@ def build_graph(
     # ONE adapter per named node — shared across all orchestrating nodes.
     node_adapters = {n: make_adapter(n, spec.nodes[n]) for n in spec.nodes}
 
-    for name, _agent in spec.nodes.items():
+    for name, agent in spec.nodes.items():
         adapter = node_adapters[name]  # shared instance, NOT make_adapter() again
         outgoing = spec.outgoing(name)
 
@@ -85,6 +85,7 @@ def build_graph(
                 workspace_dir=workspace_dir,
                 delegation_log=delegation_log,
                 name=name,
+                report_sections=getattr(agent, "report_sections", None),
             )
 
         builder.add_node(name, node)

@@ -28,9 +28,16 @@ class WorkerNode(AgentNode):
         workspace_dir: Any = None,
         delegation_log: DelegationLog | None = None,
         name: str = "worker",
+        report_sections: tuple[str, ...] | None = None,
     ) -> None:
         super().__init__(adapter)
         self._name = name
+        # This agent's declared report sections (e.g. the critic's
+        # Findings/Verdict, not the implementer's Conclusions/Files touched).
+        # Used to validate the worker's report against ITS OWN contract instead
+        # of the implementer-shaped default — otherwise a correct critic or
+        # literature report is wrongly flagged malformed (audit BF-10/O40).
+        self._report_sections = report_sections
         self._delegation_log = delegation_log
         self._evals_reported: dict = {}
         self._workspace_dir = Path(workspace_dir) if workspace_dir else None
@@ -128,7 +135,10 @@ class WorkerNode(AgentNode):
         messages = _to_adapter_messages(state["messages"])
         text = self.adapter.invoke(messages)
 
-        diagnosis = _classify_response(text)
+        diagnosis = _classify_response(
+            text,
+            list(self._report_sections) if self._report_sections else None,
+        )
         if diagnosis is not None:
             # One retry with correction prompt
             retry_messages = messages + [
