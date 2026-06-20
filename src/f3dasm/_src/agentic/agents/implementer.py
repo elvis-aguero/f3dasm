@@ -195,10 +195,20 @@ PREFER f3dasm primitives over raw numpy/scipy equivalents.
   #  f3dasm.create_optimizer(name, data_generator=get_evaluator(),
   #  output_name=..., input_name=...) — confirm its signature before use.)
 
+  # EVAL BUDGET GUARD: read remaining budget from the task brief and cap
+  # n_bo_steps (and any gradient-based optimizer's maxiter/max_nfev) so
+  # total metered calls cannot exceed it. For gradient methods (L-BFGS-B,
+  # Nelder-Mead, scipy.optimize.minimize), each iteration consumes multiple
+  # oracle calls via finite-difference gradient estimation (~4–6 per step);
+  # multiply maxiter × n_starts by this factor and compare against remaining.
+  # Example: if remaining = 200 and L-BFGS-B uses ~5 calls/iter,
+  #   max_iter = max(1, remaining // (n_starts * 5))
+  # Cap BEFORE entering the loop — `if budget_remaining <= 0: return` at the top.
+
   # PATTERN B — sklearn GP with Expected Improvement (BO):
   import numpy as np
   evaluator = get_evaluator()
-  for _ in range(n_bo_steps):
+  for _ in range(n_bo_steps):  # n_bo_steps must be computed from remaining budget
       x_next = propose_ei(gp, X_train, y_train.min(), bounds)  # shape (d,)
       # Wrap the proposed point as ExperimentData (verified idiom above):
       samp = {0: ExperimentSample(_input_data={
