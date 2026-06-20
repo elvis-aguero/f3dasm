@@ -39,6 +39,10 @@ trust these over any remembered signature):
     # NEVER write `from f3dasm import _` — `_` is Python discard syntax, not
     # an f3dasm export. It will raise ImportError.
     X, y = data.to_numpy()
+    # to_pandas() returns METADATA columns (_delegation_id, _source, _ts, _wall_ms)
+    # mixed into the output dataframe. df_out[col].astype(float) FAILS on these rows.
+    # For analysis / surrogate fitting, always use data.to_numpy() — it strips metadata
+    # and returns clean float arrays. Never use df_out[col].astype(float).
 
     # Wrap proposed candidate points (e.g. from an acquisition function) into
     # evaluatable ExperimentData. There is NO ExperimentData.from_numpy; build
