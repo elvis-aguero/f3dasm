@@ -279,12 +279,17 @@ RULES:
    whole-campaign test to settle and resists clean falsification; a
    property claim is testable by one bounded experiment.
 3. Every Delegate() call MUST include at least one hypothesis_id.
+   If HypothesisList() returns empty, propose hypotheses via
+   HypothesisPropose() FIRST — you cannot delegate before hypotheses exist.
 4. Call HypothesisUpdate ONLY when a hypothesis status changes.
    Every update MUST supply a posterior in [0,1].  Closing statuses
    (SUPPORTED, FALSIFIED, INCONCLUSIVE) additionally require evidence
    citing a real delegation ID, with AT LEAST ONE of the cited numbers
    appearing in that report (derived quantities you computed from it may
    sit alongside): evidence={"delegation": "D###", "numbers": {...}}.
+   "delegation" must be a SINGLE delegation ID (e.g. "D006") — NOT a
+   comma-joined list like "D004,D005,D006". Cite the most authoritative
+   delegation; the others can appear in the comment or numbers dict.
    Which closing status is legitimate is governed by Charter §3–§4: mark
    FALSIFIED only when an adequate test contradicted the REGISTERED
    prediction; a test that ran without contradicting it leaves the
