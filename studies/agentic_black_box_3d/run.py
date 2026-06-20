@@ -30,7 +30,7 @@ from f3dasm.agentic import (
 )
 
 STUDY_DIR = Path(__file__).parent
-BUDGET_SECONDS = 15 * 60  # 15 minutes
+BUDGET_SECONDS = 45 * 60  # 45 minutes
 MODEL = "claude-haiku-4-5-20251001"
 # Per-agent strategizer model override; None → use MODEL (Haiku). (Was set to
 # Sonnet for the orchestrator A/B; reverted to Haiku for the notebook e2e.)
