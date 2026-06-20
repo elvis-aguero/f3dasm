@@ -20,17 +20,23 @@ Three continuous inputs, each in [−5, 5]:
 
 ## Evaluator
 
-A pre-compiled evaluator lives in `workspace/`:
+The evaluator is registered with f3dasm. Access it exclusively through `get_evaluator()`:
 
 ```python
-import sys
-from pathlib import Path
-# study_dir is shown in your <workspace> preamble — use it to locate the evaluator
-sys.path.insert(0, str(Path(study_dir) / "workspace"))
-from evaluator import evaluate        # evaluate(x: list[float]) -> float
+from f3dasm.agentic import get_evaluator
+
+gen = get_evaluator()          # resolves the registered oracle
+gen.call(data, mode="sequential")  # evaluate and log to canonical store
+gen.flush()
 ```
 
-`evaluate(x)` takes a list or array of exactly 3 floats and returns a scalar. All inputs must lie within the bounds above; behaviour outside [−5, 5]³ is undefined. The function is **deterministic**.
+**Never** import from `workspace/evaluator.py` directly. Direct imports bypass the
+canonical ledger — evaluations go unlogged and the reproduction gate fails (zero-new-evals
+contract broken). `get_evaluator()` is the only oracle door.
+
+The underlying function takes three continuous inputs (x1, x2, x3) each in [−5, 5]
+and returns a scalar. All inputs must lie within the bounds above; behaviour outside
+[−5, 5]³ is undefined. The function is **deterministic**.
 
 ---
 
