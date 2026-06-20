@@ -290,6 +290,39 @@ For each finding from steps 1–4, assign exactly one category:
 The distinguishing test: if a reasonable agent following the spec would make
 the same choice, it is a judgment call. If it would not, it is a bug.
 
+### Constraint on prompt and spec fixes — do not overfit
+
+When a bug is fixed by adding a rule to an agent's prompt or spec (as opposed
+to fixing a code path), that rule must pass the **parsimony test** before it
+is written:
+
+> Would a philosopher of science, reading this rule in isolation, nod at it
+> as a general methodological principle — or frown at it as a specific
+> workaround for one observed case?
+
+If they would frown, the rule is overfit. Do not add it.
+
+A rule is **parsimonious** if:
+- It is general enough to prevent an entire *class* of failures, not just the
+  one you observed.
+- It is grounded in epistemology or scientific method, not in the accident of
+  what happened in run N.
+- Removing the observed failure from history, the rule would still belong in
+  the spec on its own merits.
+
+A rule is **overfit** if:
+- It names a specific tool call, a specific argument format, or a specific
+  sequence that failed once.
+- It reads as a post-hoc patch: "remember to do X before Y" where the only
+  reason to say so is that the agent didn't do it last time.
+- A philosopher of science would ask "why is this a rule and not just correct
+  behavior implied by the existing principles?"
+
+When a failure is real but the obvious rule would be overfit, look for the
+**underlying principle** the failure violated — and add that instead. If no
+general principle can be stated, the fix belongs in code (a validation, a
+guard, an assertion), not in the prompt.
+
 ---
 
 ## Commit discipline — git log is the canonical progress diary
