@@ -398,6 +398,27 @@ def test_datagenerator_prompt_is_universal_standardizer():
         assert token in p, f"datagenerator prompt missing {token!r}"
 
 
+def test_datagenerator_prompt_uses_verified_sampling_api():
+    """Audit BF-4: the datagenerator composes in F3DASM_CORE_IDIOMS (per
+    idioms.py's own contract — it used to claim this while not doing it) and
+    must NOT use the non-existent ExperimentData.sample(); the verified form is
+    create_sampler(...).call(data=...). Mirrors the implementer's sampling
+    contract above.
+    """
+    from f3dasm._src.agentic.agents.datagenerator import (
+        DATA_GENERATOR_SYSTEM_PROMPT,
+    )
+    for token in ("create_sampler", "sampler.call", "n_samples"):
+        assert token in DATA_GENERATOR_SYSTEM_PROMPT, (
+            f"DATA_GENERATOR_SYSTEM_PROMPT missing sampling token: {token!r}"
+        )
+    # The erroneous CALL form must be gone (the injected idioms still WARN
+    # "There is NO data.sample(...) method", which is desirable — so we assert
+    # the absence of the actual call pattern, not the mention).
+    assert ".sample(sampler" not in DATA_GENERATOR_SYSTEM_PROMPT
+    assert "There is NO data.sample" in DATA_GENERATOR_SYSTEM_PROMPT
+
+
 def test_datagenerator_prompt_documents_registration_manifest():
     from f3dasm._src.agentic.agents.datagenerator import (
         DATA_GENERATOR_SYSTEM_PROMPT,

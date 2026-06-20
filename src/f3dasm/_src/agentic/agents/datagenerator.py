@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..backends.base import Agent
+from ..knowledge.idioms import F3DASM_CORE_IDIOMS
 
 DATA_GENERATOR_SYSTEM_PROMPT = """\
 <role>
@@ -56,6 +57,7 @@ Only delegate if a literature_reviewer is listed in your available targets:
 </when_to_use_literature>
 
 <f3dasm_datagenerator_api>
+""" + F3DASM_CORE_IDIOMS + """
 ─── PATTERN A — decorator (preferred for stateless, pure-function wrappers) ──
   from f3dasm import datagenerator
 
@@ -95,10 +97,11 @@ Only delegate if a literature_reviewer is listed in your available targets:
   # Validate by driving the generator the SAME way the implementer will —
   # via .call() (NOT by calling your raw function directly). This is what
   # catches a wrong execute() signature; a direct call would not.
-  from f3dasm import ExperimentData
+  from f3dasm import ExperimentData, create_sampler
   from f3dasm.design import Domain
   test_data = ExperimentData(domain=domain)
-  test_data.sample(sampler="random", n_samples=1, seed=0)
+  sampler = create_sampler("random_sampler", seed=0)
+  test_data = sampler.call(data=test_data, n_samples=1)
   test_result = my_gen.call(test_data, mode="sequential")   # canonical driver
   out = test_result.to_pandas()[1]            # output frame
   assert not out.isna().any().any(), "output is NaN — execute() likely has the wrong signature"
