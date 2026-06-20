@@ -1268,15 +1268,6 @@ def build_routing_tools(node) -> dict:
                     node._notifications.clear()
                 for _n in _notifs:
                     prefix += _n + "\n\n"
-                if (
-                    node._budget_seconds is not None
-                    and node._run_start is not None
-                    and _time.time() - node._run_start >= node._budget_seconds
-                ):
-                    return prefix + (
-                        f"[Wait] Budget expired while waiting for {delegation_id}. "
-                        "Use GetStatus() to check the final state."
-                    )
 
         with node._registry_lock:
             entry = node._registry.get(delegation_id, {})

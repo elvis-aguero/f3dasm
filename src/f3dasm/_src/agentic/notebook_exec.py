@@ -89,6 +89,8 @@ def notebook_deliverable_spec(role: str = "strategizer") -> str:
         "         (LOAD-OR-CREATE: load the ledger if present, else build the DoE).\n"
         "  4. md WHY-explainer + code name='data_generation' — evaluate via\n"
         "         get_evaluator() ONLY (lazy: skips FINISHED rows → 0 new on re-run).\n"
+        "         IMPORT: from f3dasm.agentic import get_evaluator\n"
+        "         (Never use f3dasm._src.* paths — internal, unversioned, not public.)\n"
         "  5. md WHY-explainer + code name='ml'              — fit the surrogate.\n"
         "  6. md WHY-explainer + code name='optimization'    — acquisition / BO loop.\n"
         "  7. md '## Verdict & result' + code name='analysis' — for each hypothesis\n"

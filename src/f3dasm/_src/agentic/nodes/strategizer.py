@@ -119,6 +119,8 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         # Two-shot Done() gate: first call warns, second call closes.
         # Resets to False whenever a new Delegate() fires.
         self._done_warned: bool = False
+        # Science monitor fires once per turn; reset at __call__ start.
+        self._science_injected_this_turn: bool = False
         # Post-Done exit interview: set after the critic accepts; the next
         # Done() carries only the retrospective. _final_summary holds the real
         # conclusion so the recorded summary is the science, not the interview.
@@ -248,10 +250,13 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                     f"findings:\n{findings}\n"
                 )
             else:
-                # No escalation: inject regular drift messages normally.
-                drift = self._science_monitor.drain()
-                if drift:
-                    text += drift
+                # No escalation: inject at most once per strategizer turn
+                # to avoid the same warning appearing on every tool call.
+                if not self._science_injected_this_turn:
+                    drift = self._science_monitor.drain()
+                    if drift:
+                        text += drift
+                        self._science_injected_this_turn = True
         return text
 
     def _build_routing_closures(self) -> dict:
@@ -894,6 +899,8 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         # are unique even when the registry is pruned between turns.
         if self._delegation_seq < self._state_total_delegations:
             self._delegation_seq = self._state_total_delegations
+        # Snapshot seq at turn start so total_new counts only THIS call.
+        self._seq_at_turn_start: int = self._delegation_seq
 
         # Time budget is a SOFT constraint — warnings only; the run is
         # never force-terminated for exceeding it. A separate run-level
@@ -974,10 +981,11 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         self._route.clear()
         self._ask_count = 0
         self._done_warned = False
+        self._science_injected_this_turn = False
         with self._registry_lock:
             self._registry = {
                 d: e for d, e in self._registry.items()
-                if e["status"] in ("Working", "FollowUp")
+                if e["status"] in ("Working", "FollowUp", "Done")
             }
             self._threads = {
                 d: t for d, t in self._threads.items()
@@ -1155,9 +1163,11 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
             )
 
         # ── Terminal branch ───────────────────────────────────────────────────
-        # Accumulate delegation counts and evals from registry
+        # Accumulate delegation counts and evals from registry.
+        # total_new: only delegations created THIS call (seq delta vs
+        # snapshot taken at __call__ start), not Done entries from prior turns.
         with self._registry_lock:
-            total_new = len(self._registry)
+            total_new = self._delegation_seq - self._seq_at_turn_start
             evals_new = sum(e["evals"] for e in self._registry.values())
 
         summary = route.get("summary") or text
