@@ -170,6 +170,9 @@ tools — NOT your findings. Be concrete; quote specifics. Exactly:
   wanted, and why you made it.
 - FRICTION: anything counterintuitive or unclear about the tools/contracts,
   or "none". (Lowest priority.)
+- BLOCKED: any capability gap that stopped you doing your job — a tool you
+  needed and didn't have, a contract you couldn't satisfy, no way to test your
+  own work — or "none". Name it specifically; an unreported gap can't be fixed.
 </output_format>
 """
 

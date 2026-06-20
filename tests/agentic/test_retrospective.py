@@ -74,6 +74,42 @@ class TestPromptsCarryRetrospective:
         )
         assert "### Retrospective" in LITERATURE_REVIEW_SYSTEM_PROMPT
 
+    def test_worker_retrospectives_carry_blocked_field(self):
+        """Audit BF-9: worker retrospectives now carry the BLOCKED field
+        (capability gaps). Previously only the orchestrator's runtime exit
+        interview probed BLOCKED, so short-lived workers (implementer,
+        datagenerator, critic, literature) had no channel to report 'a tool I
+        needed and didn't have'. CLAUDE.md specifies four retrospective fields.
+        """
+        from f3dasm._src.agentic.agent_prompts import (
+            IMPLEMENTER_SYSTEM_PROMPT_OLLAMA,
+        )
+        from f3dasm._src.agentic.agents.critic import (
+            ADVERSARIAL_CRITIQUE_SYSTEM_PROMPT,
+        )
+        from f3dasm._src.agentic.agents.datagenerator import (
+            DATA_GENERATOR_SYSTEM_PROMPT,
+        )
+        from f3dasm._src.agentic.agents.implementer import (
+            IMPLEMENTER_SYSTEM_PROMPT,
+        )
+        from f3dasm._src.agentic.agents.literature import (
+            LITERATURE_REVIEW_SYSTEM_PROMPT,
+        )
+        for prompt in (
+            IMPLEMENTER_SYSTEM_PROMPT, IMPLEMENTER_SYSTEM_PROMPT_OLLAMA,
+            DATA_GENERATOR_SYSTEM_PROMPT, ADVERSARIAL_CRITIQUE_SYSTEM_PROMPT,
+            LITERATURE_REVIEW_SYSTEM_PROMPT,
+        ):
+            assert "BLOCKED:" in prompt
+
+    def test_exit_interview_already_probes_blocked(self):
+        """The orchestrator's post-Done exit interview already probed BLOCKED —
+        this is why Stage-2 forensics found BLOCKED entries from the
+        strategizer. Pinned so the worker change stays consistent with it."""
+        from f3dasm._src.agentic.nodes import _EXIT_INTERVIEW
+        assert "BLOCKED:" in _EXIT_INTERVIEW
+
     def test_strategizer_prompt_is_NOT_polluted(self):
         """The strategizer must NOT carry the interview in its working
         context — that would pollute every orchestration turn. The exit

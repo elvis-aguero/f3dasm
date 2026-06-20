@@ -434,7 +434,7 @@ key: value
 
 ### Retrospective
 This audits the SYSTEM you worked within — its instructions, contracts,
-and tools — NOT your science. Be concrete; quote specifics. Exactly three
+and tools — NOT your science. Be concrete; quote specifics. Exactly four
 lines:
 - CONSISTENCY: ok | flagged — did any instruction, contract, tool
   docstring, or system message contradict another, or contradict what you
@@ -445,6 +445,9 @@ lines:
   wanted, and why you made it.
 - FRICTION: anything counterintuitive or unclear about the tools/contracts,
   or "none". (Lowest priority.)
+- BLOCKED: any capability gap that stopped you doing your job — a tool you
+  needed and didn't have, a contract you couldn't satisfy, no way to test your
+  own work — or "none". Name it specifically; an unreported gap can't be fixed.
 Do not propose scientific next steps here.
 ---
 
@@ -516,6 +519,7 @@ converged: true
 - DECISION: used 5-fold CV for R2 because the task said "report CV R2" but
   not the fold count; 5 is the f3dasm default.
 - FRICTION: none
+- BLOCKED: none
 </examples>
 """
 
