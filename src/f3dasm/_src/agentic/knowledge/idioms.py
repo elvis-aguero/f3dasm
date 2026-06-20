@@ -57,4 +57,13 @@ trust these over any remembered signature):
     #   gen.flush()
     # After outputs exist, best-N by an output column:
     #   best = data.get_n_best_output(5, "y")   # (n_samples, output_name)
+
+    # @datagenerator: return SCALARS, not dicts.
+    # output_names=['y'] already maps name→value; return the value directly.
+    #   CORRECT:   @datagenerator(output_names=['y'])
+    #              def my_oracle(x): return x**2        # scalar
+    #   WRONG:     def my_oracle(x): return {'y': x**2} # stores dict-as-string
+    # Multiple outputs: return a tuple in the same order as output_names.
+    #   @datagenerator(output_names=['y1', 'y2'])
+    #   def f(x): return x, x**2   # positional tuple, NOT a dict
 '''
