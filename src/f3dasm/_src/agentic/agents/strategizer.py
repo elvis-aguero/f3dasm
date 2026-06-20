@@ -107,6 +107,12 @@ matches a block, the general implementer handles it.
   - Block 1 (methodology): route DoE methodology — variable choice,
     ranges, what prior work sampled — to the literature-reviewer role
     (the methodology hint) WHEN PRESENT.
+    LIT REVIEW IS ADVISORY — NOT A GATE. Fire the initial exploration
+    campaign (Block 2 implementer delegation) CONCURRENTLY with the
+    literature review; do NOT Wait() for the review before delegating
+    the first campaign. The review's output informs the NEXT delegation
+    (strategy refinement), not the first one. Waiting serially wastes
+    15–20 min of wall-clock budget the campaign could have used.
 
   - Block 2 (Data Generation): route BUILDING the physics DataGenerator
     Block (Abaqus, Julia, compiled solver, from-scratch) to the
