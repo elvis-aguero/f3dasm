@@ -861,7 +861,11 @@ class LiteratureCorpus:
             model = self._get_embedding_model()
             if model is not None:
                 q_emb = _np.array(
-                    next(model.embed([query])), dtype=_np.float32
+                    # model.embed() may return a LIST (not a generator); next()
+                    # on a list raises "'list' object is not an iterator".
+                    # iter() makes next() work for both forms (audit: this crashed
+                    # CorpusSearch dense ranking in the bb3d wet run 20260621).
+                    next(iter(model.embed([query]))), dtype=_np.float32
                 )
                 q_norm = q_emb / (_np.linalg.norm(q_emb) + 1e-9)
                 norms = _np.linalg.norm(
