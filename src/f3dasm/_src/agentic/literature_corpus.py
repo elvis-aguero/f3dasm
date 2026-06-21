@@ -1036,49 +1036,46 @@ class LiteratureCorpus:
     # ------------------------------------------------------------------
 
     def _extract_pdf_to_md(self, pdf_path: Path) -> str:
-        """Extract page-annotated Markdown from *pdf_path*, robustly.
+        """Extract page-annotated Markdown from *pdf_path*.
 
-        Run the fast, reliable PyMuPDF text extractor FIRST; if it yields a real
-        body, use it. Only when PyMuPDF comes back thin (a scanned or
-        complex-layout PDF) do we pay for Docling (layout-aware / OCR). Return
-        the LONGEST substantive result across methods — never the first that
-        merely clears a low floor.
+        Docling first (layout-aware — the accuracy path) WHERE AVAILABLE; fall
+        back to PyMuPDF (``fitz``; the same library) when Docling is absent
+        (e.g. Intel macOS, where the pyproject marker excludes it by design) or
+        returns a thin/failed parse. Return the longer of the two.
 
-        Why: the old order tried Docling first and returned ANY result > 100
-        chars, so a botched 236-char Docling parse of Snoek et al. 2015 was
-        accepted while PyMuPDF extracts that same PDF's full ~53k-char body.
-        Taking the best across methods maximises the chance a paper parses.
+        The only real bug in the original was the acceptance floor: it returned
+        ANY Docling result > 100 chars, so a *failed* ~236-char Docling parse
+        would beat the PyMuPDF fallback. Require a real body (> the full-text
+        threshold) before trusting Docling; otherwise fall through.
         """
-        candidates: list[str] = []
-
-        # 1. PyMuPDF (fitz) — fast and reliable for text-based PDFs.
-        if fitz is not None:
-            try:
-                doc = fitz.open(str(pdf_path))
-                parts = [f"<!-- page {n} -->\n{pg.get_text()}"
-                         for n, pg in enumerate(doc, start=1)]
-                doc.close()
-                fitz_md = "\n\n".join(parts)
-                candidates.append(fitz_md)
-                # A real body already — skip the slow layout/OCR path.
-                if len(fitz_md.strip()) > _FULL_TEXT_MD_THRESHOLD:
-                    return fitz_md
-            except Exception:  # noqa: BLE001
-                pass
-
-        # 2. Docling — layout-aware / OCR; only reached when fitz was thin
-        #    (scanned or heavily-formatted PDF), where it can recover text fitz
-        #    cannot.
+        docling_md = ""
+        # 1. Docling — layout-aware, the accuracy path. Absent on Intel macOS.
         try:
             from docling.document_converter import (  # type: ignore
                 DocumentConverter,
             )
             result = DocumentConverter().convert(str(pdf_path))
-            candidates.append(result.document.export_to_markdown() or "")
+            docling_md = result.document.export_to_markdown() or ""
+            if len(docling_md.strip()) > _FULL_TEXT_MD_THRESHOLD:
+                return docling_md  # Docling actually parsed it — trust it.
         except Exception:  # noqa: BLE001
             pass
 
-        best = max(candidates, key=lambda c: len((c or "").strip()), default="")
+        # 2. PyMuPDF (fitz) — the lean fallback; the only extractor on Intel
+        #    macOS. Page-annotated so the reviewer can cite by page.
+        pymupdf_md = ""
+        if fitz is not None:
+            try:
+                doc = fitz.open(str(pdf_path))
+                pymupdf_md = "\n\n".join(
+                    f"<!-- page {n} -->\n{pg.get_text()}"
+                    for n, pg in enumerate(doc, start=1))
+                doc.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+        # Docling was absent or thin → take whichever recovered more text.
+        best = max((docling_md, pymupdf_md), key=lambda c: len(c.strip()))
         if len(best.strip()) > 100:
             return best
         return "(PDF extraction unavailable — install docling or pymupdf)"
