@@ -155,3 +155,8 @@ studies/fragile_becomes_supercompressible/bessa2019.md
 .github/agents/*
 superpowers/
 CLAUDE.md
+
+# Run-generated artifacts (not source): audit-preserved forensic runs (~1.2G)
+# and per-run pipeline.ipynb deliverables the studies regenerate each run.
+_audit_preserved/
+studies/*/pipeline.ipynb
