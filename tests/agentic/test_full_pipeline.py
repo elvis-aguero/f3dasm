@@ -37,7 +37,10 @@ def _make_study(tmp_path: Path) -> Path:
 class _StrategistSpec(Agent):
     role = "strategizer"
     description = "Test strategizer."
-    tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote", "WriteDeliverable"})
+    # GetStatus is opt-in (plug-and-play) since the Confer rework; this scripted
+    # driver polls delegations deterministically, so it declares the opt-in.
+    tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
+                       "WriteDeliverable", "GetStatus"})
 
 
 class _WorkerSpec(Agent):
