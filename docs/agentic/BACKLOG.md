@@ -172,3 +172,47 @@ ensures whatever the worker already stamped is reconciled rather than orphaned.
 **Open question:** the threshold — fixed seconds, a fraction of the time budget,
 or adaptive to the worker's own first-row latency? A cheap robust default: warn
 once past max(120s, 15% of budget) with no row, escalate past 2× that.
+
+---
+
+## 7. Remove the literature hand-listed tool docs (BF-13a)
+**Status:** raised 2026-06-21. Follow-through on BF-13(b) (commit 6b9c8dd8).
+
+`literature.py` still hand-lists every tool in `<corpus_tools>`/`<discovery_tools>`
+with bare signatures; the implementer's `<role>` "Available tools" list does the
+same. BF-13(b) made the auto-generated `<tools>` catalog the authoritative,
+MCP-qualified source, so these hand-lists are now a second source that can drift
+from it.
+
+**Why not done yet:** the corpus closures (`CorpusAdd`/`CorpusSearch`/
+`CorpusGetPaper`/`CorpusList`) are docstring-less lambdas in
+`build_closure_tools`, and `render_tool_catalog` falls back to "(no description)"
+for them. Deleting the hand-list before the closures carry real docstrings would
+DEGRADE the catalog (lose the BM25-weighting note, the "ERROR if no full-text"
+semantics, the acquisition workflow). The implementer list also mixes native
+tools (Read/Bash — bare-correct) with closures (qualified) — a blanket delete
+would lose the native-tool descriptions too.
+
+**The principled fix:** give each corpus/discovery closure a real docstring (one
+line is enough — the SDK already reads `fn.__doc__` for its tool schema), then
+delete the hand-lists and let the qualified auto-catalog be the single source.
+Test: assert the literature catalog (qualified) carries a non-"(no description)"
+entry for every corpus tool, and that no bare hand-list signature survives.
+
+## 8. Localize literature str/int error (lit-bug #3)
+**Status:** raised 2026-06-21. Observed in a wet literature run (prior session),
+exact site not captured.
+
+A wet literature delegation hit a `str`/`int` type error twice ("str-int error
+×2"), separate from the dense-ranking crash (fixed 33d8d3f4) and the name
+mismatch (fixed 6b9c8dd8). No traceback was captured this session — the wet test
+was killed to save resources before it streamed output.
+
+**Likely neighbourhood:** the citation-count / BM25 weighting path
+(`log10(c+1)`), where a `citationCount` arriving as a string from S2/OpenAlex
+JSON would break arithmetic; `build_closure_tools` already guards
+`int(citation_count or 0)` on `CorpusAdd`, so the unguarded site is probably in
+`CorpusRank` or the corpus's internal ranking, or in an OpenAlex/S2 field read.
+**Needs a real wet run with the traceback** (`uv run pytest
+tests/agentic/test_literature_wet.py -s --no-cov`) to localize before fixing —
+do not guess-patch without the stack.
