@@ -109,53 +109,39 @@ PREFER f3dasm primitives over raw numpy/scipy equivalents.
   len(data)
   merged = data + data2
 
-─── THE CANONICAL ORACLE — get_evaluator() is the ONLY way to evaluate ──
-  # The shared picture: the pipeline is the deliverable (a recipe whose
-  # ground-truth run step is get_evaluator()); your delegation is one bounded
-  # experiment on it — often swapping a block (sampler/surrogate/optimizer) to
-  # test a hypothesis, sometimes just running more samples or a falsification
-  # probe. Whatever you do, true-oracle evaluations go through ONE door:
-  #
-  # The ground-truth oracle is already registered by the runtime (whether it
-  # was shipped with the study or built by the DataGeneratorAgent). You reach
-  # it through ONE call — no imports, no paths, no arguments:
+─── THE ORACLE DOOR — get_evaluator() is the ONE metered path ──────────
+  # The pipeline is the deliverable (a recipe whose ground-truth step is
+  # get_evaluator()); your delegation is one bounded experiment on it. The
+  # ground-truth oracle is already registered by the runtime — reach it
+  # through ONE call, no imports, no paths, no arguments:
   from f3dasm.agentic import get_evaluator
-
-  gen = get_evaluator()                 # resolves the registered oracle
+  gen = get_evaluator()                      # resolves the registered oracle
   data = gen.call(data, mode="sequential")   # the one oracle door
   gen.flush()                                # flush buffered rows at end
-
-  # get_evaluator() reads run_config.json automatically, stamps provenance,
-  # and meters every call into the ground-truth ledger. NEVER import or call a
-  # raw evaluator yourself (no `from ... import evaluate`, no sys.path hacks):
-  # an unledgered evaluation is unreproducible and fails the critic gate.
-
-─── METERING SCOPE — what is metered vs. what is free ──────────────────
-  # METERED (ground truth): ONLY calls through get_evaluator(). These are the
-  #   real oracle evaluations that count against the eval budget and become
-  #   the ledger your claims must rest on.
-  # FREE (unrestricted): everything else — fitting surrogates, running
-  #   optimizers/acquisition functions, backtracking, writing/reading your
-  #   own artifacts (pickles, CSVs, plots), and reading D000/pool rows. Build
-  #   and run your OWN DataGenerators (e.g. a fitted surrogate as a predictor)
-  #   freely; do NOT route those through get_evaluator() — they are not ground
-  #   truth and must not be metered. Explore however you like.
-
-─── PROVENANCE — the canonical ledger is the SINGLE source of truth ────
-  # Evaluation counts and the best-point/headline come from ONE place: the
-  # canonical ExperimentData store written by get_evaluator() (its row count
-  # per delegation IS the authoritative eval count). Report your numbers FROM
-  # that store. You may write your own results.json / summary.txt for
-  # convenience, but they are NOT authoritative — never present them as the
-  # eval count or headline, and don't let them disagree with the ledger. If a
-  # number feeds a conclusion, it must trace to a ledgered row.
+  # It reads run_config.json, stamps provenance, and meters every call into
+  # the ground-truth ledger. NEVER reach the oracle any other way (no
+  # `from ... import evaluate`, no sys.path hacks): unledgered evaluations are
+  # unreproducible and fail the critic gate. Full contract + the datagenerator
+  # validation exception: ConsultHandbook("evaluate-through-get-evaluator").
   #
-  # NEVER call ExperimentData.store() on the canonical experiment_data dir.
-  # That store is written ONLY by get_evaluator(). Your own .store() MUST
-  # target a delegation-local path ("{delegation_id}/results", a scratch dir) —
-  # storing a partial table onto the canonical dir would destroy metered rows,
-  # and the runtime now REFUSES such a write (RuntimeError). Read the canonical
-  # store with ExperimentData.from_file(); write your own only elsewhere.
+  # METERED vs FREE — only get_evaluator() calls are metered (the real oracle
+  # evaluations that count against the budget and become the ledger your claims
+  # rest on). Everything else is FREE: fitting surrogates, running
+  # optimizers/acquisition functions, backtracking, your own artifacts
+  # (pickles/CSVs/plots), and reading D000/pool rows. Build and run your OWN
+  # DataGenerators (e.g. a fitted surrogate as a predictor) freely — do NOT
+  # route those through get_evaluator(); they are not ground truth. Explore
+  # however you like.
+  #
+  # NUMBERS TRACE TO THE LEDGER — eval counts and the best-point/headline come
+  # from ONE place: the canonical ExperimentData store written by
+  # get_evaluator() (its per-delegation row count IS the authoritative count).
+  # Report numbers FROM that store; a number that feeds a conclusion must trace
+  # to a ledgered row. Your own results.json/summary.txt are convenience only,
+  # never authoritative. NEVER call ExperimentData.store() on the canonical
+  # experiment_data dir — it is written ONLY by get_evaluator(), and the runtime
+  # REFUSES such a write (RuntimeError); your own .store() targets a
+  # delegation-local path. Read the canonical store with ExperimentData.from_file().
 
 ─── INITIAL SPACE-FILLING DESIGN (DoE-execution) ───────────────────────
   # BUILD A FRESH DOMAIN — never reuse the domain from the canonical store.

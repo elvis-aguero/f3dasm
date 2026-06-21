@@ -320,26 +320,26 @@ def test_implementer_report_format_headings():
 # Test 9 — IMPLEMENTER refuses hypothesis-verification tasks
 # ---------------------------------------------------------------------------
 
-def test_implementer_refuses_hypothesis_verification():
-    """The Implementer prompt explicitly instructs refusal of hypothesis
-    verification requests.
+def test_implementer_scope_boundary_is_execute_not_adjudicate():
+    """O14: the implementer's scope boundary is stated as a division of labour,
+    NOT as blind keyword refusal.
 
-    Notes
-    -----
-    Both ``hypothesis`` and ``refuse`` must appear (case-insensitive) so
-    the model is clearly instructed to surface scope violations.
+    The old rule told the implementer to REFUSE any task whose wording said
+    "verify"/"confirm a hypothesis" — which stranded the Strategizer with no
+    evidence on legitimately-phrased measurement tasks. The boundary now says:
+    the implementer EXECUTES and MEASURES; the Strategizer draws the verdict.
+    (The previous keyword test passed only incidentally — "hypothesis" survived
+    elsewhere in the prompt — so it never actually guarded the behaviour.)
     """
     from f3dasm._src.agentic.agent_prompts import (
         IMPLEMENTER_SYSTEM_PROMPT,
     )
 
-    lower = IMPLEMENTER_SYSTEM_PROMPT.lower()
-    assert "hypothesis" in lower, (
-        "IMPLEMENTER_SYSTEM_PROMPT does not mention 'hypothesis'"
-    )
-    assert "refuse" in lower, (
-        "IMPLEMENTER_SYSTEM_PROMPT does not mention 'refuse'"
-    )
+    p = IMPLEMENTER_SYSTEM_PROMPT
+    assert "SCOPE BOUNDARY" in p
+    assert "do not adjudicate" in p
+    # the old keyword-refusal anti-pattern must not return
+    assert "outside Implementer scope" not in p
 
 
 # ---------------------------------------------------------------------------
@@ -1012,3 +1012,22 @@ def test_implementer_prompts_state_metering_scope():
         assert "metered" in low, f"{name} missing metering-scope statement"
         # surrogates/optimizers are free, not metered
         assert "surrogate" in low, f"{name} missing free-surrogate guidance"
+
+
+def test_implementer_oracle_contract_consolidated():
+    """BF-11: the oracle invariant is stated ONCE in the implementer prompt
+    (one 'ORACLE DOOR' block) rather than re-sermonised across three drifting
+    sections. Distinct facts survive the merge and the canonical home (KB 0001)
+    is named so the rationale lives in one place."""
+    from f3dasm._src.agentic.agents.implementer import IMPLEMENTER_SYSTEM_PROMPT
+    p = IMPLEMENTER_SYSTEM_PROMPT
+    assert p.count("THE ORACLE DOOR") == 1, "oracle contract not consolidated"
+    # the three old drifting headers are gone
+    assert "THE CANONICAL ORACLE" not in p
+    assert "SINGLE source of truth" not in p
+    assert "METERING SCOPE —" not in p
+    # distinct facts preserved through the merge
+    assert "RuntimeError" in p, "lost the don't-clobber-canonical-store fact"
+    assert "D000" in p, "lost the reading-the-pool-is-free fact"
+    # canonical home named (the ConsultHandbook chapter id)
+    assert "evaluate-through-get-evaluator" in p, "KB 0001 not referenced"

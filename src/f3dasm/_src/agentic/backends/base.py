@@ -465,16 +465,12 @@ _RAW_ORACLE_PATTERNS = (
 )
 
 _ORACLE_NUDGE_MESSAGE = (
-    "[ORACLE ACCESS] This reaches the ground-truth evaluator directly. "
-    "Evaluations run this way are NOT written to the canonical ExperimentData "
-    "ledger, so any number they produce cannot anchor the headline — "
-    "pipeline.ipynb will fail to reproduce it and the critic will reject the "
-    "run. Reach the true oracle ONLY via:  from f3dasm.agentic import "
-    "get_evaluator; gen = get_evaluator(); data = gen.call(data, "
-    "mode='sequential'); gen.flush().  Surrogates/optimisers/acquisition "
-    "models you build yourself stay off-ledger and that is fine — only "
-    "true-oracle calls must "
-    "go through get_evaluator()."
+    "[ORACLE ACCESS] This reaches the ground-truth evaluator directly — "
+    "off-ledger, so it cannot anchor the headline and the critic will reject "
+    "the run. Re-run true-oracle calls through get_evaluator() (the oracle-door "
+    "block in your system prompt; full contract: handbook "
+    "evaluate-through-get-evaluator). Surrogates/optimisers you build yourself "
+    "stay off-ledger — that is fine."
 )
 
 

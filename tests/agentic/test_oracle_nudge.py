@@ -165,16 +165,22 @@ class TestCorrectPathApiIsReal:
     """
 
     def test_nudge_message_uses_real_api(self):
+        # BF-11: a terse pointer, not an inlined API copy. The BF-5 guard
+        # stands — never teach the broken data.run( form — and the message
+        # names get_evaluator() + the canonical source (KB 0001) rather than
+        # restate the API, which now lives in one place.
         from f3dasm._src.agentic.backends.base import _ORACLE_NUDGE_MESSAGE
         assert "data.run(" not in _ORACLE_NUDGE_MESSAGE
-        assert "gen.call(" in _ORACLE_NUDGE_MESSAGE
+        assert "get_evaluator()" in _ORACLE_NUDGE_MESSAGE
+        assert "evaluate-through-get-evaluator" in _ORACLE_NUDGE_MESSAGE
 
     def test_unledgered_retry_prompt_uses_real_api(self):
         from f3dasm._src.agentic.agent_prompts import (
             UNLEDGERED_EVALS_RETRY_PROMPT,
         )
         assert "data.run(" not in UNLEDGERED_EVALS_RETRY_PROMPT
-        assert "gen.call(" in UNLEDGERED_EVALS_RETRY_PROMPT
+        assert "get_evaluator()" in UNLEDGERED_EVALS_RETRY_PROMPT
+        assert "evaluate-through-get-evaluator" in UNLEDGERED_EVALS_RETRY_PROMPT
 
     def test_implementer_prompt_uses_real_api(self):
         from f3dasm._src.agentic.agents.implementer import (

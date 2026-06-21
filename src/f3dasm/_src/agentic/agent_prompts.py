@@ -258,24 +258,19 @@ misread it.  No placeholders; pure static text.
 # =============================================================================
 
 UNLEDGERED_EVALS_RETRY_PROMPT = (
-    "Your evaluations did not reach the canonical ExperimentData store. "
-    "Ground-truth evaluations must go through get_evaluator() so they are "
-    "written to the canonical store with provenance (a delegation_id stamp) "
-    "— otherwise the numbers cannot anchor a headline and the result is not "
-    "reproducible from the store. Re-run the ground-truth evaluations via:\n"
-    "    from f3dasm.agentic import get_evaluator\n"
-    "    gen = get_evaluator()\n"
-    "    data = gen.call(data, mode='sequential')\n"
-    "    gen.flush()\n"
-    "Surrogates, samplers, acquisition models, and analysis you build "
-    "yourself stay off-ledger and that is fine — only the true-oracle calls "
-    "must go through get_evaluator(). Then re-issue your report."
+    "Your evaluations did not reach the canonical ExperimentData store — they "
+    "bypassed get_evaluator(), so they have no provenance and cannot anchor a "
+    "headline. Re-run the true-oracle calls through get_evaluator() (the "
+    "oracle-door block in your system prompt has the API; full contract: "
+    "handbook evaluate-through-get-evaluator). Surrogates/samplers/analysis you "
+    "build yourself stay off-ledger and that is fine. Then re-issue your report."
 )
 """Correction sent to a worker whose delegation reported evaluations but
 wrote no provenance-stamped rows to the canonical store (it bypassed
 get_evaluator()).  Soft: the runtime re-issues it at most three times, then
-accepts the delegation anyway.  Wording is kept consistent with the
-implementer prompt's get_evaluator() guidance and the raw-oracle nudge.
+accepts the delegation anyway.  A terse pointer, not a restatement — the
+canonical contract lives in the implementer prompt's oracle-door block and
+KB 0001 (BF-11).
 """
 
 # =============================================================================
