@@ -52,6 +52,25 @@ def _make_run(tmp_path: Path) -> Path:
                                           {"status": "FALSIFIED"}]},
         "H2": {"id": "H2", "status_log": [{"status": "OPEN"}]},
     }))
+    # per-delegation transcripts: D004 error-heavy + a stall, D005 clean
+    tdir = debug / "transcripts"
+    tdir.mkdir()
+    (tdir / "D004.jsonl").write_text("\n".join(json.dumps(r) for r in [
+        {"type": "assistant", "gap_s": 2.0},
+        {"type": "tool_result", "gap_s": 115.2, "results": [
+            {"tool_use_id": "t1",
+             "content": "<tool_use_error>Error: No such tool available: "
+                        "arxiv_search_papers</tool_use_error>"}]},
+        {"type": "tool_result", "gap_s": 1.0, "results": [
+            {"tool_use_id": "t2",
+             "content": "<tool_use_error>Error: No such tool available: "
+                        "search_openalex</tool_use_error>"}]},
+    ]))
+    (tdir / "D005.jsonl").write_text("\n".join(json.dumps(r) for r in [
+        {"type": "assistant", "gap_s": 3.0},
+        {"type": "tool_result", "gap_s": 4.0, "results": [
+            {"tool_use_id": "t3", "content": "185 evaluations OK"}]},
+    ]))
     return run_dir
 
 
@@ -82,6 +101,25 @@ def test_brief_surfaces_science_result_and_gate_sequence(tmp_path):
     assert "H2: OPEN" in brief and "still open at close" in brief
     # critic gate sequence shows the bounce, not just the count
     assert "call_001=REJECT, call_002=PASS" in brief
+
+
+def test_brief_ranks_delegation_transcript_proxies(tmp_path):
+    """Transcripts proxy POSSIBLE failure modes: the error-heavy delegation is
+    ranked first with its tool-error count, stall, and a verbatim example —
+    'look here', not a classification of what failed."""
+    brief = run_ledger.analysis_brief(_make_run(tmp_path))
+    assert "## Delegation transcript proxies" in brief
+    di = brief.index("## Delegation transcript proxies")
+    panel = brief[di:]
+    # D004 (2 tool-errors, 115s stall) ranks ABOVE D005 (0 errors)
+    assert panel.index("D004:") < panel.index("D005:")
+    assert "D004: 2 tool-errors, max stall 115.2s" in panel
+    assert "D005: 0 tool-errors" in panel
+    # the structured error text is surfaced verbatim (what tripped, not why)
+    assert "No such tool available: arxiv_search_papers" in panel
+    # still a pointer, not a verdict
+    assert "not verdicts" in panel
+    assert "is a bug" not in panel.lower()
 
 
 def test_brief_relocates_prose_but_does_not_classify(tmp_path):

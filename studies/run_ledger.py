@@ -148,6 +148,57 @@ def extract(run_dir: Path) -> dict:
     return row
 
 
+def _delegation_proxies(run_dir: Path) -> list[dict]:
+    """Per-delegation transcript PROXIES for possible trouble — 'look here'
+    signals, never verdicts. Each is mechanical/semi-structured:
+
+    - tool_errors: count of ``<tool_use_error>`` tags the SDK emits when a tool
+      call fails (robust — not a free-text 'error' grep that matches code).
+    - max_gap_s: the largest inter-event gap (a stall proxy).
+    - errs: a few DISTINCT tool-error messages verbatim (the structured error
+      text, like ERROR_RETURN — shows what tripped, not why the run failed).
+
+    A high count or a long stall means READ that transcript; the proxy is
+    allowed to over-fire (a false 'look here' costs one read) and says nothing
+    about what actually happened — that judgement stays with the reader.
+    """
+    tdir = run_dir / "debug" / "transcripts"
+    if not tdir.exists():
+        return []
+    out: list[dict] = []
+    for f in sorted(tdir.glob("D*.jsonl")):
+        errs: list[str] = []
+        max_gap = 0.0
+        try:
+            for ln in f.read_text().splitlines():
+                if not ln.strip():
+                    continue
+                r = json.loads(ln)
+                g = r.get("gap_s") or 0
+                max_gap = max(max_gap, float(g))
+                if r.get("type") == "tool_result":
+                    for item in (r.get("results") or []):
+                        c = (item.get("content", "") if isinstance(item, dict)
+                             else str(item))
+                        if "<tool_use_error>" in c:
+                            errs.append(c.replace("<tool_use_error>", "")
+                                        .replace("</tool_use_error>", "").strip())
+        except Exception:
+            continue
+        # distinct error messages, capped
+        seen, distinct = set(), []
+        for e in errs:
+            key = e[:80]
+            if key not in seen:
+                seen.add(key)
+                distinct.append(e)
+        out.append({"id": f.stem, "tool_errors": len(errs),
+                    "max_gap_s": round(max_gap, 1), "errs": distinct[:2]})
+    # rank: most tool-errors first, then longest stall
+    out.sort(key=lambda d: (-d["tool_errors"], -d["max_gap_s"]))
+    return out
+
+
 def analysis_brief(run_dir: Path) -> str:
     """Mechanical post-run digest for the CLAUDE.md run-analysis protocol.
 
@@ -282,6 +333,22 @@ def analysis_brief(run_dir: Path) -> str:
              "(read in call order)")
     L.append(f"- Step 4 delegations: {ndeleg} → {deleg} "
              "(targeted only, on a hypothesis)")
+
+    # Per-delegation transcript proxies — ranked 'look here', never verdicts.
+    proxies = _delegation_proxies(run_dir)
+    if proxies:
+        L.append("")
+        L.append("## Delegation transcript proxies (ranked; look here, not verdicts)")
+        L.append("  (tool_errors = <tool_use_error> tags the SDK emitted; a high "
+                 "count or long")
+        L.append("   stall means READ that transcript — it does not say what went "
+                 "wrong.)")
+        for p in proxies:
+            L.append(f"- {p['id']}: {p['tool_errors']} tool-errors, "
+                     f"max stall {p['max_gap_s']}s → "
+                     f"debug/transcripts/{p['id']}.jsonl")
+            for e in p["errs"]:
+                L.append(f"    e.g. {e[:120]}")
 
     if retro_lines:
         L.append("")
