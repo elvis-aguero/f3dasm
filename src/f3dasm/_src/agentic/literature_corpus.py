@@ -33,6 +33,15 @@ from typing import Optional
 
 try:
     import fitz  # type: ignore[import]
+    # Silence MuPDF's per-object C-library stderr ("zlib error: incorrect header
+    # check" on PDFs with non-standard FlateDecode streams). These are non-fatal
+    # — fitz still extracts the readable text — but they spam the run log. Genuine
+    # extraction failure is detected by the extracted-text length instead (see
+    # add()), not by these warnings.
+    try:
+        fitz.TOOLS.mupdf_display_errors(False)
+    except Exception:  # noqa: BLE001 — older/newer pymupdf may differ
+        pass
 except ImportError:
     fitz = None  # type: ignore[assignment]
 
@@ -602,7 +611,20 @@ class LiteratureCorpus:
             dest_md = paper_dir / "paper.md"
             dest_md.write_text(md_content, encoding="utf-8")
             local_md_path = str(dest_md)
-            # PDF ingestion always counts as full-text
+            # Full-text ONLY if extraction produced a real body. A scanned or
+            # corrupt PDF can extract near-nothing; the old code hardcoded
+            # full_text=True and stored a 236-char placeholder as quotable
+            # full-text. Treat a failed extraction as a hard error with an
+            # actionable alternative — do NOT enter a phantom paper.
+            if len(md_content) <= _FULL_TEXT_MD_THRESHOLD:
+                return (
+                    f"ERROR: extracted only {len(md_content)} chars from this "
+                    f"PDF (need >{_FULL_TEXT_MD_THRESHOLD}) — it is likely "
+                    "scanned or has corrupt text streams, so it is NOT quotable "
+                    "and was not added. Get the full text another way (e.g. "
+                    "arxiv_read_paper for an arXiv id) and add that, or choose a "
+                    "different source."
+                )
             full_text = True
         elif suffix in {".md", ".txt"}:
             dest_md = paper_dir / "paper.md"

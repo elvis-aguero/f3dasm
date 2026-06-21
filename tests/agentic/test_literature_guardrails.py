@@ -516,34 +516,31 @@ class TestFullTextFlag:
         rows = corpus._load_csv()
         assert rows[0].get("full_text", "true") == "false"
 
-    def test_pdf_is_always_full_text(self, tmp_path):
-        """PDF source → full_text=True regardless of extraction."""
-        corpus = _make_corpus(tmp_path)
-
-        # Create a minimal PDF-like file (fitz may not be available)
+    def test_pdf_full_text_gated_on_real_extraction(self, tmp_path):
+        """A PDF is full-text ONLY if extraction yields a real body. A PDF that
+        extracts almost nothing (scanned / corrupt streams) is REJECTED with
+        guidance — not stored as quotable full-text. The previous code marked
+        every PDF full-text "regardless of extraction", which kept a 236-char
+        placeholder as if it were a quotable paper. (The real-body positive case
+        is covered deterministically in test_literature_corpus.py.)"""
+        import pytest as _pt
         try:
             import fitz
-            doc = fitz.open()
-            doc.new_page()
-            page = doc[0]
-            page.insert_text((50, 50), "Hello from PDF page one.")
-            pdf_path = tmp_path / "test.pdf"
-            doc.save(str(pdf_path))
-            doc.close()
         except ImportError:
-            # Without fitz, use a fake PDF bytes
-            pdf_path = tmp_path / "test.pdf"
-            pdf_path.write_bytes(b"%PDF-1.4 fake content here")
+            _pt.skip("fitz not available")
 
-        paper_id = corpus.add(
-            str(pdf_path),
-            arxiv_id="2024.00001",
-            title="PDF Paper",
-        )
-        assert not paper_id.startswith("ERROR"), paper_id
-        rows = corpus._load_csv()
-        assert len(rows) == 1
-        assert rows[0].get("full_text") == "true"
+        corpus = _make_corpus(tmp_path)
+        doc = fitz.open()
+        doc.new_page()
+        doc[0].insert_text((50, 50), "Hello from PDF page one.")  # ~25 chars
+        pdf_path = tmp_path / "scanned.pdf"
+        doc.save(str(pdf_path))
+        doc.close()
+
+        result = corpus.add(str(pdf_path), arxiv_id="2024.00001", title="Scanned")
+        assert result.startswith("ERROR"), f"expected rejection, got: {result}"
+        assert "arxiv_read_paper" in result  # points to the working alternative
+        assert corpus._load_csv() == []       # no phantom full-text entry stored
 
     def test_csv_contains_full_text_column(self, tmp_path):
         """corpus.csv includes the full_text column."""

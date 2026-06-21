@@ -268,6 +268,36 @@ def test_extract_pdf_to_md_fallback_when_fitz_missing(tmp_path):
         lc_module.fitz = original_fitz
 
 
+def test_pdf_failed_extraction_is_rejected_not_stored_as_fulltext(
+    tmp_path, monkeypatch
+):
+    """A PDF whose extraction yields too little (scanned / corrupt streams) must
+    NOT be stored as quotable full-text. The old code hardcoded full_text=True
+    for every PDF and kept a ~236-char placeholder the reviewer would 'quote'."""
+    corpus = _make_corpus(tmp_path)
+    fake_pdf = tmp_path / "scanned.pdf"
+    fake_pdf.write_bytes(b"%PDF-1.4 dummy")
+    monkeypatch.setattr(
+        corpus, "_extract_pdf_to_md", lambda p: "<!-- page 1 -->\n(tiny)")
+    result = corpus.add(str(fake_pdf), arxiv_id="1502.05700")
+    assert result.startswith("ERROR"), result
+    assert "arxiv_read_paper" in result  # points to the working alternative
+    assert corpus._load_csv() == []      # nothing phantom entered the corpus
+
+
+def test_pdf_real_extraction_is_stored_as_fulltext(tmp_path, monkeypatch):
+    """The fix must not over-reject: a PDF with a real body is full-text."""
+    corpus = _make_corpus(tmp_path)
+    fake_pdf = tmp_path / "real.pdf"
+    fake_pdf.write_bytes(b"%PDF-1.4 dummy")
+    body = "<!-- page 1 -->\n" + ("word " * 2000)  # > 5000 chars
+    monkeypatch.setattr(corpus, "_extract_pdf_to_md", lambda p: body)
+    result = corpus.add(str(fake_pdf), arxiv_id="1807.02811")
+    assert not result.startswith("ERROR"), result
+    rows = corpus._load_csv()
+    assert len(rows) == 1 and rows[0]["full_text"] == "true"
+
+
 # ---------------------------------------------------------------------------
 # _derive_paper_id() — replaces _normalize_identifier
 # ---------------------------------------------------------------------------
