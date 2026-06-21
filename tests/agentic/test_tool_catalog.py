@@ -92,7 +92,9 @@ def test_catalog_fixes_observed_drift_on_a_real_strategizer():
 
     class A(Agent):
         role = "strategizer"
-        tools = frozenset({"Done"})
+        # Opt into CancelDelegation/ReadNote (now plug-and-play opt-in) so the
+        # generated catalog includes them — the no-drift property under test.
+        tools = frozenset({"Done", "ReadNote", "CancelDelegation"})
         description = "strategizer"
 
     class B(Agent):

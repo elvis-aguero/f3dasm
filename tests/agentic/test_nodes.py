@@ -44,7 +44,11 @@ def _minimal_spec(name: str = "strategizer", target: str = "implementer") -> Gra
     """Return a minimal two-node Graph for StrategizerNode tests."""
     class A(Agent):
         role = "strategizer"
-        tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote"})
+        # GetStatus/CancelDelegation are opt-in (plug-and-play) post-audit; the
+        # test strategizer opts in so behaviour tests still exercise them even
+        # though production agents no longer grant them.
+        tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
+                           "GetStatus", "CancelDelegation"})
         description = "Test strategizer."
 
     class B(Agent):
@@ -182,9 +186,9 @@ def test_strategizer_delegate_returns_task_id():
 
 
 def test_done_blocked_while_delegation_pending():
-    """Done returns a soft 3-option nudge (not a hard error) when called while
+    """Done returns a soft 2-option nudge (not a hard error) when called while
     a delegation is still Working — it still refuses to close, but offers the
-    keep-working / wait / CancelDelegation paths."""
+    keep-working / wait (GetStatus) paths (cancel dropped from production)."""
     from f3dasm._src.agentic.nodes import StrategizerNode
 
     results: list[str] = []
@@ -216,9 +220,10 @@ def test_done_blocked_while_delegation_pending():
     )
     node(make_state())
 
-    # Done should have refused with the soft 3-option nudge (not a hard error)
+    # Done should have refused with the soft 2-option nudge (not a hard error)
     assert results and "still running" in results[0]
-    assert "CancelDelegation" in results[0]  # offers the cancel path
+    assert "GetStatus" in results[0]  # offers the wait + GetStatus path
+    assert "CancelDelegation" not in results[0]  # cancel dropped from production
     assert not results[0].lstrip().startswith("ERROR:")  # soft, not an error
 
 
@@ -405,7 +410,11 @@ def test_strategizer_delegate_prepends_edge_preamble():
 
     class A(Agent):
         role = "strategizer"
-        tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote"})
+        # GetStatus/CancelDelegation are opt-in (plug-and-play) post-audit; the
+        # test strategizer opts in so behaviour tests still exercise them even
+        # though production agents no longer grant them.
+        tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
+                           "GetStatus", "CancelDelegation"})
         description = "Test strategizer."
 
     class B(Agent):
@@ -485,7 +494,11 @@ def test_parallel_two_delegations_both_complete():
 
     class A(Agent):
         role = "strategizer"
-        tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote"})
+        # GetStatus/CancelDelegation are opt-in (plug-and-play) post-audit; the
+        # test strategizer opts in so behaviour tests still exercise them even
+        # though production agents no longer grant them.
+        tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
+                           "GetStatus", "CancelDelegation"})
         description = "Test strategizer."
 
     class B(Agent):

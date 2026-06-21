@@ -36,7 +36,10 @@ class StubAdapter:
 def _minimal_spec(name: str = "strategizer", target: str = "implementer") -> Graph:
     class A(Agent):
         role = "strategizer"
-        tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote"})
+        # GetStatus/CancelDelegation are opt-in (plug-and-play) post-audit; opt
+        # in so behaviour tests still exercise them.
+        tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
+                           "GetStatus", "CancelDelegation"})
         description = "Test strategizer."
 
     class B(Agent):

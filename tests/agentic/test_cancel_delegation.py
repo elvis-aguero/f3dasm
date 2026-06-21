@@ -20,8 +20,11 @@ class _Stub:
 def _node():
     class A(Agent):
         role = "strategizer"
+        # GetStatus/CancelDelegation are opt-in (plug-and-play) post-audit; the
+        # test strategizer opts in so these behaviour tests still exercise them.
         tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
-                           "WriteDeliverable", "CheckDeliverable"})
+                           "WriteDeliverable", "CheckDeliverable",
+                           "GetStatus", "CancelDelegation"})
         description = "strategizer"
 
     class B(Agent):
@@ -60,14 +63,16 @@ def test_cancel_unknown_and_already_settled():
     assert n._registry["D002"]["status"] == "Done"  # untouched
 
 
-def test_premature_done_is_a_soft_three_option_nudge():
+def test_premature_done_is_a_soft_two_option_nudge():
     n = _node()
     n._registry["D001"] = {"status": "Working"}
     out = n.adapter.closure_tools["Done"](summary="all done")
     # the nudge, not a hard error
     assert not out.lstrip().startswith("ERROR:")
-    assert "three options" in out.lower()
-    assert "CancelDelegation" in out and "GetStatus" in out
+    assert "two options" in out.lower()
+    # CancelDelegation is dropped from production; the nudge no longer offers it.
+    assert "GetStatus" in out
+    assert "CancelDelegation" not in out
     # soft return → NOT counted as a tool error
     assert n._error_counts.get("strategizer", 0) == 0
 
@@ -77,10 +82,11 @@ def test_cancel_delegation_tool_is_registered():
     assert "CancelDelegation" in n.adapter.closure_tools
 
 
-def test_poll_escalation_offers_the_three_options():
-    """Fix #5: a repeatedly-polled delegation gets the same 3 options as the
-    premature-Done nudge (do other work / cancel / just wait), not just a
-    'poll less' nag — so the agent never grinds out 30 status checks."""
+def test_poll_escalation_offers_options():
+    """A repeatedly-polled delegation gets real options (do other work / just
+    wait), not a 'poll less' nag — so the agent never grinds out 30 status
+    checks. CancelDelegation was dropped from production, so the stuck remedy
+    is now the run watchdog, not agent-driven cancel."""
     import time as _t
     n = _node()
     n._registry["D001"] = {
@@ -90,10 +96,11 @@ def test_poll_escalation_offers_the_three_options():
     for _ in range(6):  # cross the >=5 escalation
         out = n.adapter.closure_tools["GetStatus"]("D001")
     assert out.lstrip().startswith("Working")
-    assert "CancelDelegation('D001')" in out      # (b) cancel, real id
     assert "do other work" in out.lower()          # (a) do something else
-    assert "just wait" in out.lower()              # (c) wait it out
+    assert "just wait" in out.lower()              # (b) wait it out
+    assert "watchdog" in out.lower()               # stuck remedy (cancel dropped)
     assert "wait=True" in out                       # future-proofing tip
+    assert "CancelDelegation" not in out
 
 
 def _seed_store(store_dir, delegation_id):

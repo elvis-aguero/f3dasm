@@ -386,7 +386,12 @@ class StrategizerAgent(Agent):
     tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
                        "WriteDeliverable", "CheckDeliverable",
                        "SetNotebookIntro", "AddPipelineCell", "Wait",
-                       "Confer"})
+                       "Confer", "GetStatus"})
+    # NOTE (audit): GetStatus/CancelDelegation are now opt-in (plug-and-play).
+    # GetStatus is retained here pending the poll→push re-architecture that lets
+    # Confer fully supersede it. CancelDelegation is intentionally NOT listed —
+    # dropped from production (drop-but-don't-delete); its def + opt-in gate
+    # remain, so restoring it is one line: add "CancelDelegation" above.
     reset_on_checkpoint = False
     role = "strategizer"
     needs_jupyter_server = True

@@ -1142,10 +1142,10 @@ def build_routing_tools(node) -> dict:
                     f"{firmness}Polled {poll_count}× ({elapsed}s) and "
                     f"{progress_desc}. Options: (a) do other work; (b) just "
                     "wait — a worker may still be setting up before its first "
-                    "eval. Only if it has stamped NOTHING for a long time is it "
-                    "likely genuinely stuck — then CancelDelegation('"
-                    + delegation_id + "') is reasonable. For sequential tasks, "
-                    "Delegate(wait=True) blocks with zero polling."
+                    "eval. A delegation that has stamped NOTHING for a long "
+                    "time may be genuinely stuck; the run watchdog will reclaim "
+                    "it. For sequential tasks, Delegate(wait=True) blocks with "
+                    "zero polling."
                 )
 
         # Budget broadcast: check if a new 10%-overbudget threshold is reached.
@@ -1347,15 +1347,11 @@ def build_routing_tools(node) -> dict:
             return (
                 prefix +
                 f"{len(pending)} delegation(s) still running: {pending}. "
-                "Closing now is premature — you have three options:\n"
+                "Closing now is premature — you have two options:\n"
                 "  (a) keep working: inspect results so far, write notes, or "
                 "start another delegation while these finish;\n"
                 "  (b) wait, then GetStatus(<id>) on each and interpret its "
-                "results before you conclude;\n"
-                "  (c) CancelDelegation(<id>) ONLY if you genuinely no longer "
-                "want that delegation's result — not to close faster; a "
-                "running delegation is usually still producing ledgered evals, "
-                "and cancelling discards its findings.\n"
+                "results before you conclude.\n"
                 "Re-call Done() once none are still running. "
                 "(Tip: Delegate(wait=True) avoids this for sequential tasks.)"
             )
@@ -2071,8 +2067,6 @@ def build_routing_tools(node) -> dict:
     # Topology-injected tools go to every orchestrating node.
     closures: dict = {
         "Delegate": Delegate,
-        "GetStatus": GetStatus,
-        "CancelDelegation": CancelDelegation,
         "Wait": Wait,
         "Reply": Reply,
         "FollowUp": FollowUp,
@@ -2316,6 +2310,18 @@ def build_routing_tools(node) -> dict:
         closures["SetNotebookIntro"] = SetNotebookIntro
     if "Confer" in _agent_tools:
         closures["Confer"] = _orchestrator_confer
+    # GetStatus / CancelDelegation are now OPT-IN (plug-and-play), not always-on.
+    # Their defs above are intact; they are simply not granted unless an agent
+    # lists them in its `tools`. PRODUCTION agents do not, so:
+    #   - GetStatus is dropped: completions are PUSHED via _notifications each
+    #     turn + Confer supersedes polling.
+    #   - CancelDelegation is dropped (drop-but-don't-delete) pending the
+    #     cooperative-stop decision; restore by adding the name to an agent's
+    #     `tools` (one line), exactly like the debugger agent is plug-and-play.
+    if "GetStatus" in _agent_tools:
+        closures["GetStatus"] = GetStatus
+    if "CancelDelegation" in _agent_tools:
+        closures["CancelDelegation"] = CancelDelegation
     # ConsultHandbook is injected universally at adapter construction
     # (agent_runtime._make_adapter) — no per-node duplication here.
 

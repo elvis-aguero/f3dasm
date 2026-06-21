@@ -27,7 +27,9 @@ class _Stub:
 def _node(tmp_path, with_critic=False):
     class A(Agent):
         role = "strategizer"
-        tools = frozenset({"Done"})
+        # GetStatus is opt-in (plug-and-play) post-audit; opt in so the ritual
+        # tests can drive a delegation to completion via polling.
+        tools = frozenset({"Done", "GetStatus"})
         description = "strategizer"
 
     class B(Agent):
