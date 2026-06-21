@@ -160,3 +160,6 @@ CLAUDE.md
 # and per-run pipeline.ipynb deliverables the studies regenerate each run.
 _audit_preserved/
 studies/*/pipeline.ipynb
+# Persistent cross-run retrospective archive (high-signal forensic record kept
+# on disk across runs; not source).
+studies/*/retrospectives/

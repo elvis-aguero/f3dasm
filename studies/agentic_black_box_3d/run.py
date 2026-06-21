@@ -57,6 +57,22 @@ if _dirty:
     raise SystemExit(1)
 del _sp, _dirty
 
+# ── preserve retrospectives across runs ───────────────────────────────────────
+# Retrospectives are the highest-signal forensic record (per CLAUDE.md they used
+# to be ephemeral — wiped with runs/). Archive each prior run's
+# retrospectives.jsonl into a persistent, gitignored dir (NOT in the wipe list
+# below) BEFORE cleaning, so they accumulate across runs instead of vanishing.
+_retro_archive = STUDY_DIR / "retrospectives"
+_runs_dir = STUDY_DIR / "runs"
+if _runs_dir.is_dir():
+    _retro_archive.mkdir(exist_ok=True)
+    for _retro in _runs_dir.glob("*/debug/retrospectives.jsonl"):
+        _run_id = _retro.parent.parent.name  # runs/<run_id>/debug/...
+        _dest = _retro_archive / f"{_run_id}.jsonl"
+        if _retro.stat().st_size > 0 and not _dest.exists():
+            shutil.copy2(_retro, _dest)
+del _retro_archive, _runs_dir
+
 # ── clean previous artifacts ──────────────────────────────────────────────────
 for path in [
     STUDY_DIR / "runs",
