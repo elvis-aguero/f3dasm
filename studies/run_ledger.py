@@ -193,6 +193,42 @@ def analysis_brief(run_dir: Path) -> str:
         L.append(_kv(k))
     L.append("  (critic_consults = gate attempts: 1 = clean, >2 = friction)")
 
+    # Headline + hypothesis ledger — the science RESULT. Structured facts only:
+    # min/max of the objective column (which end is 'good' is the analyst's call,
+    # never asserted here), and each hypothesis' current status from its
+    # status_log. A hypothesis still OPEN/INCONCLUSIVE at close is flagged as a
+    # place to LOOK (a named failure mode), not classified as right or wrong.
+    L.append("")
+    L.append("## Headline & hypotheses (Step 5 — the science result)")
+    oc = run_dir / "experiment_data" / "experiment_data" / "output.csv"
+    if oc.exists():
+        try:
+            rws = list(csv.DictReader(oc.open()))
+            outcols = [c for c in (rws[0] if rws else {})
+                       if c and not c.startswith("_")]  # skip index + provenance
+            if outcols and rws:
+                obj = outcols[0]
+                vals = [float(r[obj]) for r in rws
+                        if r.get(obj) not in (None, "", "nan")]
+                if vals:
+                    L.append(f"- objective '{obj}': min={min(vals):.4g} "
+                             f"max={max(vals):.4g} (n={len(vals)}; which end is "
+                             "'good' is yours to judge)")
+        except Exception:
+            L.append("- (objective unreadable → open output.csv)")
+    hf = debug / "strategizer_notes" / "hypotheses.json"
+    if hf.exists():
+        try:
+            for hid, h in json.loads(hf.read_text()).items():
+                slog = h.get("status_log") or []
+                cur = slog[-1].get("status") if slog else "(no status)"
+                open_at_close = cur in ("OPEN", "INCONCLUSIVE", None, "(no status)")
+                L.append(f"- {hid}: {cur}"
+                         + ("   ← still open at close (look here)"
+                            if open_at_close else ""))
+        except Exception:
+            L.append("- (hypotheses.json unreadable → open it)")
+
     L.append("")
     L.append("## ScienceMonitor diagnostics tally (Step 2)")
     try:
@@ -233,7 +269,17 @@ def analysis_brief(run_dir: Path) -> str:
     L.append("## Prose artifacts — READ these (a scan cannot classify them)")
     L.append(f"- Step 1 retrospectives: {len(retro_lines)} entries → {retro} "
              "(read FIRST; verbatim below)")
-    L.append(f"- Step 3 critic_reviews: {ncr} calls → {cr} (read in call order)")
+    # verdict per call is a structured token — shows WHERE the gate bounced
+    # (e.g. REJECT→PASS = one fix cycle) without summarising the critic's prose.
+    verdicts: list[str] = []
+    if cr.exists():
+        for f in sorted(cr.glob("call_*.md")):
+            m = re.search(r"verdict:\s*\**(PASS|REVISE|REJECT)",
+                          f.read_text(), re.IGNORECASE)
+            verdicts.append(f"{f.stem}={m.group(1).upper() if m else '?'}")
+    seq = ", ".join(verdicts) if verdicts else "none"
+    L.append(f"- Step 3 critic_reviews: {ncr} calls [{seq}] → {cr} "
+             "(read in call order)")
     L.append(f"- Step 4 delegations: {ndeleg} → {deleg} "
              "(targeted only, on a hypothesis)")
 

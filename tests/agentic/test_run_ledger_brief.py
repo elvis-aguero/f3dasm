@@ -37,7 +37,21 @@ def _make_run(tmp_path: Path) -> Path:
     )
     cr = debug / "critic_reviews"
     cr.mkdir()
-    (cr / "call_001.md").write_text("verdict: PASS")
+    (cr / "call_001.md").write_text("### Verdict\n**REJECT**\nverdict: REJECT")
+    (cr / "call_002.md").write_text("### Verdict\n**PASS**\nverdict: PASS")
+    # headline store: an index column ('') + objective 'f' + provenance
+    store = run_dir / "experiment_data" / "experiment_data"
+    store.mkdir(parents=True)
+    (store / "output.csv").write_text(
+        ",f,_delegation_id\n0,-0.71,D006\n1,-0.20,D005\n")
+    # hypothesis ledger: H1 closed, H2 left OPEN at close
+    notes = debug / "strategizer_notes"
+    notes.mkdir()
+    (notes / "hypotheses.json").write_text(json.dumps({
+        "H1": {"id": "H1", "status_log": [{"status": "OPEN"},
+                                          {"status": "FALSIFIED"}]},
+        "H2": {"id": "H2", "status_log": [{"status": "OPEN"}]},
+    }))
     return run_dir
 
 
@@ -46,7 +60,7 @@ def test_brief_offloads_mechanical_kpis_and_diagnostics(tmp_path):
     # Step-5 KPI baseline + Step-2 tally are computed for us
     assert "## KPIs — this run vs previous (Step 5)" in brief
     assert "outcome:" in brief
-    assert "critic_consults: 1" in brief          # one critic call = gate attempt
+    assert "critic_consults: 2" in brief          # two critic calls = gate attempts
     assert "## ScienceMonitor diagnostics tally (Step 2)" in brief
     assert "ERROR_RETURN: 1" in brief and "RAW_ORACLE_NUDGE: 1" in brief
     # ERROR_RETURN (KPI target 0) surfaced verbatim, structured — not a prose grep
@@ -54,11 +68,27 @@ def test_brief_offloads_mechanical_kpis_and_diagnostics(tmp_path):
     assert "tool raised" in brief
 
 
+def test_brief_surfaces_science_result_and_gate_sequence(tmp_path):
+    """The catchable false negatives (probed on a real run): the headline
+    objective, hypotheses left OPEN at close, and the critic verdict sequence —
+    all structured 'where to look', none classifying prose."""
+    brief = run_ledger.analysis_brief(_make_run(tmp_path))
+    # headline: the objective column 'f', not the empty index column; min/max
+    # reported without asserting which end is 'good'
+    assert "objective 'f': min=-0.71" in brief
+    assert "yours to judge" in brief
+    # hypothesis ledger: H1 closed, H2 flagged as still open at close
+    assert "H1: FALSIFIED" in brief
+    assert "H2: OPEN" in brief and "still open at close" in brief
+    # critic gate sequence shows the bounce, not just the count
+    assert "call_001=REJECT, call_002=PASS" in brief
+
+
 def test_brief_relocates_prose_but_does_not_classify(tmp_path):
     brief = run_ledger.analysis_brief(_make_run(tmp_path))
     # prose artifacts are pointed to with counts...
     assert "Step 1 retrospectives: 1 entries" in brief
-    assert "Step 3 critic_reviews: 1 calls" in brief
+    assert "Step 3 critic_reviews: 2 calls" in brief
     assert "read FIRST" in brief and "judge, don't grep" in brief
     # ...and the retrospective is surfaced VERBATIM (relocation, not a verdict):
     # the brief must contain the exact prose, leaving the judgement to the reader.
