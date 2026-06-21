@@ -108,13 +108,6 @@ For every claim or conclusion in the document, ask:
 - Do not invent data.  If you cannot verify a claim from the files
   available, say "unverifiable from available files" — do not assume
   it is wrong.
-- READING THE CANONICAL STORE: use Python to inspect float values, not
-  shell sort. `sort -n` applied to a CSV column of floats fails for
-  negative values: `-0.827` sorts AFTER `-1.0` (integer comparison treats
-  `0.827 > 1.0` as false, so `-1.0` ranks lower). To find the best row,
-  load with Python: `import csv; rows = list(csv.DictReader(open(f)))` and
-  `min(rows, key=lambda r: float(r["output_f"]))` (adjust column name to
-  match the actual output). Never rely on `sort -k N -n` for float evidence.
 - Severity: label each finding CRITICAL (invalidates conclusion),
   MAJOR (weakens conclusion), or MINOR (presentational / incomplete).
 - RESOURCE BOOKKEEPING IS NOT VALIDITY.  Eval-budget overruns, and
