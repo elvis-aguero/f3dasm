@@ -228,13 +228,20 @@ def test_literature_review_wet(tmp_path):
         "delegations/literature/ not created by build_closure_tools"
     )
 
-    # 3. corpus.csv check — may or may not exist depending on whether agent
-    # used CorpusAdd vs. arxiv read_paper directly; both are acceptable.
+    # 3. JOB: the reviewer exists to produce an EVIDENCE-GROUNDED review, so it
+    # must have gathered at least one paper into the corpus — not synthesised
+    # from memory. (Was tolerated as "may or may not exist"; that let a
+    # memory-only review pass, which is the very failure this test should catch.)
     corpus_csv = corpus_dir / "corpus.csv"
     corpus_paper_count = 0
     if corpus_csv.exists():
         rows = corpus_csv.read_text().strip().splitlines()
         corpus_paper_count = max(0, len(rows) - 1)
+    assert corpus_paper_count >= 1, (
+        "literature corpus is empty — the reviewer gathered no evidence. Either "
+        "its tools were unreachable (see the tool-availability check below) or it "
+        "synthesised from memory, which the no-memory-synthesis contract forbids."
+    )
 
     # 4. Report contains literature-related content
     report_lower = report.lower()

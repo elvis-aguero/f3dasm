@@ -1031,3 +1031,45 @@ def test_implementer_oracle_contract_consolidated():
     assert "D000" in p, "lost the reading-the-pool-is-free fact"
     # canonical home named (the ConsultHandbook chapter id)
     assert "evaluate-through-get-evaluator" in p, "KB 0001 not referenced"
+
+
+def test_no_agent_bare_advertises_its_closures():
+    """Contract (BF-13): a tool the agent is shown must be one it can CALL.
+
+    Closures are exposed to the model ONLY by their MCP-qualified name
+    (mcp__f3dasm_agent_tools__X); the generated <tools> catalog advertises them
+    that way. An agent that ALSO hand-lists its closures by a bare call-signature
+    (e.g. 'search_semantic_scholar(query, ...)') gives the model a name it cannot
+    call — the model copies the bare form and the SDK rejects it ("No such tool
+    available"). This is the general invariant the literature reviewer violated
+    (confirmed live): advertise via the catalog, never a bare signature.
+
+    Deterministic regression guard — no wet run needed. Loops every agent, so a
+    future closure-injecting agent is covered too.
+    """
+    import re as _re
+    import tempfile as _tmp
+
+    from f3dasm._src.agentic.agents.critic import AdversarialCritiqueAgent
+    from f3dasm._src.agentic.agents.datagenerator import DataGeneratorAgent
+    from f3dasm._src.agentic.agents.implementer import F3dasmImplementerAgent
+    from f3dasm._src.agentic.agents.literature import LiteratureReviewAgent
+    from f3dasm._src.agentic.agents.strategizer import StrategizerAgent
+
+    native = {"Bash", "Edit", "Read", "Write", "Glob", "Grep"}
+    for Ag in (StrategizerAgent, F3dasmImplementerAgent, LiteratureReviewAgent,
+               DataGeneratorAgent, AdversarialCritiqueAgent):
+        ag = Ag()
+        with _tmp.TemporaryDirectory() as d:
+            closures = set(ag.build_closure_tools(study_dir=d) or {})
+        bare = sorted(
+            n for n in closures
+            if n not in native
+            and _re.search(rf"(?<![\w.]){_re.escape(n)}\s*\(", ag.system_prompt)
+        )
+        assert not bare, (
+            f"{Ag.__name__} advertises closures by bare call-signature {bare} — "
+            "the model can only call the qualified catalog name, so it will hit "
+            "'No such tool available'. Present capabilities and defer to the "
+            "<tools> catalog for exact names (as the strategizer does)."
+        )
