@@ -191,9 +191,13 @@ def _classify_response(
     if len(text.strip()) < 100:
         return REFLECT_DIAGNOSIS_SHORT
     low = text.lower()
-    if any(p in low for p in _CAPABILITY_PHRASES):
-        return REFLECT_DIAGNOSIS_CAPABILITY_LIMIT
+    # A capability-limit only counts when the worker produced NO report at all
+    # (it gave up). A valid report may legitimately say "I cannot reproduce X"
+    # in its Conclusions without being a capability failure (audit O41: the
+    # phrase-match used to fire on correct reports).
     if "## report" not in low:
+        if any(p in low for p in _CAPABILITY_PHRASES):
+            return REFLECT_DIAGNOSIS_CAPABILITY_LIMIT
         return REFLECT_DIAGNOSIS_NO_REPORT_HEADING
     missing = [s for s in sections if s.lower() not in low]
     if missing:
