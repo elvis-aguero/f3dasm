@@ -150,6 +150,36 @@ def _watchdog() -> None:
     os._exit(2)
 
 
+# ── mechanical analysis brief ─────────────────────────────────────────────────
+# On a clean close, emit the MECHANICAL half of the CLAUDE.md analysis protocol
+# (Step-5 KPI baseline vs the previous run + Step-2 diagnostics tally + verbatim
+# ERROR_RETURN events) so the analyst reads ONE artifact instead of grepping the
+# ledger, diagnostics.jsonl and run_status by hand. It only COUNTS + points to
+# the prose artifacts (retrospectives/critic reviews/delegations) — those need
+# judgement and a keyword scan would miss prose-expressed failure modes.
+def _emit_analysis_brief() -> None:
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(STUDY_DIR.parent))
+        import run_ledger as _rl
+        runs_dir = STUDY_DIR / "runs"
+        run_dirs = sorted(d for d in runs_dir.iterdir() if d.is_dir()) \
+            if runs_dir.exists() else []
+        if not run_dirs:
+            return
+        rd = run_dirs[-1]
+        brief = _rl.analysis_brief(rd)
+        (rd / "debug").mkdir(parents=True, exist_ok=True)
+        (rd / "debug" / "analysis_brief.md").write_text(brief, encoding="utf-8")
+        print("\n" + "=" * 72)
+        print(brief)
+        print("=" * 72)
+        print(f"[analysis_brief → {rd / 'debug' / 'analysis_brief.md'}]",
+              flush=True)
+    except Exception as _e:  # never let analysis crash the run's close
+        print(f"[analysis_brief skipped: {_e}]", flush=True)
+
+
 # ── run ───────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     threading.Thread(target=_watchdog, daemon=True).start()
@@ -161,3 +191,4 @@ if __name__ == "__main__":
         eval_budget=1000,
     ).execute()
     print(result)
+    _emit_analysis_brief()
