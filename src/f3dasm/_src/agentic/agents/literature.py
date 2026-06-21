@@ -32,95 +32,40 @@ If the corpus does not contain evidence, write: "Not found in corpus."
 </role>
 
 <primary_source_rule>
-Quote ONLY from full-text papers. Abstract-only corpus entries are
-leads, not sources — CorpusSearch will not return their text.
+Quote ONLY from full-text papers. Abstract-only corpus entries are leads, not
+sources — a corpus search will not return their text.
 
-Acquisition chain:
-1. Search (arxiv_search_papers / search_semantic_scholar /
-   search_openalex) — note pdf_url fields in results.
-2. Download PDF via DownloadPdf(url, filename) or
-   arxiv_download_paper — saves the file locally.
-3. CorpusAdd(source=<saved path>, ...) — indexes the full text.
-4. CorpusSearch() — now returns real passages to quote.
-
-Until a paper has been CorpusAdded from a PDF or full-text markdown
-(>5000 chars), do not quote from it.
+Acquisition chain: SEARCH the databases → DOWNLOAD or read a paper's full text
+→ ADD it to the corpus → SEARCH the corpus for quotable passages. Until a paper
+is in the corpus from full text (>5000 chars), do not quote from it. (The exact
+tool for each step is in the <tools> catalog below.)
 </primary_source_rule>
 
-<corpus_tools>
-  (The signatures below describe what each tool DOES. Call every tool by the
-  EXACT name in the <tools> catalog appended to this prompt — those are the
-  authoritative, MCP-qualified names the runtime actually exposes.)
-  CorpusAdd(source, title, authors, year, doi, arxiv_id, citation_count=0)
-                                  — index a LOCAL file. citation_count boosts
-                                    BM25 retrieval weight: log10(c+1) scaling.
-                                    Pass citationCount from S2 or OpenAlex.
-  CorpusSearch(query, top_k=10)   — passage search across FULL-TEXT papers only.
-                                    Returns ERROR if no full-text papers exist.
-  CorpusRank(passages, question)  — re-rank CorpusSearch results by BM25
-                                    relevance. Use when merging results from
-                                    multiple CorpusSearch calls.
-  CorpusGetPaper(paper_id)        — full extracted text of one paper
-  CorpusList()                    — metadata table; [full-text]/[abstract-only]
-  DownloadPdf(url, filename)      — rate-limited fetch of a PDF URL to disk;
-                                    returns local path or ERROR.
-                                    Validates content-type/magic bytes.
+<tools_note>
+Your exact, callable tools are listed in the <tools> catalog appended to this
+prompt — that is the single authoritative source, generated from the tools the
+runtime actually registered. Call tools by the EXACT names shown there; do not
+guess names. The catalog covers your three capabilities: literature SEARCH
+(arXiv, Semantic Scholar, OpenAlex — and citation-graph traversal), PAPER
+ACQUISITION (download a PDF / read a paper directly), and the CORPUS (add a
+local full-text file, then search/rank/list its passages).
 
-  Corpus location: delegations/literature/  (under the run's debug_dir)
-    corpus.csv             — metadata index
-    papers/{id}/paper.md   — page-annotated extracted text
-</corpus_tools>
-
-<discovery_tools>
-  arxiv_search_papers(query, max_results)
-                                  — find papers; returns IDs, titles, abstracts
-  arxiv_download_paper(paper_id, dir)
-                                  — download PDF to dir; returns local path
-  arxiv_read_paper(paper_id)
-                                  — extract text directly (no PDF needed)
-  search_semantic_scholar(query, num_results=10)
-                                  — search Semantic Scholar (200M+ papers)
-  get_semantic_scholar_paper_details(paper_id)
-                                  — citation count, influential citations, venue, TLDR
-  get_semantic_scholar_citations_and_references(paper_id)
-                                  — forward + backward citation traversal (≤20)
-  search_openalex(query, n_results=10)
-                                  — 300M+ works; returns pdf_url (best_oa_location)
-                                    for open-access works. Strong for non-arXiv
-                                    journals (JMPS, CMAME, Acta Materialia).
-  get_openalex_citations(work_id, n_results=20)
-                                  — papers that cite work_id, sorted by citation
-                                    count; citation-graph traversal fallback when
-                                    Semantic Scholar is rate-limited.
-  get_openalex_references(work_id)
-                                  — reference list of work_id (first 40), hydrated
-                                    in one batched call; citation-graph traversal
-                                    fallback when Semantic Scholar is rate-limited.
-  get_semantic_scholar_recommendations(paper_id, n_results=10)
-                                  — semantically similar papers without citation
-                                    links.
-  get_semantic_scholar_author_details(author_id)
-  Read(path)                      — read any local file
-  Grep(pattern, path)             — search text in files
-</discovery_tools>
+The corpus lives under delegations/literature/ in the run's debug dir
+(corpus.csv = metadata index; papers/{id}/paper.md = page-annotated text).
+</tools_note>
 
 <workflow>
-1. Expand queries: restate the question as 3-5 domain-specific keywords.
-   Search arxiv_search_papers, search_semantic_scholar, AND
-   search_openalex. Note pdf_url in results.
-2. For each relevant paper, acquire full text via ONE of:
-   a) arxiv_read_paper(paper_id) → write to {delegation_id}/{paper_id}.md
-      (only if result is >5000 chars), then CorpusAdd(source=…)
-   b) pdf_url from search_openalex / get_semantic_scholar_paper_details →
-      DownloadPdf(url, "{delegation_id}/{paper_id}.pdf") →
-      CorpusAdd(source=<path>, arxiv_id=…, title=…, …)
-   c) arxiv_download_paper(paper_id, dir="{delegation_id}/") →
-      CorpusAdd(source=…)
-3. CorpusSearch() for passages. Call with multiple phrasings.
-   CorpusRank() to merge and reorder results before quoting.
-4. Quote verbatim; don't paraphrase.
-5. If no passage answers a question, say "Not found in corpus." and
-   list queries tried.
+1. Expand the question into 3-5 domain keywords and SEARCH all three literature
+   databases (arXiv, Semantic Scholar, OpenAlex — OpenAlex is strongest for
+   non-arXiv journals like JMPS / CMAME / Acta Materialia). Note any pdf_url.
+2. For each relevant paper, ACQUIRE its full text — read it directly, or
+   download the PDF — then ADD it to the corpus. Until a paper is in the corpus
+   from full text (>5000 chars), you may not quote it.
+3. SEARCH the corpus for passages (try multiple phrasings; re-rank when merging
+   results from several searches).
+4. Quote verbatim with a citation (Author et al., Year, p. X); never paraphrase.
+5. If no passage answers a question, say "Not found in corpus." and list the
+   queries you tried.
 </workflow>
 
 <operating_principles>
@@ -239,22 +184,38 @@ class LiteratureReviewAgent(Agent):
         corpus = LiteratureCorpus(corpus_dir)
         cache_dir = corpus._http_cache_dir
 
+        # Defined as named functions (not lambdas) so each carries a docstring:
+        # the generated <tools> catalog renders these, making it the single
+        # source of tool docs — no hand-written list in the prompt to drift.
+        def CorpusAdd(source, title="", authors="", year="", doi="",
+                      arxiv_id="", venue="", abstract="", citation_count=0):
+            """Index a LOCAL file (a saved PDF or full-text markdown) into the
+            corpus so its passages become searchable. citation_count boosts BM25
+            retrieval weight (log10(c+1) scaling) — pass the citationCount from
+            Semantic Scholar or OpenAlex."""
+            return corpus.add(
+                source, title=title, authors=authors, year=year, doi=doi,
+                arxiv_id=arxiv_id, venue=venue, abstract=abstract,
+                citation_count=int(citation_count or 0))
+
+        def CorpusSearch(query, top_k=10):
+            """Passage search across the FULL-TEXT papers in the corpus only.
+            Returns an ERROR string if no full-text papers have been added yet —
+            add papers first via the search → download → CorpusAdd chain."""
+            return corpus.search(query, int(top_k))
+
+        def CorpusGetPaper(paper_id):
+            """Return the full extracted (page-annotated) text of one corpus paper."""
+            return corpus.get_paper(paper_id)
+
+        def CorpusList():
+            """List corpus metadata — each paper tagged [full-text] or
+            [abstract-only] so you know which you may quote from."""
+            return corpus.list_papers()
+
         tools = {
-            "CorpusAdd": lambda source, title="", authors="",
-            year="", doi="", arxiv_id="", venue="", abstract="",
-            citation_count=0: corpus.add(
-                source, title=title, authors=authors, year=year,
-                doi=doi, arxiv_id=arxiv_id, venue=venue,
-                abstract=abstract,
-                citation_count=int(citation_count or 0),
-            ),
-            "CorpusSearch": lambda query, top_k=10: corpus.search(
-                query, int(top_k)
-            ),
-            "CorpusGetPaper": lambda paper_id: corpus.get_paper(
-                paper_id
-            ),
-            "CorpusList": lambda: corpus.list_papers(),
+            "CorpusAdd": CorpusAdd, "CorpusSearch": CorpusSearch,
+            "CorpusGetPaper": CorpusGetPaper, "CorpusList": CorpusList,
         }
 
         # Semantic Scholar tools via the semanticscholar library.
