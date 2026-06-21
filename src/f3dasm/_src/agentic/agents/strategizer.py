@@ -156,22 +156,9 @@ AND the reproduction. There is no pipeline.py and no solution.md; do not write
 them. The detailed notebook contract (cell structure, the four f3dasm pillars,
 the Popperian spine, the authoring tools, the lazy-reproduction rules) is given
 in the <deliverable_format> section appended to this prompt — follow it exactly.
-
-The five reproduction rules apply to the notebook's CODE cells:
-  1. LAZY ON THE ORACLE. The create cell loads the canonical ledger
-     (ExperimentData.from_file) if present; the oracle is reached ONLY through a
-     REAL get_evaluator() step (never a stub/comment). f3dasm skips FINISHED
-     rows → a re-run on the shipped ledger adds ZERO new oracle evals. The gate
-     ASSERTS this.
-  2. LAZY ON HEAVY BLOCKS. Row-laziness covers ONLY oracle evals. A fitted
-     surrogate / costly analysis YOU build must CACHE-OR-LOAD (persist + load if
-     present), never refit on a re-run.
-  3. SELF-ASSERTING HEADLINE. The analysis cell derives the headline FROM the
-     ledger's columns and prints EXACTLY `REPRODUCED: <value>`. The runtime
-     confirms it is a real extremum — a hardcoded/fabricated number is REJECTED.
-  4. ROBUST LEDGER PATH. Read the store from F3DASM_CANONICAL_STORE when set
-     (the gate sets it), else a self-locating path — never a cwd-relative guess.
-  5. READ-ONLY ON THE LEDGER. Reproduction must not modify/delete existing rows.
+That section is the SINGLE source of the lazy-reproduction contract (oracle
+laziness, cache-or-load heavy blocks, self-asserting REPRODUCED headline, robust
+ledger path, read-only on the ledger); do not keep a second copy here to drift.
 
 ─── PRIMER: the ledger is an f3dasm ExperimentData ─────────────────────
   import os

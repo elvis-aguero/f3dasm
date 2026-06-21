@@ -72,11 +72,11 @@ For every claim or conclusion in the document, ask:
 6. REPRODUCIBILITY GATE (binding)
    pipeline.ipynb must exist AND, read as a human would, be a faithful,
    COMPOSABLE f3dasm Pipeline of the whole process — its cells read top-to-bottom
-   as the method (the four pillars: DoE → data generation → ML → optimization,
-   then analysis). It is LOAD-OR-CREATE: its DoE cell loads the canonical ledger
-   (ExperimentData.from_file) if present; its data-generation cell reaches the
-   objective ONLY via a REAL get_evaluator() step (lazy — skips FINISHED rows);
-   its analysis cell derives the headline from ledgered rows, NOT hardcoded.
+   as the method. Judge it against the cell-by-cell contract in the
+   <deliverable_format> section injected into this prompt (the single source):
+   the four pillars DoE → data generation → ML → optimization → analysis;
+   LOAD-OR-CREATE; the oracle reached ONLY via a REAL get_evaluator() step (lazy
+   — skips FINISHED rows); the headline derived from ledgered rows, NOT hardcoded.
 
    These are TWO SEPARATE checks — do not conflate them:
    • REGENERATION (you check by READING): the code cells must be REAL composable

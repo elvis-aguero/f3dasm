@@ -73,7 +73,12 @@ def test_run_paths_preamble_has_experiment_data_dir():
 
 
 def test_pipeline_deliverable_is_lazy_and_self_asserting():
-    p = STRATEGIZER_SYSTEM_PROMPT
+    # BF-12: the lazy-reproduction contract lives in ONE place — the injected
+    # <deliverable_format> spec, not a second copy in the strategizer base
+    # prompt. Assert against the assembled prompt the strategizer actually
+    # receives (base + injected spec).
+    from f3dasm._src.agentic.notebook_exec import notebook_deliverable_spec
+    p = STRATEGIZER_SYSTEM_PROMPT + notebook_deliverable_spec("strategizer")
     # the deliverable is the notebook; its code cells load the ledger and reach
     # the oracle via get_evaluator()
     assert "pipeline.ipynb" in p
@@ -83,24 +88,27 @@ def test_pipeline_deliverable_is_lazy_and_self_asserting():
     assert "ZERO new oracle evals" in p
     # self-asserting headline, never hardcoded
     assert "REPRODUCED" in p
-    assert "hardcoded" in p.lower()
+    assert "hardcode" in p.lower()
 
 
 def test_strategizer_has_pipeline_authoring_primer():
-    """The strategizer AUTHORS pipeline.ipynb, so it must carry a concrete
-    f3dasm primer — load the ledger, read its frames, cache heavy blocks,
-    and derive (not hardcode) the headline."""
-    p = STRATEGIZER_SYSTEM_PROMPT
-    # concrete ledger-read API, not just from_file
-    assert "to_pandas()" in p
+    """The strategizer AUTHORS pipeline.ipynb, so the assembled prompt must
+    carry a concrete f3dasm primer — load the ledger, read its frames, cache
+    heavy blocks, and derive (not hardcode) the headline. The reproduction
+    rules live in the injected spec (BF-12), so assert the assembled prompt."""
+    from f3dasm._src.agentic.notebook_exec import notebook_deliverable_spec
+    base = STRATEGIZER_SYSTEM_PROMPT
+    p = base + notebook_deliverable_spec("strategizer")
+    # concrete ledger-read API, not just from_file (lives in the base primer)
+    assert "to_pandas()" in base
     # heavy non-oracle blocks must cache-or-load; store path via env
     assert "CACHE-OR-LOAD" in p
     assert "F3DASM_CANONICAL_STORE" in p
     # explicit anti-hardcoding guidance the critic can lean on
     low = p.lower()
     assert "hardcod" in low and "derive" in low
-    # the detailed cell structure lives in the injected deliverable_format spec
-    assert "deliverable_format" in low
+    # the base prompt points at the single-source deliverable_format spec
+    assert "deliverable_format" in base.lower()
 
 
 # ---------------------------------------------------------------------------
