@@ -12,6 +12,29 @@ from typing import Any
 
 __all__ = ["ClaudeAdapter"]
 
+# The in-process MCP server name every f3dasm closure is registered under. The
+# Claude SDK exposes each closure to the model ONLY by its qualified name
+# ``mcp__<server>__<tool>`` (that is also what allowed_tools carries), so the
+# prompt's <tools> catalog must advertise the SAME qualified names — a bare-name
+# catalog tells the model to call a tool that does not exist ("No such tool
+# available"). One constant + one helper feed BOTH the registration and the
+# catalog so they can never drift apart.
+_CLOSURE_MCP_SERVER = "f3dasm_agent_tools"
+
+
+def _qualify_closure_names(closure_tools: dict) -> dict:
+    """Re-key a bare closure dict by the MCP-qualified names the SDK exposes.
+
+    Pure; returns ``{}`` unchanged on an empty dict. Used for both the
+    allowed_tools list and the <tools> catalog so the model is shown exactly
+    the names it can call.
+    """
+    return {
+        f"mcp__{_CLOSURE_MCP_SERVER}__{name}": fn
+        for name, fn in closure_tools.items()
+    }
+
+
 _SDK_AVAILABLE: bool | None = None  # None = not yet checked
 
 
@@ -302,7 +325,7 @@ class ClaudeAdapter:
         mcp_servers: dict = {}
         qualified_mcp_tools: list[str] = []
         if self.closure_tools:
-            server_name = "f3dasm_agent_tools"
+            server_name = _CLOSURE_MCP_SERVER
             sdk_tools: list[Any] = []
             for tool_name, fn in self.closure_tools.items():
                 schema = _infer_schema_from_callable(fn)
@@ -343,9 +366,7 @@ class ClaudeAdapter:
                 name=server_name, tools=sdk_tools or None
             )
             mcp_servers = {server_name: mcp_cfg}
-            qualified_mcp_tools = [
-                f"mcp__{server_name}__{t.name}" for t in sdk_tools
-            ]
+            qualified_mcp_tools = list(_qualify_closure_names(self.closure_tools))
 
         # Merge external stdio MCP servers declared by the Agent subclass.
         if self.extra_mcp_servers:
@@ -431,9 +452,11 @@ class ClaudeAdapter:
                 pass
 
         from ..tool_catalog import system_prompt_with_catalog
+        # Catalog shows the QUALIFIED names (same helper as allowed_tools above),
+        # so the AUTHORITATIVE <tools> block matches what the model can call.
         options = ClaudeAgentOptions(
             system_prompt=system_prompt_with_catalog(
-                self.system_prompt, self.closure_tools),
+                self.system_prompt, _qualify_closure_names(self.closure_tools)),
             model=self.model,
             cwd=str(self.study_dir) if self.study_dir else None,
             tools=self.native_tools or [],

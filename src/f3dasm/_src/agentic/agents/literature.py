@@ -48,6 +48,9 @@ Until a paper has been CorpusAdded from a PDF or full-text markdown
 </primary_source_rule>
 
 <corpus_tools>
+  (The signatures below describe what each tool DOES. Call every tool by the
+  EXACT name in the <tools> catalog appended to this prompt — those are the
+  authoritative, MCP-qualified names the runtime actually exposes.)
   CorpusAdd(source, title, authors, year, doi, arxiv_id, citation_count=0)
                                   — index a LOCAL file. citation_count boosts
                                     BM25 retrieval weight: log10(c+1) scaling.
