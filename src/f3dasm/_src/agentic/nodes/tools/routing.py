@@ -523,7 +523,11 @@ def build_routing_tools(node) -> dict:
             evals_box: dict = {"count": 0}
 
             def ReportEvals(count: int) -> str:
-                """Report the number of function evaluations used."""
+                """Report the total ground-truth evaluations you performed this
+                task. Call once per task, ALWAYS — even if 0. When you use
+                get_evaluator() the canonical ledger is authoritative for the
+                count, but this call also ARMS the unledgered-evals safety check,
+                so never skip it."""
                 evals_box["count"] = int(count)
                 # Drain any queued budget warnings for this delegation.
                 with node._pending_worker_msgs_lock:
