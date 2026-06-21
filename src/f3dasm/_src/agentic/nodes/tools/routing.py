@@ -584,6 +584,10 @@ def build_routing_tools(node) -> dict:
             worker.closure_tools["ReportEvals"] = ReportEvals  # not wrapped: never errors
             worker.closure_tools["ReportProgress"] = ReportProgress  # not wrapped
             worker.closure_tools["FollowUp"] = node._wrap_closure(FollowUp, target)
+            # Confer: async messaging to the orchestrator (or any woken peer).
+            # The worker drains its OWN inbox collect-on-send (see _build_confer).
+            worker.closure_tools["Confer"] = node._wrap_closure(
+                _build_confer(target), target)
             # ConsultHandbook is injected universally at adapter construction
             # (agent_runtime._make_adapter) — every node gets it equally there.
             try:
@@ -2009,6 +2013,61 @@ def build_routing_tools(node) -> dict:
             + subset.to_string(index=False)
         )
 
+    def _build_confer(sender_name: str):
+        """Factory: returns a Confer closure for any node in the graph.
+
+        Works identically for the orchestrating node, a worker, or a peer —
+        sender_name is the only difference. Async: never blocks. A message is
+        queued in the TARGET's inbox and delivered when the target next drains
+        (orchestrator: each turn via _drain_notifications; worker: collect-on-
+        send the next time IT calls Confer). Faithful port of the stashed
+        Confer design.
+        """
+        def Confer(target: str, message: str) -> str:
+            """Send an async message to another node in the run.
+
+            Returns immediately — neither side blocks. The message is delivered
+            to the target when it next drains its inbox (the orchestrator on its
+            next turn; a worker the next time it itself calls Confer). target
+            must be a node delegated to at least once this run (ever-woken
+            guard), or the orchestrating node itself. Reply by convention with
+            Confer(sender_name, "re #N: <answer>").
+            """
+            with node._registry_lock:
+                ever_woken = (target == node._name) or any(
+                    e.get("target") == target
+                    for e in node._registry.values()
+                )
+            if not ever_woken:
+                return (
+                    f"ERROR: {target!r} has never been delegated to "
+                    "— cannot Confer with a node that was never woken."
+                )
+            seq = node._next_confer_seq()
+            envelope = (
+                f"[Confer #{seq} from {sender_name} → {target}]: {message}\n"
+                f"→ reply with Confer(\"{sender_name}\", \"re #{seq}: "
+                "<answer>\")"
+            )
+            with node._confer_inbox_lock:
+                node._confer_inbox.setdefault(target, []).append(envelope)
+                # Collect-on-send: drain any messages addressed to this sender
+                # so replies arrive alongside the send confirmation.
+                inbox = node._confer_inbox.pop(sender_name, [])
+            inbox_text = ("\n\n".join(inbox) + "\n\n") if inbox else ""
+            return (
+                inbox_text
+                + f"Message queued for {target!r} (confer #{seq}); "
+                "delivered when they next drain their inbox."
+            )
+        return Confer
+
+    def _orchestrator_confer(target: str, message: str) -> str:
+        """Confer for the orchestrating node — prepends the notification drain
+        (which also delivers this node's own inbox)."""
+        prefix = node._drain_notifications()
+        return prefix + _build_confer(node._name)(target, message)
+
     # Topology-injected tools go to every orchestrating node.
     closures: dict = {
         "Delegate": Delegate,
@@ -2255,6 +2314,8 @@ def build_routing_tools(node) -> dict:
         closures["AddPipelineCell"] = AddPipelineCell
     if "SetNotebookIntro" in _agent_tools:
         closures["SetNotebookIntro"] = SetNotebookIntro
+    if "Confer" in _agent_tools:
+        closures["Confer"] = _orchestrator_confer
     # ConsultHandbook is injected universally at adapter construction
     # (agent_runtime._make_adapter) — no per-node duplication here.
 

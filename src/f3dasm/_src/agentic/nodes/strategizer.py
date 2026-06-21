@@ -80,6 +80,13 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         # Tracks which budget % thresholds (80, 90, 100, 110 …) have already
         # been broadcast to workers so each is sent exactly once.
         self._budget_notified_pcts: set[int] = set()
+        # Confer messaging: async inter-node messages keyed by TARGET node name.
+        # A node's messages are delivered when it next drains (orchestrator: each
+        # turn via _drain_notifications; worker: collect-on-send when it next
+        # calls Confer). Faithful port of the stashed Confer design (audit).
+        self._confer_seq: int = 0
+        self._confer_inbox: dict[str, list[str]] = {}
+        self._confer_inbox_lock = threading.Lock()
         # Hypothesis ledger — persists hypotheses.json
         self._ledger: HypothesisLedger | None = (
             HypothesisLedger(Path(notes_dir)) if notes_dir is not None else None
@@ -245,6 +252,13 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                 msgs = list(self._notifications)
                 self._notifications.clear()
                 text = "\n".join(msgs) + "\n\n"
+        # Confer inbox: messages other nodes addressed to THIS node (async
+        # mailbox). Drained here so the orchestrator receives them on its next
+        # turn / next tool call, prepended to any push notifications.
+        with self._confer_inbox_lock:
+            _confer = self._confer_inbox.pop(self._name, [])
+        if _confer:
+            text = "\n\n".join(_confer) + "\n\n" + text
         if self._science_monitor is not None:
             offenders = self._science_monitor.escalation_due()
             _critic_name = self._find_critic_name()
@@ -295,6 +309,12 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                         text += drift
                         self._science_injected_this_turn = True
         return text
+
+    def _next_confer_seq(self) -> int:
+        """Monotonic per-run Confer message sequence number."""
+        with self._confer_inbox_lock:
+            self._confer_seq += 1
+            return self._confer_seq
 
     def _build_routing_closures(self) -> dict:
         from .tools.routing import build_routing_tools

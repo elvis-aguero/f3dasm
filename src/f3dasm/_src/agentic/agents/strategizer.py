@@ -385,7 +385,8 @@ class StrategizerAgent(Agent):
     system_prompt = STRATEGIZER_SYSTEM_PROMPT
     tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
                        "WriteDeliverable", "CheckDeliverable",
-                       "SetNotebookIntro", "AddPipelineCell", "Wait"})
+                       "SetNotebookIntro", "AddPipelineCell", "Wait",
+                       "Confer"})
     reset_on_checkpoint = False
     role = "strategizer"
     needs_jupyter_server = True
