@@ -89,10 +89,11 @@ CRAFT_PIPELINE = DefaultMilestone(
 )
 ASSESS_LITERATURE = DefaultMilestone(
     "assess_literature_need",
-    "Identify any elements of the problem that could require a literature "
-    "review. Agents are notoriously prone to memory bias, and scientific "
-    "quality degrades exponentially the closer a decision sits to the mean — "
-    "be sharp about where you might be wrong.",
+    "Identify any element of the problem where you would otherwise fall back "
+    "on memory or a default instead of evidence — surrogate/kernel choice, "
+    "acquisition function, sampler, convergence criteria, or the problem "
+    "framing itself. Those are where to consult the literature; be sharp about "
+    "where you might be wrong (an honest outcome may be 'no review needed').",
     None,  # manual: a reflection (its honest outcome may be 'no review needed')
 )
 ORACLE_GOLD_STATE = DefaultMilestone(

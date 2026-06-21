@@ -166,7 +166,7 @@ def test_render_backlog_announcement(tmp_path):
     assert "f3dasm implementer" in bl
     assert "MilestoneSkip" in bl
     # the three milestones are listed
-    for kw in ("Pipeline", "literature review", "oracle"):
+    for kw in ("Pipeline", "literature", "oracle"):
         assert kw.lower() in bl.lower()
 
 
