@@ -1036,40 +1036,52 @@ class LiteratureCorpus:
     # ------------------------------------------------------------------
 
     def _extract_pdf_to_md(self, pdf_path: Path) -> str:
-        """Extract page-annotated Markdown from *pdf_path*.
+        """Extract page-annotated Markdown from *pdf_path*, robustly.
 
-        Tries Docling first (layout-aware), then pymupdf, then a
-        placeholder.
+        Run the fast, reliable PyMuPDF text extractor FIRST; if it yields a real
+        body, use it. Only when PyMuPDF comes back thin (a scanned or
+        complex-layout PDF) do we pay for Docling (layout-aware / OCR). Return
+        the LONGEST substantive result across methods — never the first that
+        merely clears a low floor.
+
+        Why: the old order tried Docling first and returned ANY result > 100
+        chars, so a botched 236-char Docling parse of Snoek et al. 2015 was
+        accepted while PyMuPDF extracts that same PDF's full ~53k-char body.
+        Taking the best across methods maximises the chance a paper parses.
         """
-        # Try Docling first
+        candidates: list[str] = []
+
+        # 1. PyMuPDF (fitz) — fast and reliable for text-based PDFs.
+        if fitz is not None:
+            try:
+                doc = fitz.open(str(pdf_path))
+                parts = [f"<!-- page {n} -->\n{pg.get_text()}"
+                         for n, pg in enumerate(doc, start=1)]
+                doc.close()
+                fitz_md = "\n\n".join(parts)
+                candidates.append(fitz_md)
+                # A real body already — skip the slow layout/OCR path.
+                if len(fitz_md.strip()) > _FULL_TEXT_MD_THRESHOLD:
+                    return fitz_md
+            except Exception:  # noqa: BLE001
+                pass
+
+        # 2. Docling — layout-aware / OCR; only reached when fitz was thin
+        #    (scanned or heavily-formatted PDF), where it can recover text fitz
+        #    cannot.
         try:
             from docling.document_converter import (  # type: ignore
                 DocumentConverter,
             )
-            converter = DocumentConverter()
-            result = converter.convert(str(pdf_path))
-            md = result.document.export_to_markdown()
-            if md and len(md.strip()) > 100:
-                return md
-        except Exception:
-            pass  # fall through to pymupdf
+            result = DocumentConverter().convert(str(pdf_path))
+            candidates.append(result.document.export_to_markdown() or "")
+        except Exception:  # noqa: BLE001
+            pass
 
-        # pymupdf fallback
-        if fitz is not None:
-            try:
-                doc = fitz.open(str(pdf_path))
-                parts: list[str] = []
-                for page_num, page in enumerate(doc, start=1):
-                    text = page.get_text()
-                    parts.append(f"<!-- page {page_num} -->\n{text}")
-                doc.close()
-                return "\n\n".join(parts)
-            except Exception:
-                pass
-
-        return (
-            "(PDF extraction unavailable — install docling or pymupdf)"
-        )
+        best = max(candidates, key=lambda c: len((c or "").strip()), default="")
+        if len(best.strip()) > 100:
+            return best
+        return "(PDF extraction unavailable — install docling or pymupdf)"
 
     # ------------------------------------------------------------------
     # Chunking infrastructure

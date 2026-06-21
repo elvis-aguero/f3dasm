@@ -233,11 +233,14 @@ def test_extract_pdf_to_md_page_annotations(tmp_path):
     corpus = _make_corpus(tmp_path)
 
     if fitz_available:
-        # Create a minimal PDF using fitz itself
+        # A realistic text PDF (real papers are large): fitz extracts the full
+        # body and returns it page-annotated, without falling through to the
+        # layout/OCR path. (A 25-char stub would be treated as a thin/scanned
+        # extraction and recovered via Docling, which has no page markers.)
         doc = fitz.open()
-        doc.new_page()
-        page = doc[0]
-        page.insert_text((50, 50), "Hello world from page one")
+        for _ in range(8):
+            pg = doc.new_page()
+            pg.insert_textbox(fitz.Rect(40, 40, 560, 760), ("word " * 150))
         pdf_path = tmp_path / "test.pdf"
         doc.save(str(pdf_path))
         doc.close()
@@ -283,6 +286,31 @@ def test_pdf_failed_extraction_is_rejected_not_stored_as_fulltext(
     assert result.startswith("ERROR"), result
     assert "arxiv_read_paper" in result  # points to the working alternative
     assert corpus._load_csv() == []      # nothing phantom entered the corpus
+
+
+def test_extraction_returns_real_body_from_text_pdf(tmp_path):
+    """Regression: a text PDF must extract its full body. The old code tried
+    Docling first and returned ANY result >100 chars, so a botched 236-char
+    Docling parse of a 13-page paper (Snoek et al. 2015) was accepted while
+    PyMuPDF extracts ~53k chars. Now PyMuPDF runs first and a real body wins."""
+    import pytest as _pt
+    try:
+        import fitz
+    except ImportError:
+        _pt.skip("fitz not available")
+    corpus = _make_corpus(tmp_path)
+    doc = fitz.open()
+    for _ in range(8):  # ~6000 chars of real text, comfortably > threshold
+        pg = doc.new_page()
+        pg.insert_textbox(fitz.Rect(40, 40, 560, 760), ("word " * 150))
+    pdf = tmp_path / "text_paper.pdf"
+    doc.save(str(pdf))
+    doc.close()
+
+    md = corpus._extract_pdf_to_md(pdf)
+    assert len(md) > 5000, f"expected a real body, got {len(md)} chars"
+    assert "word" in md
+    assert "unavailable" not in md.lower()
 
 
 def test_pdf_real_extraction_is_stored_as_fulltext(tmp_path, monkeypatch):
