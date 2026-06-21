@@ -69,7 +69,7 @@ Questions:
 
 
 @pytest.mark.integration
-def test_literature_review_wet(tmp_path):
+def test_literature_review_wet(tmp_path, capfd):
     """End-to-end wet test: LiteratureReviewAgent with real LLM + arxiv MCP."""
 
     # --- Study setup -------------------------------------------------------
@@ -212,71 +212,76 @@ def test_literature_review_wet(tmp_path):
     report = run.execute()
     elapsed = time.time() - start
 
-    # --- Assertions --------------------------------------------------------
+    # --- Assertions: did the reviewer DO ITS JOB? -------------------------
+    # The bar is the reviewer's contract, not surface plausibility: its tools
+    # were callable, it gathered REAL full-text evidence (no phantom papers, no
+    # MuPDF noise), and the review is grounded in that corpus (not memory).
+    import csv as _csv
+
     run_dir = next((study / "runs").iterdir())
-    # build_closure_tools(study) without lit_reviewer_notes_dir uses
-    # the study/delegations/literature fallback.
     corpus_dir = study / "delegations" / "literature"
 
-    # 1. Report was produced and is non-trivial
-    assert report and len(report) > 100, (
-        f"Report too short or empty: {report!r}"
-    )
+    # The literature DELEGATION's report — NOT the run's final headline, which is
+    # "⚠ UNGATED" boilerplate when the scripted Done() is refused by the critic.
+    records = [json.loads(l) for l in
+               (run_dir / "debug" / "delegation_log.jsonl").read_text().splitlines()
+               if l.strip()]
+    lit_done = [r for r in records
+                if r.get("to_node") == "literature_reviewer" and r.get("deliverable")]
+    assert lit_done, "no completed literature delegation produced a report"
+    lit = lit_done[-1]
+    review = lit["deliverable"]
+    assert len(review) > 100, f"literature report too short: {review!r}"
 
-    # 2. Corpus infrastructure was initialised (dir created by build_closure_tools)
-    assert corpus_dir.exists(), (
-        "delegations/literature/ not created by build_closure_tools"
-    )
+    # (The bare-vs-qualified "No such tool available" contract is guarded
+    # deterministically and offline by test_no_agent_bare_advertises_its_closures;
+    # this wet test asserts the end-to-end OUTCOME instead.)
 
-    # 3. JOB: the reviewer exists to produce an EVIDENCE-GROUNDED review, so it
-    # must have gathered at least one paper into the corpus — not synthesised
-    # from memory. (Was tolerated as "may or may not exist"; that let a
-    # memory-only review pass, which is the very failure this test should catch.)
+    # 1. CLEAN TOOLS (deterministic): PDF parsing emitted no MuPDF stderr spam.
+    cap = capfd.readouterr()
+    assert "MuPDF error" not in (cap.out + cap.err), (
+        "PDF extraction emitted MuPDF errors — half-baked tooling")
+
+    # 2. NO PHANTOM FULL-TEXT (deterministic): every paper marked full-text has a
+    #    real extracted body (>5000 chars) — never a placeholder stored as
+    #    quotable (the arxiv_1502_05700 236-char bug).
     corpus_csv = corpus_dir / "corpus.csv"
-    corpus_paper_count = 0
-    if corpus_csv.exists():
-        rows = corpus_csv.read_text().strip().splitlines()
-        corpus_paper_count = max(0, len(rows) - 1)
-    assert corpus_paper_count >= 1, (
-        "literature corpus is empty — the reviewer gathered no evidence. Either "
-        "its tools were unreachable (see the tool-availability check below) or it "
-        "synthesised from memory, which the no-memory-synthesis contract forbids."
-    )
+    assert corpus_csv.exists(), "no corpus.csv — the reviewer indexed nothing"
+    rows = list(_csv.DictReader(corpus_csv.open()))
+    fulltext = [r for r in rows if r.get("full_text") == "true"]
+    for r in fulltext:
+        md = Path(r["local_md_path"])
+        n = len(md.read_text(encoding="utf-8")) if md.exists() else 0
+        assert n > 5000, (
+            f"{r['paper_id']} marked full-text but body is {n} chars — "
+            "a failed extraction stored as quotable")
 
-    # 4. Report contains literature-related content
-    report_lower = report.lower()
-    literature_signals = [
-        "paper", "arxiv", "gaussian process", "surrogate", "acquisition",
-        "doi", "##", "###", "et al", "bayesian",
-    ]
-    matched = [s for s in literature_signals if s in report_lower]
-    assert len(matched) >= 2, (
-        f"Report doesn't look like a literature review — "
-        f"matched only {matched} from {literature_signals}\n\nReport:\n{report[:500]}"
-    )
+    # 3. REAL EVIDENCE (the job): at least two full-text papers were gathered.
+    assert len(fulltext) >= 2, (
+        f"only {len(fulltext)} full-text papers gathered — too thin to ground a "
+        "review")
 
-    # 5. token table stamped into the deliverable notebook (there is no
-    #    solution.md — the notebook's markdown IS the writeup).
+    # 4. GROUNDED (the job): the review references papers that are IN the corpus
+    #    (by arxiv id / doi / first-author surname) — not synthesised from memory.
+    rl = review.lower()
+    anchors = []
+    for r in fulltext:
+        for k in (r.get("arxiv_id"), r.get("doi")):
+            if k:
+                anchors.append(k.lower())
+        au = (r.get("authors") or "").replace(",", " ").split()
+        if au:
+            anchors.append(au[0].lower())  # first-author surname/given
+    grounded = sum(1 for a in anchors if a and a in rl)
+    assert grounded >= 1, (
+        "the review references no corpus paper by id or author — possible "
+        "memory synthesis")
+
+    # 5. token table stamped into the deliverable notebook
     import nbformat
     nb = nbformat.read(str(study / "pipeline.ipynb"), as_version=4)
     md = "\n\n".join(c.source for c in nb.cells if c.cell_type == "markdown")
     assert "## Token usage" in md
 
-    # 6. delegation log has the literature review delegation
-    jsonl = run_dir / "debug" / "delegation_log.jsonl"
-    assert jsonl.exists(), "debug/delegation_log.jsonl missing"
-    records = [
-        json.loads(l) for l in jsonl.read_text().strip().splitlines()
-    ]
-    lit_records = [
-        r for r in records if r.get("to_node") == "literature_reviewer"
-    ]
-    assert lit_records, "No delegation to literature_reviewer in JSONL"
-
-    print(f"\n✓ Wet test passed in {elapsed:.0f}s")
-    print(f"  Report length: {len(report)} chars")
-    print(f"  Papers in corpus CSV: {corpus_paper_count}")
-    print(f"  Literature signals matched: {matched}")
-    if corpus_csv.exists():
-        print(f"  corpus.csv: {corpus_paper_count} papers")
-    print(f"\n--- Report (first 800 chars) ---\n{report[:800]}")
+    print(f"\n✓ Wet test passed in {elapsed:.0f}s: {len(fulltext)} full-text "
+          f"papers, {grounded} grounded refs, clean tools, no MuPDF errors")
