@@ -261,3 +261,56 @@ substance a rule cannot:
 **Done-when (KPI):** verdict reproducibility across same-problem runs improves;
 goalpost-moves caught LIVE (not only post-hoc by the critic); the falsification-attempt
 linkage becomes load-bearing rather than advisory.
+
+## 10. Strategizer delegates the optimization as ONE monolithic, un-budgeted campaign
+**Status:** raised 2026-06-22 (run 20260622T165943 watchdog post-mortem). **§4 — budget/decomposition, user-owned.** The recurring binding constraint once upstream phases are clean.
+
+The strategizer delegates the WHOLE optimization to one implementer call. Verbatim
+intent (D004): "Execute a comprehensive 1000-eval black-box minimization campaign …
+PHASE 1 LHS 250 … PHASE 2 BO loop ~700 evals … PHASE 3 multi-start 50". Its thinking:
+"Now I'll delegate to the implementer to execute the full campaign … fairly
+open-ended." No wall-clock budgeting, no chunking (it does NOT delegate Phase 1,
+check the budget, then Phase 2). The implementer runs it as a monolithic background
+script (optimize_1000eval.py) whose GP-surrogate BO loop is O(n³) per refit over 700
+iterations — inherently slow. Result: ~41 min, 673/1000 evals, never finished, watchdog.
+
+**KPI contrast (the tell):** run 20260622T043904 GATED with ~996 evals in **22 min**;
+run 20260622T050137 GATED with 2570 evals in 49 min. So a ~1000-eval campaign CAN fit
+and gate — the failure is per-eval SLOWNESS (heavy GP-BO refits) + a no-chunk, no-time-
+budget delegation, not the eval count itself.
+
+**Classification:** JUDGMENT CALL, not a bug — a reasonable agent following the spec
+(pipeline = LHS→GP→BO→optimization; implementer is "the only agent that evaluates")
+would delegate "the campaign". But the system gives the strategizer no wall-clock
+signal and no incentive to chunk. The implementer's own retrospective even claims an
+"~18-min allocation" while the campaign needed 41 — a budget-estimate mismatch.
+
+**Resume-cold options (user's call):** (a) strategizer chunks the campaign (delegate a
+bounded slice, check budget/ledger, delegate the next) so it can gate mid-way; (b) give
+the implementer a wall-clock-aware budget that caps the campaign and returns partial
+results; (c) cheaper default surrogate/acquisition (the slowness is GP-refit cost); (d)
+raise the 3600s watchdog. Do NOT pick without the user — budget is soft by charter.
+
+## 11. Orphaned background process survives the watchdog kill (resource leak)
+**Status:** raised 2026-06-22 (run 20260622T165943). **Bug — fixable.**
+
+The implementer backgrounds its BO campaign as a detached process
+(`uv run python …/optimize_1000eval.py &`-style). When the watchdog force-exits
+run.py via os._exit(2), that detached child is NOT reaped — it kept running at ~230%
+CPU after the run died (had to be killed manually). Backgrounded children outlive the
+run. **Fix direction:** the watchdog should kill its whole process group (or the
+implementer's Bash backgrounding should be tracked and reaped on close); alternatively
+discourage detaching the campaign. No reasonable reading justifies a live orphan after
+a kill.
+
+## 12. Watchdog kill loses the strategizer's retrospective (blinds §1 Step 1)
+**Status:** raised 2026-06-22. **Improvement.**
+
+Retrospectives are written at clean run close; the watchdog's os._exit kills the
+strategizer BEFORE it writes one. So EVERY watchdog-killed run has ZERO first-person
+signal from the orchestrator — the very runs we most need to diagnose (its DECISION/
+FRICTION on delegation, budgeting, gating). Observed: run 20260622T165943 has
+retrospectives only for D001/D004, none for the strategizer, so its campaign-
+decomposition reasoning had to be reconstructed from the transcript (§1 Step 4) instead
+of read directly (Step 1). **Fix direction:** have the watchdog handler flush a
+best-effort strategizer retrospective (or a partial "interrupted" one) before os._exit.
