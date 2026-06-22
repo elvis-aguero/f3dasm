@@ -8,6 +8,22 @@ references, not a queue position — see the order above.
 > [`specs/`](specs/README.md) (primary-evidence citations, TDD test names, DRY
 > reuse, KPI done-when). The entries below are the short version.
 
+## Status checklist
+Resolved items keep their write-up below for the record; `(commit)` is what fixed them.
+
+- [ ] **#1** Reconcile cancelled-but-completed delegations — *open, highest priority* (recurring UNGATED root cause; partially mitigated 2026-06-15)
+- [ ] **#2** Richer delegator↔worker comms (typed blocker/escalation) — *deferred*
+- [ ] **#3** ProblemDefinerAgent pre-strategizer intake stage — *deferred*
+- [x] **#4** Single Jupyter-notebook deliverable — *DONE* (the live system; gate runs the notebook via nbclient; toolset completed `db288d5b`)
+- [ ] **#5** KB entry: running a study on SLURM — *deferred*
+- [ ] **#6** Detect a delegation running but making zero ledger progress — *open*
+- [ ] **#7** Remove the literature hand-listed tool docs (BF-13a) — *open* (needs corpus closures to carry docstrings first)
+- [x] **#8** Literature str/int error (lit-bug #3) — `64a8230a` (coerce arxiv `max_results` to int)
+- [ ] **#9** Orchestrator-owned live validator for HypothesisUpdate — *open, §4 user-owned* (next to spec)
+- [ ] **#10** Strategizer delegates the optimization as one monolithic un-budgeted campaign — *open, §4 user-owned* (**current binding constraint** — watchdog-kills runs)
+- [x] **#11** Orphaned background process survives watchdog kill — `5199b593` (process-group reap)
+- [x] **#12** Watchdog kill loses the strategizer's retrospective — `5199b593` (synthetic post-mortem entry)
+
 ---
 
 ## 1. Reconcile cancelled-but-completed delegations
@@ -112,7 +128,12 @@ reproducible deliverable)? Relationship to the existing
 ---
 
 ## 4. Single Jupyter-notebook deliverable
-**Status:** deferred. Raised 2026-06-15.
+**Status:** RESOLVED — this IS the live system: `pipeline.ipynb` is the sole deliverable,
+the gate executes it via nbclient (`notebook_exec.run_deliverable` / `_reproduction_gate`)
+with the zero-new-evals + `REPRODUCED:` asserts, no `solution.md`/`pipeline.py`, and the
+agent authors the cells through the structured tools (the CRUD set completed in `db288d5b`).
+Every implication below was implemented. Original write-up kept for the record.
+**Status (orig):** deferred. Raised 2026-06-15.
 
 Merge the two deliverables (`solution.md` prose + `pipeline.py` executable) into
 **one `.ipynb`** — markdown cells for the writeup, code cells for the lazy
