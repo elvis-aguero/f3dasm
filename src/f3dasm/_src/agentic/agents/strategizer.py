@@ -372,8 +372,9 @@ class StrategizerAgent(Agent):
     system_prompt = STRATEGIZER_SYSTEM_PROMPT
     tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
                        "WriteDeliverable", "CheckDeliverable",
-                       "SetNotebookIntro", "AddPipelineCell", "Wait",
-                       "Confer", "GetStatus"})
+                       "SetNotebookIntro", "AddPipelineCell",
+                       "EditPipelineCell", "DeletePipelineCell", "RunScratch",
+                       "Wait", "Confer", "GetStatus"})
     # NOTE (audit): GetStatus/CancelDelegation are now opt-in (plug-and-play).
     # GetStatus is retained here pending the poll→push re-architecture that lets
     # Confer fully supersede it. CancelDelegation is intentionally NOT listed —

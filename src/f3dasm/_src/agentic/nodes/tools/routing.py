@@ -2311,8 +2311,139 @@ def build_routing_tools(node) -> dict:
                 + (f" Still missing: {missing}." if missing else
                    " All pillars present — verify with CheckDeliverable()."))
 
+    def EditPipelineCell(phase: str, why: str = None, code: str = None) -> str:
+        """Patch an EXISTING pillar cell in pipeline.ipynb in place — change its
+        `code` and/or its `why` rationale WITHOUT re-supplying the other (unlike
+        AddPipelineCell, which replaces both). Pass only the part you want to
+        change. `phase` must be one of: doe, data_generation, ml, optimization,
+        analysis, and must already exist (use AddPipelineCell to create it)."""
+        import nbformat
+        prefix = node._drain_notifications()
+        if node._study_dir is None:
+            return "ERROR: study_dir not available."
+        phase = (phase or "").strip()
+        if phase not in _PILLARS:
+            return f"ERROR: phase must be one of {_PILLARS}, got {phase!r}."
+        if why is None and code is None:
+            return "ERROR: pass `why` and/or `code` — nothing to edit."
+        nb, nb_path = _load_or_new_notebook()
+        by = _by_name(nb)
+        if phase not in by:
+            return (prefix + f"ERROR: phase {phase!r} is not in pipeline.ipynb "
+                    "yet — create it with AddPipelineCell first. Present: "
+                    f"{[p for p in _PILLARS if p in by]}.")
+        if code is not None:
+            if not code.strip():
+                return f"ERROR: `code` is empty for phase {phase!r}."
+            by[phase]["source"] = code
+        if why is not None:
+            if not why.strip():
+                return "ERROR: `why` is empty."
+            wname = f"{phase}__why"
+            body = f"### {phase}\n\n" + why.strip()
+            if wname in by:
+                by[wname]["source"] = body
+            else:
+                wc = nbformat.v4.new_markdown_cell(body)
+                wc.metadata["name"] = wname
+                by[wname] = wc
+        _emit_notebook(by, nb, nb_path)
+        changed = ", ".join(p for p, v in (("code", code), ("why", why))
+                            if v is not None)
+        return prefix + f"Edited {phase} ({changed}) in pipeline.ipynb."
+
+    def DeletePipelineCell(phase: str) -> str:
+        """Remove a pillar cell AND its WHY-explainer from pipeline.ipynb. `phase`
+        must be one of: doe, data_generation, ml, optimization, analysis. Use it
+        to drop a pillar you decided not to run instead of leaving dead or
+        placeholder code in the deliverable."""
+        import nbformat
+        prefix = node._drain_notifications()
+        if node._study_dir is None:
+            return "ERROR: study_dir not available."
+        phase = (phase or "").strip()
+        if phase not in _PILLARS:
+            return f"ERROR: phase must be one of {_PILLARS}, got {phase!r}."
+        nb, nb_path = _load_or_new_notebook()
+        targets = {phase, f"{phase}__why"}
+        before = len(nb.cells)
+        nb.cells = [c for c in nb.cells
+                    if (c.get("metadata", {}) or {}).get("name") not in targets]
+        if len(nb.cells) == before:
+            return prefix + f"Nothing to delete: {phase!r} not in pipeline.ipynb."
+        nbformat.write(nb, str(nb_path))
+        present = [p for p in _PILLARS
+                   if p in _by_name(nb)]
+        return (prefix + f"Deleted {phase} from pipeline.ipynb. "
+                f"Pillars present: {present}.")
+
+    def RunScratch(code: str) -> str:
+        """Run a short Python snippet against a COPY of the canonical ledger and
+        return its stdout/stderr — your scratchpad for INSPECTING state before
+        committing it to pipeline.ipynb. f3dasm is importable and
+        F3DASM_CANONICAL_STORE points at a temp copy of the ledger, so you can
+        e.g. ``ExperimentData.from_file(os.environ['F3DASM_CANONICAL_STORE'])``,
+        print best values, check a path resolves, or verify a DataFrame
+        populates. Runs against a COPY — it cannot touch the real ledger or
+        pipeline.ipynb — and does NOT count toward the eval budget. Use it to
+        debug instead of guessing (e.g. 'does hypotheses.json load? does h_dict
+        populate?') rather than discovering a silent bug only at CheckDeliverable."""
+        import json as _json
+        import os as _os
+        import shutil as _shutil
+        import subprocess as _sub
+        import tempfile as _tempfile
+        prefix = node._drain_notifications()
+        if not (code or "").strip():
+            return prefix + "ERROR: `code` is empty."
+        notes = getattr(node, "_current_notes_dir", None)
+        if notes is None:
+            return prefix + "ERROR: no run context available for scratch execution."
+        run_dir = notes.parent.parent
+        store_dir = run_dir / "experiment_data"
+        run_config = run_dir / "debug" / "run_config.json"
+        sandbox = Path(_tempfile.mkdtemp(prefix="f3dasm_scratch_"))
+        try:
+            sb_store = sandbox / "experiment_data"
+            if store_dir.exists():
+                _shutil.copytree(store_dir, sb_store)
+            else:
+                sb_store.mkdir(parents=True, exist_ok=True)
+            _cfg = (_json.loads(run_config.read_text())
+                    if run_config.exists() else {})
+            _cfg["store_dir"] = str(sb_store)
+            sb_cfg = sandbox / "run_config.json"
+            sb_cfg.write_text(_json.dumps(_cfg))
+            env = dict(_os.environ)
+            env["F3DASM_CANONICAL_STORE"] = str(sb_store)
+            env["F3DASM_RUN_CONFIG"] = str(sb_cfg)
+            env.setdefault("F3DASM_DELEGATION_ID", "D999")
+            snippet = sandbox / "_scratch.py"
+            snippet.write_text(code)
+            try:
+                from ...notebook_exec import run_deliverable
+                proc = run_deliverable(
+                    snippet, cwd=sandbox, env=env, timeout=120)
+            except _sub.TimeoutExpired:
+                return (prefix + "Scratch snippet exceeded 120s and was killed. "
+                        "Keep it lightweight — load the ledger and print; do not "
+                        "re-run a campaign.")
+            out = (proc.stdout or "")[-4000:]
+            err = (proc.stderr or "")[-2000:]
+            return (prefix + f"[scratch exit {proc.returncode}]\n--- stdout ---\n"
+                    + (out or "(empty)")
+                    + (f"\n--- stderr ---\n{err}" if err.strip() else ""))
+        finally:
+            _shutil.rmtree(sandbox, ignore_errors=True)
+
     if "Done" in _agent_tools:
         closures["Done"] = Done
+    if "EditPipelineCell" in _agent_tools:
+        closures["EditPipelineCell"] = EditPipelineCell
+    if "DeletePipelineCell" in _agent_tools:
+        closures["DeletePipelineCell"] = DeletePipelineCell
+    if "RunScratch" in _agent_tools:
+        closures["RunScratch"] = RunScratch
     if "WriteNote" in _agent_tools:
         closures["WriteNote"] = WriteNote
     if "ReadNote" in _agent_tools:
