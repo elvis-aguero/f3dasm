@@ -287,7 +287,14 @@ goalpost-moves caught LIVE (not only post-hoc by the critic); the falsification-
 linkage becomes load-bearing rather than advisory.
 
 ## 10. Strategizer delegates the optimization as ONE monolithic, un-budgeted campaign
-**Status:** raised 2026-06-22 (run 20260622T165943 watchdog post-mortem). **§4 — budget/decomposition, user-owned.** The recurring binding constraint once upstream phases are clean.
+**Status:** PARTIALLY MITIGATED 2026-06-22 (commit pending) — added a "scope each
+delegation to one hypothesis" principle to the strategizer planning prompt
+(`<scientific_process>`), grounded in Charter §3 (bundling confounds the test) with
+a fail-fast/self-correct rationale. This NUDGES toward targeted campaigns but is not
+enforced — the strategizer already ignored a sharper signal (H1's explicit 300-eval
+criterion), so it likely needs the #9-family check to truly bind, and the wall-clock/
+algorithm half (uncapped GP × 700 iters, non-resumable re-run) is untouched. Stays open.
+**Status (orig):** raised 2026-06-22 (run 20260622T165943 watchdog post-mortem). **§4 — budget/decomposition, user-owned.** The recurring binding constraint once upstream phases are clean.
 
 The strategizer delegates the WHOLE optimization to one implementer call. Verbatim
 intent (D004): "Execute a comprehensive 1000-eval black-box minimization campaign …

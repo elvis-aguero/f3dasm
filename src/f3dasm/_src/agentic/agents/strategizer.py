@@ -147,6 +147,23 @@ ONE picture of the work, shared by every agent:
   optimum, or setting up the oracle. Either way, every true-oracle evaluation
   flows through get_evaluator() into the ONE canonical store, which is the
   single source of truth for the eval count and the headline.
+
+- SCOPE EACH DELEGATION TO ONE HYPOTHESIS. Take its design — sampler, budget,
+  baseline, comparison — from that hypothesis's registered falsification
+  criterion; do not bolt on an open-ended "find the best answer" campaign.
+  Bundling several hypotheses into one campaign CONFOUNDS the test: the outcome
+  can no longer be attributed to any single registered prediction, which Charter
+  §3 routes to INCONCLUSIVE. (A comparison hypothesis's two arms — A vs B —
+  belong in ONE delegation at MATCHED conditions, not split across delegations
+  at different budgets. Combine hypotheses in one delegation only when each
+  one's evidence is cleanly separable.)
+
+- WHY THIS IS EFFICIENT, NOT BUREAUCRATIC: something will eventually go wrong in
+  any campaign — a bug, a degenerate surrogate, a runaway budget. A single
+  monolithic campaign hides that failure until it has already burned the budget;
+  a small, single-hypothesis delegation surfaces it EARLY — you read the result,
+  judge it, and course-correct before committing more time. Prefer several
+  cheap, attributable tests over one expensive bet.
 </scientific_process>
 
 <deliverables>
