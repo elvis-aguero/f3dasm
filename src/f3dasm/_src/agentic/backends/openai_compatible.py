@@ -193,6 +193,9 @@ def _build_arxiv_closures() -> dict:
 
     def search_papers(query: str, max_results: int = 10) -> str:
         """Search arxiv for papers matching query."""
+        # MCP string-in tools pass numbers as strings ("5"); the arxiv library
+        # does int arithmetic on max_results internally → 'str - int' crash.
+        max_results = int(max_results)
         client = _arxiv.Client()
         results = list(client.results(_arxiv.Search(query=query, max_results=max_results)))
         lines = []
@@ -202,6 +205,7 @@ def _build_arxiv_closures() -> dict:
 
     def list_papers(category: str, max_results: int = 10) -> str:
         """List recent arxiv papers in a category (e.g. 'cs.LG')."""
+        max_results = int(max_results)
         client = _arxiv.Client()
         results = list(client.results(_arxiv.Search(query=f"cat:{category}", max_results=max_results)))
         return "\n".join(f"[{r.entry_id}] {r.title}" for r in results) or "(no results)"
