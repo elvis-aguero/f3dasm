@@ -284,6 +284,9 @@ def build_routing_tools(node) -> dict:
                 f" Available: {list(node._worker_adapters)}"
             )
 
+        if isinstance(wait, str):  # MCP string-in tools may pass "false"
+            wait = wait.strip().lower() not in ("false", "0", "no", "")
+
         # Enforce hypothesis linkage when ledger is active.
         # LLMs pass strings in several shapes — decode all of
         # them: '["H1","H2"]' (JSON), 'H1, H2' (joined), 'H1'.
