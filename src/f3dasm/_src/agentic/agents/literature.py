@@ -57,7 +57,12 @@ The corpus lives under delegations/literature/ in the run's debug dir
 <workflow>
 1. Expand the question into 3-5 domain keywords and SEARCH all three literature
    databases (arXiv, Semantic Scholar, OpenAlex — OpenAlex is strongest for
-   non-arXiv journals like JMPS / CMAME / Acta Materialia). Note any pdf_url.
+   non-arXiv journals like JMPS / CMAME / Acta Materialia). These are SLOW
+   external calls, so fan them out CONCURRENTLY: fire each provider's search
+   with wait=False (returns a handle immediately) so different providers run in
+   parallel, then gather all results in one collect step before reading them
+   (the collect tool and exact names are in the <tools> catalog). Only
+   same-provider calls serialize. Note any pdf_url.
 2. For each relevant paper, ACQUIRE its full text — read it directly, or
    download the PDF — then ADD it to the corpus. Until a paper is in the corpus
    from full text (>5000 chars), you may not quote it.
@@ -123,6 +128,112 @@ tools — NOT your findings. Be concrete; quote specifics. Exactly:
   own work — or "none". Name it specifically; an unreported gap can't be fixed.
 </output_format>
 """
+
+
+def _make_search_async_pool():
+    """Factory → (asyncable, CollectSearches) sharing one fresh registry.
+
+    External-provider calls (OpenAlex / Semantic Scholar / arXiv / PDF fetch)
+    dominate literature wall-time — a single OpenAlex search can take minutes.
+    `asyncable(provider, fn)` wraps a synchronous tool so the model can run it
+    sync or async (the wait param, like Delegate's):
+      • wait=True (DEFAULT): blocks and returns the result inline (the existing
+        contract — a search returns results, not a handle).
+      • wait=False: runs in a background thread, returns a handle immediately so
+        the reviewer can fire independent searches on OTHER providers
+        concurrently, then gather them with CollectSearches.
+    Calls to the SAME provider serialize (one lock per provider — rate-limit
+    safety); different providers run in parallel. `CollectSearches(handle?)`
+    blocks until the named handle (or ALL pending) finish and returns results.
+    A fresh pool is created per delegation (no cross-run state).
+    """
+    import inspect
+    import itertools
+    import threading
+
+    prov_locks: dict = {}
+    prov_guard = threading.Lock()
+    reg: dict = {}
+    reg_guard = threading.Lock()
+    seq = itertools.count(1)
+
+    def provider_lock(p):
+        with prov_guard:
+            return prov_locks.setdefault(p, threading.Lock())
+
+    def asyncable(provider, fn):
+        base_sig = inspect.signature(fn)
+        wait_p = inspect.Parameter("wait", inspect.Parameter.KEYWORD_ONLY,
+                                   default=True, annotation=bool)
+
+        def wrapper(*args, **kwargs):
+            _w = kwargs.pop("wait", True)
+            # MCP string-in tools may pass "false"; coerce like Delegate.wait.
+            wait = (_w if isinstance(_w, bool)
+                    else str(_w).strip().lower() not in ("false", "0", "no", ""))
+            if wait:
+                with provider_lock(provider):
+                    return fn(*args, **kwargs)
+            h = f"{provider}#{next(seq)}"
+            label = str((args[0] if args else None) or kwargs.get("query")
+                        or kwargs.get("url") or kwargs.get("paper_id") or "")[:60]
+            ev = threading.Event()
+            rec = {"event": ev, "result": None, "label": label}
+            with reg_guard:
+                reg[h] = rec
+
+            def run():
+                try:
+                    with provider_lock(provider):
+                        rec["result"] = fn(*args, **kwargs)
+                except Exception as exc:  # noqa: BLE001
+                    rec["result"] = f"ERROR: {exc}"
+                ev.set()
+
+            threading.Thread(target=run, daemon=True, name=h).start()
+            return (f"Started async on '{provider}' (handle {h}). Fire more "
+                    "searches on OTHER providers now — they run concurrently — "
+                    "then CollectSearches() to get all results before using them.")
+
+        wrapper.__name__ = getattr(fn, "__name__", "tool")
+        _doc = (fn.__doc__ or "").rstrip()
+        wrapper.__doc__ = _doc + (
+            "\n\nASYNC: pass wait=False to run this in the background and get a "
+            "handle immediately, so you can fire independent searches on OTHER "
+            "providers concurrently, then CollectSearches() for results; "
+            "same-provider calls serialize. Default wait=True blocks and returns "
+            "the result inline.")
+        try:
+            wrapper.__signature__ = base_sig.replace(
+                parameters=list(base_sig.parameters.values()) + [wait_p])
+        except (ValueError, TypeError):
+            pass
+        return wrapper
+
+    def CollectSearches(handle: str = None) -> str:
+        """Collect async (wait=False) search results. With a handle: block until
+        that search finishes and return its result. With NO handle: block until
+        ALL pending async searches finish and return them all. Call this before
+        using async search results — same-provider searches were serialized,
+        different providers ran concurrently."""
+        with reg_guard:
+            handles = [handle] if handle else list(reg)
+        if not handles:
+            return "No async searches pending."
+        parts = []
+        for h in handles:
+            rec = reg.get(h)
+            if rec is None:
+                parts.append(f"{h}: unknown or already-collected handle")
+                continue
+            done = rec["event"].wait(timeout=600)
+            parts.append(f"=== {h} ({rec['label']}) ===\n" + (
+                str(rec["result"]) if done else "(still running after 600s)"))
+            with reg_guard:
+                reg.pop(h, None)
+        return "\n\n".join(parts)
+
+    return asyncable, CollectSearches
 
 
 class LiteratureReviewAgent(Agent):
@@ -775,5 +886,27 @@ class LiteratureReviewAgent(Agent):
         # arxiv tools — Python-native, same for Claude and Ollama.
         from ..backends.ollama import _build_arxiv_closures
         tools.update(_build_arxiv_closures())
+
+        # Make the SLOW external-provider tools async-able (wait=False default)
+        # so the reviewer fans out across providers concurrently instead of
+        # blocking ~minutes per call. Same-provider calls serialize. The fast
+        # local corpus tools (CorpusAdd/Search/List/Rank, Read) stay synchronous.
+        _asyncable, _collect = _make_search_async_pool()
+        _provider_of = {
+            "search_semantic_scholar": "semantic_scholar",
+            "get_semantic_scholar_paper_details": "semantic_scholar",
+            "get_semantic_scholar_recommendations": "semantic_scholar",
+            "search_openalex": "openalex",
+            "get_openalex_citations": "openalex",
+            "get_openalex_references": "openalex",
+            "arxiv_search_papers": "arxiv",
+            "arxiv_read_paper": "arxiv",
+            "arxiv_download_paper": "arxiv",
+            "DownloadPdf": "http",
+        }
+        for _nm, _pv in _provider_of.items():
+            if _nm in tools:
+                tools[_nm] = _asyncable(_pv, tools[_nm])
+        tools["CollectSearches"] = _collect
 
         return tools
