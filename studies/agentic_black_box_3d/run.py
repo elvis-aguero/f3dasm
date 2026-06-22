@@ -28,6 +28,10 @@ from f3dasm.agentic import (
     LiteratureReviewAgent,
     StrategizerAgent,
 )
+from f3dasm._src.agentic.watchdog_cleanup import (
+    reap_process_group,
+    write_watchdog_retrospective,
+)
 
 STUDY_DIR = Path(__file__).parent
 BUDGET_SECONDS = 45 * 60  # 45 minutes
@@ -134,6 +138,9 @@ def _watchdog() -> None:
             (_rd / "debug" / "run_status.json").write_text(
                 _json.dumps({"status": "watchdog_killed"})
             )
+            # Leave a synthetic post-mortem so §1 Step 1 isn't blind (the
+            # strategizer never wrote its own — the kill is abrupt).
+            write_watchdog_retrospective(_rd, WATCHDOG_SECONDS)
             _sys.path.insert(0, str(STUDY_DIR.parent))
             import run_ledger as _rl
             _row = _rl.extract(_rd)
@@ -147,6 +154,16 @@ def _watchdog() -> None:
             print(f"WATCHDOG: ledger row appended for {_rd.name}", flush=True)
     except Exception as _e:
         print(f"WATCHDOG: cleanup failed: {_e}", flush=True)
+    # Reap leftover background jobs the run spawned (e.g. a detached implementer
+    # campaign) so they don't outlive the watchdog. run.py made itself a group
+    # leader at startup; ignore SIGTERM in ourselves so we still reach os._exit(2).
+    try:
+        import signal as _signal
+        _signal.signal(_signal.SIGTERM, _signal.SIG_IGN)
+        reap_process_group(os.getpgid(0))
+        time.sleep(0.5)
+    except Exception as _e:
+        print(f"WATCHDOG: child reap failed: {_e}", flush=True)
     os._exit(2)
 
 
@@ -182,6 +199,13 @@ def _emit_analysis_brief() -> None:
 
 # ── run ───────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    # Become a process-group leader so the watchdog can reap every descendant
+    # (SDK CLI → agent Bash → any backgrounded script) in one group kill. Children
+    # forked after this inherit the group; default subprocess/`&` don't escape it.
+    try:
+        os.setpgrp()
+    except OSError:
+        pass  # already a leader / unsupported — reap falls back to a no-op
     threading.Thread(target=_watchdog, daemon=True).start()
     result = AgenticRun(
         study_dir=STUDY_DIR,
