@@ -154,3 +154,22 @@ def test_run_scratch_empty_code_errors(tmp_path):
     n = _node(tmp_path)
     out = _tool(n, "RunScratch")("   ")
     assert "ERROR" in out
+
+
+# ── Dead jupyter-MCP path removed ────────────────────────────────────────────
+
+def test_strategizer_has_no_jupyter_config():
+    from f3dasm._src.agentic.agents.strategizer import StrategizerAgent
+    a = StrategizerAgent()
+    assert not getattr(a, "needs_jupyter_server", False)
+    assert getattr(a, "mcp_servers", {}) == {}
+    assert not any("jupyter" in t for t in getattr(a, "extra_allowed_tools", []))
+
+
+def test_agent_runtime_imports_without_notebook_server():
+    import importlib
+    # The module must import with notebook_server.py deleted (no dangling import).
+    importlib.import_module("f3dasm._src.agentic.agent_runtime")
+    import f3dasm._src.agentic as ag
+    assert not (ag.__path__[0] + "/notebook_server.py" and
+                __import__("os").path.exists(ag.__path__[0] + "/notebook_server.py"))

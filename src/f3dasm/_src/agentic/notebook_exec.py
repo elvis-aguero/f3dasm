@@ -7,9 +7,9 @@ nbformat/ipykernel deps ship with the `agentic` extra; `run_deliverable()`
 returns a `subprocess.CompletedProcess`-shaped result and raises
 `subprocess.TimeoutExpired` on timeout, so the gate branches on nothing.
 
-Agents author the notebook cell-by-cell via the structured AddPipelineCell /
-SetNotebookIntro closures (pure nbformat) or via the live Jupyter MCP server
-(mcp__jupyter__* tools) when a JupyterServer is running for the session.
+Agents author the notebook cell-by-cell via the structured SetNotebookIntro /
+AddPipelineCell / EditPipelineCell / DeletePipelineCell / ShowNotebook closures
+(pure nbformat, name-addressed) — there is no live kernel.
 """
 from __future__ import annotations
 
