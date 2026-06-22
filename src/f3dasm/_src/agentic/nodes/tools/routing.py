@@ -2250,6 +2250,15 @@ def build_routing_tools(node) -> dict:
                 out[nm] = c
         return out
 
+    def _rev(source: str) -> str:
+        """Stateless content revision tag — a short hash of a cell's source.
+        Same source → same rev (survives reloads/checkpoints); computed
+        on-demand, never stored, so the gate's name/order metadata is untouched.
+        Used as an optimistic-concurrency token: an edit/delete must present the
+        rev it last saw, so it cannot blindly overwrite a cell that changed."""
+        import hashlib
+        return hashlib.sha256((source or "").encode("utf-8")).hexdigest()[:8]
+
     def SetNotebookIntro(problem: str, hypotheses: str) -> str:
         """Set the notebook's leading narrative cells (creates pipeline.ipynb if
         absent): a '# Problem & objective' markdown cell (the question, min/max,
@@ -2274,14 +2283,17 @@ def build_routing_tools(node) -> dict:
         return prefix + "Set pipeline.ipynb intro (Problem & Hypotheses)."
 
     def AddPipelineCell(phase: str, why: str, code: str) -> str:
-        """Add (or replace) one f3dasm-pillar cell in pipeline.ipynb, preceded by
-        its WHY-explainer. `phase` MUST be one of: doe, data_generation, ml,
+        """CREATE one f3dasm-pillar cell in pipeline.ipynb, preceded by its
+        WHY-explainer. `phase` MUST be one of: doe, data_generation, ml,
         optimization, analysis. `why` is the rationale markdown (cite the
         literature; if the pillar was not run, say 'NOT executed (budget)' and
         why). `code` is the cell's Python. Cells are kept in canonical pillar
-        order regardless of call order; re-calling a phase replaces it. The
-        analysis cell must derive the headline from the ledger and print exactly
-        'REPRODUCED: <value>'. Creates pipeline.ipynb if absent."""
+        order regardless of call order. CREATE-ONLY: if the phase already exists
+        this errors — change it with EditPipelineCell or remove it with
+        DeletePipelineCell (so you never blindly overwrite a cell that changed
+        since you last saw it). The analysis cell must derive the headline from
+        the ledger and print exactly 'REPRODUCED: <value>'. Creates
+        pipeline.ipynb if absent."""
         import nbformat
         prefix = node._drain_notifications()
         if node._study_dir is None:
@@ -2297,6 +2309,11 @@ def build_routing_tools(node) -> dict:
             return f"ERROR: `code` is empty for phase {phase!r}."
         nb, nb_path = _load_or_new_notebook()
         by = _by_name(nb)
+        if phase in by:
+            return (prefix + f"ERROR: phase {phase!r} already exists "
+                    f"(rev {_rev(by[phase].get('source', ''))}). AddPipelineCell "
+                    "is create-only — change it with EditPipelineCell or remove "
+                    "it with DeletePipelineCell first.")
         wc = nbformat.v4.new_markdown_cell(f"### {phase}\n\n" + why.strip())
         wc.metadata["name"] = f"{phase}__why"
         cc = nbformat.v4.new_code_cell(code)
@@ -2306,17 +2323,27 @@ def build_routing_tools(node) -> dict:
         _emit_notebook(by, nb, nb_path)
         present = [p for p in _PILLARS if p in by]
         missing = [p for p in _PILLARS if p not in by]
-        return (prefix + f"Added {phase} cell to pipeline.ipynb. "
-                f"Pillars present: {present}."
+        return (prefix + f"Added {phase} cell (rev {_rev(code)}) to "
+                f"pipeline.ipynb. Pillars present: {present}."
                 + (f" Still missing: {missing}." if missing else
                    " All pillars present — verify with CheckDeliverable()."))
 
-    def EditPipelineCell(phase: str, why: str = None, code: str = None) -> str:
-        """Patch an EXISTING pillar cell in pipeline.ipynb in place — change its
-        `code` and/or its `why` rationale WITHOUT re-supplying the other (unlike
-        AddPipelineCell, which replaces both). Pass only the part you want to
-        change. `phase` must be one of: doe, data_generation, ml, optimization,
-        analysis, and must already exist (use AddPipelineCell to create it)."""
+    def EditPipelineCell(phase: str, why: str = None, code: str = None,
+                         old: str = None, new: str = None,
+                         expected_rev: str = None) -> str:
+        """Patch an EXISTING pillar cell in pipeline.ipynb. Two modes:
+        • SURGICAL (preferred for code): pass `old`/`new` — a literal find/replace
+          on the code cell. `old` must occur EXACTLY once. Self-guarding: if the
+          cell changed since you read it, `old` won't match and the edit is
+          rejected — so no `expected_rev` needed. Read the cell with
+          ShowNotebook('<phase>') to construct an accurate `old`.
+        • FULL-FIELD: pass `code=` and/or `why=` to replace that field wholesale.
+          This REQUIRES `expected_rev` — the rev you last saw for this phase (from
+          ShowNotebook or a prior Add/Edit). If the cell changed since then the
+          rev won't match and the edit is rejected, so you cannot clobber a cell
+          that moved under you.
+        `phase` must be one of: doe, data_generation, ml, optimization, analysis,
+        and must already exist (use AddPipelineCell to create it)."""
         import nbformat
         prefix = node._drain_notifications()
         if node._study_dir is None:
@@ -2324,39 +2351,68 @@ def build_routing_tools(node) -> dict:
         phase = (phase or "").strip()
         if phase not in _PILLARS:
             return f"ERROR: phase must be one of {_PILLARS}, got {phase!r}."
-        if why is None and code is None:
-            return "ERROR: pass `why` and/or `code` — nothing to edit."
+        surgical = old is not None or new is not None
+        if surgical and (code is not None or why is not None):
+            return ("ERROR: pass EITHER surgical `old`/`new` OR full-field "
+                    "`code`/`why`, not both.")
+        if not surgical and why is None and code is None:
+            return "ERROR: pass `why`/`code` (full-field) or `old`/`new` (surgical)."
         nb, nb_path = _load_or_new_notebook()
         by = _by_name(nb)
         if phase not in by:
             return (prefix + f"ERROR: phase {phase!r} is not in pipeline.ipynb "
                     "yet — create it with AddPipelineCell first. Present: "
                     f"{[p for p in _PILLARS if p in by]}.")
-        if code is not None:
-            if not code.strip():
-                return f"ERROR: `code` is empty for phase {phase!r}."
-            by[phase]["source"] = code
-        if why is not None:
-            if not why.strip():
-                return "ERROR: `why` is empty."
-            wname = f"{phase}__why"
-            body = f"### {phase}\n\n" + why.strip()
-            if wname in by:
-                by[wname]["source"] = body
-            else:
-                wc = nbformat.v4.new_markdown_cell(body)
-                wc.metadata["name"] = wname
-                by[wname] = wc
+        cur_rev = _rev(by[phase].get("source", ""))
+        if surgical:
+            if old is None or new is None:
+                return "ERROR: surgical edit needs BOTH `old` and `new`."
+            src = by[phase].get("source", "")
+            n = src.count(old)
+            if n == 0:
+                return (prefix + f"ERROR: `old` not found in {phase!r} (it may "
+                        f"have changed; current rev {cur_rev}). "
+                        f"ShowNotebook('{phase}') and retry.")
+            if n > 1:
+                return (prefix + f"ERROR: `old` occurs {n}× in {phase!r} — include "
+                        "surrounding context so it matches exactly once.")
+            by[phase]["source"] = src.replace(old, new, 1)
+        else:
+            # Full-field replace — optimistic-concurrency guarded by expected_rev.
+            if expected_rev is None:
+                return (prefix + "ERROR: full-field edit requires `expected_rev` "
+                        f"(this phase is at rev {cur_rev}). ShowNotebook('{phase}')"
+                        " to confirm the content, then pass that rev.")
+            if expected_rev != cur_rev:
+                return (prefix + f"ERROR: {phase!r} changed since rev "
+                        f"{expected_rev} (now {cur_rev}). ShowNotebook('{phase}') "
+                        "to see the current content, then retry.")
+            if code is not None:
+                if not code.strip():
+                    return f"ERROR: `code` is empty for phase {phase!r}."
+                by[phase]["source"] = code
+            if why is not None:
+                if not why.strip():
+                    return "ERROR: `why` is empty."
+                wname = f"{phase}__why"
+                body = f"### {phase}\n\n" + why.strip()
+                if wname in by:
+                    by[wname]["source"] = body
+                else:
+                    wc = nbformat.v4.new_markdown_cell(body)
+                    wc.metadata["name"] = wname
+                    by[wname] = wc
         _emit_notebook(by, nb, nb_path)
-        changed = ", ".join(p for p, v in (("code", code), ("why", why))
-                            if v is not None)
-        return prefix + f"Edited {phase} ({changed}) in pipeline.ipynb."
+        new_rev = _rev(by[phase].get("source", ""))
+        return prefix + f"Edited {phase} in pipeline.ipynb (rev {cur_rev} → {new_rev})."
 
-    def DeletePipelineCell(phase: str) -> str:
+    def DeletePipelineCell(phase: str, expected_rev: str = None) -> str:
         """Remove a pillar cell AND its WHY-explainer from pipeline.ipynb. `phase`
         must be one of: doe, data_generation, ml, optimization, analysis. Use it
         to drop a pillar you decided not to run instead of leaving dead or
-        placeholder code in the deliverable."""
+        placeholder code in the deliverable. REQUIRES `expected_rev` (the rev you
+        last saw for this phase, from ShowNotebook or a prior Add/Edit) so you
+        cannot delete a cell that changed since you last saw it."""
         import nbformat
         prefix = node._drain_notifications()
         if node._study_dir is None:
@@ -2365,17 +2421,69 @@ def build_routing_tools(node) -> dict:
         if phase not in _PILLARS:
             return f"ERROR: phase must be one of {_PILLARS}, got {phase!r}."
         nb, nb_path = _load_or_new_notebook()
+        by = _by_name(nb)
+        if phase not in by:
+            return prefix + f"Nothing to delete: {phase!r} not in pipeline.ipynb."
+        cur_rev = _rev(by[phase].get("source", ""))
+        if expected_rev is None:
+            return (prefix + f"ERROR: delete requires `expected_rev` (this phase "
+                    f"is at rev {cur_rev}). ShowNotebook('{phase}') to confirm, "
+                    "then pass that rev.")
+        if expected_rev != cur_rev:
+            return (prefix + f"ERROR: {phase!r} changed since rev {expected_rev} "
+                    f"(now {cur_rev}). ShowNotebook('{phase}') to see the current "
+                    "content, then retry the delete.")
         targets = {phase, f"{phase}__why"}
-        before = len(nb.cells)
         nb.cells = [c for c in nb.cells
                     if (c.get("metadata", {}) or {}).get("name") not in targets]
-        if len(nb.cells) == before:
-            return prefix + f"Nothing to delete: {phase!r} not in pipeline.ipynb."
         nbformat.write(nb, str(nb_path))
-        present = [p for p in _PILLARS
-                   if p in _by_name(nb)]
+        present = [p for p in _PILLARS if p in _by_name(nb)]
         return (prefix + f"Deleted {phase} from pipeline.ipynb. "
                 f"Pillars present: {present}.")
+
+    def ShowNotebook(phase: str = None) -> str:
+        """Read pipeline.ipynb back. NO argument → a BRIEF table of contents
+        LISTING EVERY CELL BY NAME in canonical order, each with its type, rev,
+        and first source line, plus which pillars are present/missing — call this
+        to see what exists before editing. With `phase` (problem, hypotheses, a
+        pillar, or a '<phase>__why' explainer) → the FULL source of that cell and
+        its rev (the rev you then pass as `expected_rev` to EditPipelineCell /
+        DeletePipelineCell). Read-only; never creates the file; free."""
+        prefix = node._drain_notifications()
+        if node._study_dir is None:
+            return "ERROR: study_dir not available."
+        nb_path = Path(node._study_dir) / "pipeline.ipynb"
+        if not nb_path.exists():
+            return prefix + ("pipeline.ipynb does not exist yet — author it with "
+                             "SetNotebookIntro / AddPipelineCell.")
+        nb, _ = _load_or_new_notebook()
+        by = _by_name(nb)
+        if phase is not None:
+            phase = phase.strip()
+            if phase not in by:
+                return (prefix + f"ERROR: no cell named {phase!r}. Present: "
+                        f"{[k for k in _NB_ORDER if k in by]}.")
+            c = by[phase]
+            src = c.get("source", "")
+            ctype = c.get("cell_type", "?")
+            return (prefix + f"--- {phase} ({ctype}, rev {_rev(src)}) ---\n"
+                    + (src or "(empty)"))
+        # Brief: every named cell, canonical order then extras.
+        names = [k for k in _NB_ORDER if k in by]
+        names += [k for k in by if k not in _NB_ORDER]
+        lines = []
+        for nm in names:
+            c = by[nm]
+            src = c.get("source", "")
+            first = (src.splitlines()[0] if src.strip() else "(empty)")[:80]
+            lines.append(f"  {nm} ({c.get('cell_type', '?')}, rev {_rev(src)}): "
+                         f"{first}")
+        present = [p for p in _PILLARS if p in by]
+        missing = [p for p in _PILLARS if p not in by]
+        return (prefix + "pipeline.ipynb cells (canonical order):\n"
+                + "\n".join(lines)
+                + f"\n\nPillars present: {present}."
+                + (f" Missing: {missing}." if missing else " All present."))
 
     def RunScratch(code: str) -> str:
         """Run a short Python snippet against a COPY of the canonical ledger and
@@ -2442,6 +2550,8 @@ def build_routing_tools(node) -> dict:
         closures["EditPipelineCell"] = EditPipelineCell
     if "DeletePipelineCell" in _agent_tools:
         closures["DeletePipelineCell"] = DeletePipelineCell
+    if "ShowNotebook" in _agent_tools:
+        closures["ShowNotebook"] = ShowNotebook
     if "RunScratch" in _agent_tools:
         closures["RunScratch"] = RunScratch
     if "WriteNote" in _agent_tools:

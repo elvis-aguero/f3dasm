@@ -84,14 +84,17 @@ def test_set_intro_then_add_pillars_canonical_order(tmp_path):
     assert by["doe__why"].cell_type == "markdown"
 
 
-def test_add_pillar_replaces_on_recall(tmp_path):
+def test_add_pillar_is_create_only_on_recall(tmp_path):
+    # AddPipelineCell is create-only: re-calling an existing phase errors
+    # (directing to EditPipelineCell) instead of blindly overwriting it.
     n = _node(tmp_path)
     tools = n.adapter.closure_tools
     tools["AddPipelineCell"]("doe", "first", "v = 1")
-    tools["AddPipelineCell"]("doe", "second", "v = 2")
+    out = tools["AddPipelineCell"]("doe", "second", "v = 2")
+    assert "already exists" in out and "EditPipelineCell" in out
     nb = _read(tmp_path)
     does = [c for c in nb.cells if c.metadata.get("name") == "doe"]
-    assert len(does) == 1 and "v = 2" in does[0].source
+    assert len(does) == 1 and "v = 1" in does[0].source  # unchanged
 
 
 def test_add_pillar_rejects_unknown_phase(tmp_path):
