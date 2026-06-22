@@ -200,7 +200,10 @@ Test: assert the literature catalog (qualified) carries a non-"(no description)"
 entry for every corpus tool, and that no bare hand-list signature survives.
 
 ## 8. Localize literature str/int error (lit-bug #3)
-**Status:** raised 2026-06-21. Observed in a wet literature run (prior session),
+**Status:** RESOLVED 2026-06-22 (commit 64a8230a) — localized via the
+string-`max_results` repro in run 20260622T165943; `arxiv_search_papers` /
+`arxiv_list_papers` now coerce `max_results` to int. Original write-up below.
+**Status (orig):** raised 2026-06-21. Observed in a wet literature run (prior session),
 exact site not captured.
 
 A wet literature delegation hit a `str`/`int` type error twice ("str-int error
@@ -292,7 +295,10 @@ results; (c) cheaper default surrogate/acquisition (the slowness is GP-refit cos
 raise the 3600s watchdog. Do NOT pick without the user — budget is soft by charter.
 
 ## 11. Orphaned background process survives the watchdog kill (resource leak)
-**Status:** raised 2026-06-22 (run 20260622T165943). **Bug — fixable.**
+**Status:** RESOLVED 2026-06-22 (commit 5199b593) — run.py is now a process-group
+leader (`os.setpgrp`) and the watchdog reaps the group (`reap_process_group` in
+`watchdog_cleanup.py`) before `os._exit`. Residual: a child that `setsid`'s escapes
+the group (documented). Original write-up below.
 
 The implementer backgrounds its BO campaign as a detached process
 (`uv run python …/optimize_1000eval.py &`-style). When the watchdog force-exits
@@ -304,7 +310,11 @@ discourage detaching the campaign. No reasonable reading justifies a live orphan
 a kill.
 
 ## 12. Watchdog kill loses the strategizer's retrospective (blinds §1 Step 1)
-**Status:** raised 2026-06-22. **Improvement.**
+**Status:** RESOLVED 2026-06-22 (commit 5199b593) — the watchdog now appends a synthetic
+`role="watchdog"` post-mortem (`write_watchdog_retrospective`) with the last delegation
+state + diagnostics + a transcript pointer, so §1 Step 1 gets a breadcrumb. (A real
+first-person strategizer retro on watchdog remains impossible — the agent is killed
+mid-flight.) Original write-up below.
 
 Retrospectives are written at clean run close; the watchdog's os._exit kills the
 strategizer BEFORE it writes one. So EVERY watchdog-killed run has ZERO first-person
