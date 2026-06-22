@@ -216,3 +216,48 @@ JSON would break arithmetic; `build_closure_tools` already guards
 **Needs a real wet run with the traceback** (`uv run pytest
 tests/agentic/test_literature_wet.py -s --no-cov`) to localize before fixing —
 do not guess-patch without the stack.
+
+## 9. Orchestrator-owned live validator for HypothesisUpdate
+**Status:** raised 2026-06-22 (user's idea). **§4 — epistemic contract, user owns it.**
+
+Today the strategizer carries a triple burden for every hypothesis: it (1) states
+the hypothesis + falsification criterion, (2) frames the falsification attempt,
+and (3) judges the attempt's results — proposer, experiment-designer, and judge in
+one agent. The only live guard on `HypothesisUpdate` is RULE-based (the Popperian
+charter's `ERROR_RETURN`: cannot mark SUPPORTED without a falsification attempt on
+record; cite only completed delegations). It checks *form*, not *substance*.
+
+**Idea:** an **orchestrator-owned LLM** that validates each `HypothesisUpdate`
+call LIVE at the tool boundary (where `ERROR_RETURN` fires now), independent of the
+strategizer's own reasoning — offloading the judging role. It would check the
+substance a rule cannot:
+- the falsification attempt actually PROBES the registered prediction (severity —
+  could it have refuted?);
+- the verdict (SUPPORTED / FALSIFIED / INCONCLUSIVE) FOLLOWS from the cited
+  evidence/ledger numbers;
+- prediction and falsification_criterion test the SAME claim (catches goalpost-moving).
+
+**Evidence motivating it (n=5 audit, `_audit_preserved/n5_20260621_222224`):**
+- run03 strategizer moved its own goalposts — registered prediction ("reach f ≤ −1.0")
+  ≠ falsification_criterion (relative budget test); the critic flagged it Charter §4.
+  The strategizer self-reported the CONSISTENCY contradiction in its retrospective.
+- `LinkFalsificationAttempt` was used only 2× across 6 runs — falsification linkage
+  is effectively advisory/bypassed (a run02 critic: "the flag is advisory, not binding").
+- verdicts are non-reproducible: the same H2 question (multi-start vs BO) came back
+  FALSIFIED (r1, r2) and SUPPORTED (r4, r5) depending on the run's self-chosen budget.
+
+**Open design questions (resume-cold):**
+- BLOCK vs ADVISE: does it reject the update (hard, like `ERROR_RETURN`) or annotate
+  it for the critic (soft)? Budgets are soft elsewhere — lean advise-then-escalate.
+- Relation to the critic: the critic judges the DELIVERABLE at gate-time; this judges
+  HYPOTHESIS verdicts LIVE as asserted — complementary, not a replacement.
+- Cost/latency: one extra LLM call per HypothesisUpdate; pick a model tier; cache.
+- Where it lives: `science_monitor.py` / the HypothesisUpdate tool wrapper — the
+  Popperian-rules surface the user owns. Do NOT implement without the user's design call.
+- Relates to the deferred "separate the falsification-judge from the hypothesis-author"
+  options (freeze criterion at proposal time; dedicated verdict-adjudicator node;
+  binding LinkFalsificationAttempt + INCONCLUSIVE as valid closure).
+
+**Done-when (KPI):** verdict reproducibility across same-problem runs improves;
+goalpost-moves caught LIVE (not only post-hoc by the critic); the falsification-attempt
+linkage becomes load-bearing rather than advisory.
