@@ -70,11 +70,17 @@ def extract(run_dir: Path) -> dict:
     elif sol.exists():
         row["outcome"] = "GATED"
     elif nb.exists():
-        # Notebook deliverable: stamped = gate passed (GATED), absent stamp = FAILED
+        # Notebook deliverable (no solution.md). The stamp records the TRUE gate
+        # outcome (GATED/UNGATED/FAILED) — see agent_runtime stamping. A stamped
+        # notebook without that field is a pre-fix run: fall back to GATED. No
+        # stamp at all = the run never closed cleanly = FAILED.
         try:
             import nbformat as _nbf
-            _nb = _nbf.read(str(nb), as_version=4)
-            row["outcome"] = "GATED" if _nb.metadata.get("agentic", {}).get("run") else "FAILED"
+            _ag = _nbf.read(str(nb), as_version=4).metadata.get("agentic", {})
+            if not _ag.get("run"):
+                row["outcome"] = "FAILED"
+            else:
+                row["outcome"] = _ag.get("gate_outcome", "GATED")
         except Exception:
             row["outcome"] = "FAILED"
     else:

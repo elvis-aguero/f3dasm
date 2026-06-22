@@ -645,6 +645,18 @@ class AgenticRun:
         except Exception:  # noqa: BLE001
             log.warning("telemetry merge failed", exc_info=True)
         report = result.get("last_report") or ""
+        # Gate outcome, persisted so the ledger reports the TRUE terminal state.
+        # The strategizer prepends a "⚠ UNGATED RUN" / FAILED banner to
+        # last_report when the run closed without an accepted (critic-PASS)
+        # Done(); a notebook-deliverable study has no solution.md for the ledger
+        # to read this from, so without persisting it here every stamped notebook
+        # reads as GATED — masking 3-strike and failed closes. (audit 20260622)
+        if ("⛔" in report) or ("FAILED RUN" in report):
+            _gate_outcome = "FAILED"
+        elif ("⚠ UNGATED RUN" in report) or ("NOT validated" in report):
+            _gate_outcome = "UNGATED"
+        else:
+            _gate_outcome = "GATED"
         # Authoritative eval count = provenance-stamped rows in the canonical
         # ledger, NOT the run-state counter. evals_used is summed from a
         # registry that clears Done entries on loop-back, so it under-reports
@@ -680,6 +692,7 @@ class AgenticRun:
             f"## Run metadata\n\n"
             f"- timestamp: {now_ts}\n"
             f"- model: {self._model}\n"
+            f"- gate: {_gate_outcome}\n"
             f"- total_delegations: {len(delegation_log.query_all())}\n"
             f"- evals_used: {evals}\n"
             f"- run_dir: {run_dir}\n"
@@ -716,7 +729,7 @@ class AgenticRun:
                 nb.cells.append(nbformat.v4.new_markdown_cell(meta_md))
                 nb.metadata.setdefault("agentic", {}).update(
                     {"model": self._model, "run": str(run_dir),
-                     "timestamp": now_ts})
+                     "timestamp": now_ts, "gate_outcome": _gate_outcome})
                 nbformat.write(nb, str(nb_path))
             except Exception:  # noqa: BLE001
                 log.warning("notebook provenance stamp failed", exc_info=True)
