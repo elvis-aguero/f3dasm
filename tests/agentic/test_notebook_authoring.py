@@ -26,7 +26,7 @@ class _Stub:
 def _node(study_dir):
     class A(Agent):
         role = "strategizer"
-        tools = frozenset({"Done", "SetNotebookIntro", "AddPipelineCell"})
+        tools = frozenset({"Done", "AddPipelineMarkdownCell", "AddPipelineCell"})
         description = "strategizer"
 
     class B(Agent):
@@ -53,8 +53,9 @@ def _named(nb):
 
 def test_closures_present_only_when_declared(tmp_path):
     n = _node(tmp_path)
-    assert "SetNotebookIntro" in n.adapter.closure_tools
+    assert "AddPipelineMarkdownCell" in n.adapter.closure_tools
     assert "AddPipelineCell" in n.adapter.closure_tools
+    assert "SetNotebookIntro" not in n.adapter.closure_tools  # retired
 
 
 def test_set_intro_then_add_pillars_canonical_order(tmp_path):
@@ -63,7 +64,8 @@ def test_set_intro_then_add_pillars_canonical_order(tmp_path):
     # Add pillars OUT of order — the notebook must still come out canonical.
     tools["AddPipelineCell"]("analysis", "derive headline", "print('REPRODUCED: 1.0')")
     tools["AddPipelineCell"]("doe", "LHS over the box", "domain = ...; sampler = ...")
-    tools["SetNotebookIntro"]("minimise f over the 3-box.", "H1: ... H2: ...")
+    tools["AddPipelineMarkdownCell"]("problem", "minimise f over the 3-box.")
+    tools["AddPipelineMarkdownCell"]("hypotheses", "H1: ... H2: ...")
     tools["AddPipelineCell"]("data_generation", "evaluate via get_evaluator", "data = ...")
 
     nb = _read(tmp_path)
@@ -111,14 +113,21 @@ def test_add_pillar_requires_why_and_code(tmp_path):
     assert tools["AddPipelineCell"]("doe", "why", "").startswith("ERROR:")
 
 
-def test_intro_recall_replaces_not_duplicates(tmp_path):
+def test_markdown_cells_are_per_cell_and_create_only(tmp_path):
+    # AddPipelineMarkdownCell authors problem/hypotheses INDEPENDENTLY (no
+    # bundling) and is create-only — re-adding errors (use EditPipelineCell).
     n = _node(tmp_path)
     tools = n.adapter.closure_tools
-    tools["SetNotebookIntro"]("first problem", "h")
-    tools["SetNotebookIntro"]("second problem", "h2")
+    assert "Added problem" in tools["AddPipelineMarkdownCell"]("problem", "p1")
+    assert "Added hypotheses" in tools["AddPipelineMarkdownCell"]("hypotheses", "h1")
+    out = tools["AddPipelineMarkdownCell"]("problem", "p2")  # re-add
+    assert "already exists" in out and "EditPipelineCell" in out
     nb = _read(tmp_path)
-    problems = [c for c in nb.cells if c.metadata.get("name") == "problem"]
-    assert len(problems) == 1 and "second problem" in problems[0].source
+    by = _named(nb)
+    assert "p1" in by["problem"].source  # unchanged by the failed re-add
+    assert "h1" in by["hypotheses"].source
+    # unknown name rejected
+    assert tools["AddPipelineMarkdownCell"]("intro", "x").startswith("ERROR:")
 
 
 def test_authored_notebook_passes_the_gate(tmp_path):
@@ -149,6 +158,7 @@ def test_authored_notebook_passes_the_gate(tmp_path):
     n._study_dir = tmp_path
     n._current_notes_dir = run_dir / "debug" / "strategizer_notes"
     tools = n.adapter.closure_tools
-    tools["SetNotebookIntro"]("minimise f", "H1")
+    tools["AddPipelineMarkdownCell"]("problem", "minimise f")
+    tools["AddPipelineMarkdownCell"]("hypotheses", "H1")
     tools["AddPipelineCell"]("analysis", "derive", "print('REPRODUCED: 1.0')")
     assert n._reproduction_gate({"study_dir": str(tmp_path)}) is None

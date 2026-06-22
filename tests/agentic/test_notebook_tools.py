@@ -31,7 +31,7 @@ class _Stub:
 
 
 _NB_TOOLS = frozenset({
-    "SetNotebookIntro", "AddPipelineCell", "EditPipelineCell",
+    "AddPipelineMarkdownCell", "AddPipelineCell", "EditPipelineCell",
     "DeletePipelineCell", "ShowNotebook", "RunScratch",
 })
 
@@ -94,6 +94,69 @@ def test_add_existing_phase_is_create_only_error(tmp_path):
     assert "EditPipelineCell" in out
     # unchanged
     assert _cell(_read_nb(tmp_path), "doe")["source"] == "x = 1"
+
+
+# ── AddPipelineMarkdownCell + narrative-cell CRUD (replaces SetNotebookIntro) ──
+
+def test_add_markdown_cell_creates_problem_and_hypotheses(tmp_path):
+    n = _node(tmp_path)
+    _tool(n, "AddPipelineMarkdownCell")("problem", "minimise f over the box")
+    _tool(n, "AddPipelineMarkdownCell")("hypotheses", "H1: …")
+    nb = _read_nb(tmp_path)
+    assert "minimise f" in _cell(nb, "problem")["source"]
+    assert "# Problem & objective" in _cell(nb, "problem")["source"]  # heading added
+    assert "## Hypotheses" in _cell(nb, "hypotheses")["source"]
+
+
+def test_add_markdown_cell_rejects_unknown_name(tmp_path):
+    n = _node(tmp_path)
+    out = _tool(n, "AddPipelineMarkdownCell")("intro", "x")
+    assert out.startswith("ERROR:") and "problem" in out and "hypotheses" in out
+
+
+def test_add_markdown_cell_is_create_only(tmp_path):
+    n = _node(tmp_path)
+    _tool(n, "AddPipelineMarkdownCell")("problem", "p1")
+    out = _tool(n, "AddPipelineMarkdownCell")("problem", "p2")
+    assert "already exists" in out
+    assert "p1" in _cell(_read_nb(tmp_path), "problem")["source"]
+
+
+def test_edit_narrative_cell_with_content_and_rev(tmp_path):
+    # The clunk fix: update hypotheses ALONE (no resupplying problem), rev-guarded.
+    n = _node(tmp_path)
+    _tool(n, "AddPipelineMarkdownCell")("problem", "the problem")
+    _tool(n, "AddPipelineMarkdownCell")("hypotheses", "old hyp")
+    out = _tool(n, "EditPipelineCell")(
+        "hypotheses", content="new hyp", expected_rev=_rev(tmp_path, "hypotheses"))
+    assert "Edited hypotheses" in out
+    nb = _read_nb(tmp_path)
+    assert "new hyp" in _cell(nb, "hypotheses")["source"]
+    assert "the problem" in _cell(nb, "problem")["source"]  # untouched
+
+
+def test_edit_narrative_cell_stale_rev_rejected(tmp_path):
+    n = _node(tmp_path)
+    _tool(n, "AddPipelineMarkdownCell")("hypotheses", "h")
+    out = _tool(n, "EditPipelineCell")("hypotheses", content="x", expected_rev="deadbeef")
+    assert "changed since" in out
+
+
+def test_edit_narrative_cell_rejects_code_param(tmp_path):
+    n = _node(tmp_path)
+    _tool(n, "AddPipelineMarkdownCell")("problem", "p")
+    out = _tool(n, "EditPipelineCell")("problem", code="x=1", expected_rev=_rev(tmp_path, "problem"))
+    assert "markdown cell" in out and "content" in out
+
+
+def test_delete_narrative_cell(tmp_path):
+    n = _node(tmp_path)
+    _tool(n, "AddPipelineMarkdownCell")("problem", "p")
+    _tool(n, "AddPipelineMarkdownCell")("hypotheses", "h")
+    out = _tool(n, "DeletePipelineCell")("hypotheses", expected_rev=_rev(tmp_path, "hypotheses"))
+    assert "Deleted hypotheses" in out
+    nb = _read_nb(tmp_path)
+    assert _cell(nb, "hypotheses") is None and _cell(nb, "problem") is not None
 
 
 # ── ShowNotebook — read + list by name ───────────────────────────────────────

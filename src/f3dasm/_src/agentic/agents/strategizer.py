@@ -372,7 +372,7 @@ class StrategizerAgent(Agent):
     system_prompt = STRATEGIZER_SYSTEM_PROMPT
     tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
                        "WriteDeliverable", "CheckDeliverable",
-                       "SetNotebookIntro", "AddPipelineCell",
+                       "AddPipelineMarkdownCell", "AddPipelineCell",
                        "EditPipelineCell", "DeletePipelineCell", "ShowNotebook",
                        "RunScratch", "Wait", "Confer", "GetStatus"})
     # NOTE (audit): GetStatus/CancelDelegation are now opt-in (plug-and-play).

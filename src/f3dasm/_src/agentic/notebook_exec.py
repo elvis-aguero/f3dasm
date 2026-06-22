@@ -7,8 +7,8 @@ nbformat/ipykernel deps ship with the `agentic` extra; `run_deliverable()`
 returns a `subprocess.CompletedProcess`-shaped result and raises
 `subprocess.TimeoutExpired` on timeout, so the gate branches on nothing.
 
-Agents author the notebook cell-by-cell via the structured SetNotebookIntro /
-AddPipelineCell / EditPipelineCell / DeletePipelineCell / ShowNotebook closures
+Agents author the notebook cell-by-cell via the structured AddPipelineMarkdownCell
+/ AddPipelineCell / EditPipelineCell / DeletePipelineCell / ShowNotebook closures
 (pure nbformat, name-addressed) — there is no live kernel.
 """
 from __future__ import annotations
@@ -38,8 +38,8 @@ def notebook_deliverable_spec(role: str = "strategizer") -> str:
     the .ipynb is a reproducible scientific narrative, not a ported .py.
 
     Role-aware: ONLY the strategizer authors the notebook (it alone is granted
-    SetNotebookIntro / AddPipelineCell), so only it gets the "author with these
-    tools" imperative. The implementer (writes phase code to its workspace) and
+    AddPipelineMarkdownCell / AddPipelineCell), so only it gets the "author with
+    these tools" imperative. The implementer (writes phase code to its workspace) and
     the critic (judges the notebook) get the same STRUCTURE + RULES so their
     work fits / is judged against it — but no instruction to call tools they do
     not have."""
@@ -52,22 +52,23 @@ def notebook_deliverable_spec(role: str = "strategizer") -> str:
             "— the writeup AND the runnable, lazily-reproducible recipe in one. A\n"
             "SCIENTIFIC NARRATIVE, not a dumped script. AUTHOR IT WITH THE\n"
             "STRUCTURED TOOLS — they make the structure unforgeable plumbing:\n"
-            "  - SetNotebookIntro(problem, hypotheses): the two leading narrative\n"
-            "    cells (call once, early).\n"
+            "  - AddPipelineMarkdownCell(name, content): CREATE a narrative cell;\n"
+            "    name is 'problem' or 'hypotheses' (the canonical heading is added).\n"
+            "    Call early. Create-only — change it later with EditPipelineCell.\n"
             "  - AddPipelineCell(phase, why, code): CREATE one pillar cell + its\n"
             "    REQUIRED WHY-explainer; phase in {doe, data_generation, ml,\n"
             "    optimization, analysis}. Cells stay in canonical order. The pillar\n"
             "    name and rationale are required, so you cannot ship a structureless\n"
-            "    notebook or omit the WHY. Create-only — to change an existing pillar\n"
-            "    use EditPipelineCell. Do NOT hand-write notebook JSON.\n"
-            "  - ShowNotebook(phase?): no arg → list every cell by NAME with its rev;\n"
-            "    with a phase → that cell's full source + rev. READ before you edit.\n"
-            "  - EditPipelineCell(phase, ...): change an existing pillar. Surgical\n"
-            "    old/new find-replace on code (self-guarding), or full-field\n"
-            "    code=/why= which REQUIRES expected_rev (the rev from ShowNotebook) —\n"
-            "    so you can't clobber a cell that changed since you saw it.\n"
-            "  - DeletePipelineCell(phase, expected_rev): drop a pillar you decided\n"
-            "    not to run (don't leave dead/placeholder code in the deliverable).\n"
+            "    notebook or omit the WHY. Create-only. Do NOT hand-write notebook JSON.\n"
+            "  - ShowNotebook(name?): no arg → list every cell by NAME with its rev;\n"
+            "    with a name → that cell's full source + rev. READ before you edit.\n"
+            "  - EditPipelineCell(name, ...): change ANY existing cell (pillar,\n"
+            "    <pillar>__why, problem, or hypotheses). Surgical old/new find-replace\n"
+            "    (self-guarding), or full-field — code=/why= for a pillar, content= for\n"
+            "    a markdown cell — which REQUIRES expected_rev (the rev from\n"
+            "    ShowNotebook), so you can't clobber a cell that changed since you saw it.\n"
+            "  - DeletePipelineCell(name, expected_rev): drop a cell you decided not to\n"
+            "    keep (a pillar also drops its __why). Don't leave dead/placeholder content.\n"
             "  - RunScratch(code): run a snippet against a COPY of the ledger and\n"
             "    see its output — INSPECT before you commit. Verify the ledger\n"
             "    loads, a path resolves, a value is what you think, the analysis\n"
@@ -122,10 +123,11 @@ def notebook_deliverable_spec(role: str = "strategizer") -> str:
         "- NOTEBOOK-LEDGER SYNC: the hypotheses cell (## Hypotheses) and the analysis\n"
         "  cell MUST reflect the CURRENT status of every hypothesis in hypotheses.json.\n"
         "  When you call HypothesisUpdate (e.g. SUPPORTED → INCONCLUSIVE), you MUST\n"
-        "  immediately update BOTH to match, BEFORE CheckDeliverable: the ## Hypotheses\n"
-        "  cell via SetNotebookIntro (re-call replaces it), and the analysis cell via\n"
-        "  EditPipelineCell (ShowNotebook('analysis') for its rev first; AddPipelineCell\n"
-        "  is create-only and will refuse an existing cell).\n"
+        "  immediately update BOTH to match, BEFORE CheckDeliverable, with\n"
+        "  EditPipelineCell: the hypotheses cell — EditPipelineCell('hypotheses',\n"
+        "  content=…) — and the analysis cell — EditPipelineCell('analysis', code=…).\n"
+        "  ShowNotebook('<name>') first for each cell's current rev (full-field edits\n"
+        "  require expected_rev; AddPipelineCell/AddPipelineMarkdownCell are create-only).\n"
         "  A notebook that shows a stale status will be REJECTED. Ledger and notebook\n"
         "  must agree on every hypothesis status at gate time.\n"
         "- STORE PATH = PORTABILITY. The reproduction must not depend on the machine\n"
