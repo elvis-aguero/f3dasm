@@ -151,11 +151,20 @@ def build_routing_tools(node) -> dict:
     )
     _delegate_doc = (
         "Fire a task to a connected agent.\n\n"
-        "wait=False (default): returns a D### ID immediately; poll with\n"
-        "  GetStatus(id) to retrieve the result.\n"
-        "wait=True: blocks until the worker finishes and returns the report\n"
-        "  directly. Use this for sequential tasks where you do not need\n"
-        "  parallelism — eliminates all GetStatus() polling.\n\n"
+        "CHOOSE THE MODE DELIBERATELY — neither is the default-good answer:\n"
+        "  wait=False (async): returns a D### ID immediately and the worker\n"
+        "    runs in the background. Multiple workers can then be alive at\n"
+        "    once — which is the ONLY way Confer (live worker-to-worker\n"
+        "    messaging) can do anything, and the only way the run's wall-clock\n"
+        "    is the longest single chain rather than the sum of every\n"
+        "    delegation. Costs you GetStatus(id) polling to collect results.\n"
+        "  wait=True (sync): blocks until the worker finishes and returns its\n"
+        "    report directly, with zero polling. Simpler when this task must\n"
+        "    fully finish before you can even decide the next one.\n"
+        "  Ask yourself: could this run alongside other work, or might a peer\n"
+        "  worker need to Confer with it mid-flight? If yes, async. If it is a\n"
+        "  hard prerequisite for your very next decision, sync. Decide per\n"
+        "  delegation; do not pick one mode reflexively for the whole run.\n\n"
         "CONTEXT PACKAGING: workers start each delegation with no memory of\n"
         "prior delegations. Include in the task message everything the worker\n"
         "needs: relevant paths, key findings from prior delegations, and the\n"
@@ -1012,8 +1021,9 @@ def build_routing_tools(node) -> dict:
           'Done\\n\\n<full report>'                  — completed
           'Errored:\\n<traceback>'                   — failed
 
-        Tip: use Delegate(wait=True) when you do not need parallelism —
-        it blocks until the result is ready without any polling.
+        Polling is for async (wait=False) delegations. If this task had no
+        reason to overlap other work, Delegate(wait=True) would have returned
+        the result directly with no polling — worth a thought next time.
         """
         prefix = node._drain_notifications()
 
@@ -1140,7 +1150,8 @@ def build_routing_tools(node) -> dict:
                     "(b) just wait and poll occasionally. Do NOT cancel a "
                     "progressing delegation to save time — its ledgered evals "
                     "persist regardless, so cancelling only discards its report. "
-                    "Delegate(wait=True) avoids polling on sequential tasks."
+                    "(If this task had nothing to overlap, wait=True would have "
+                    "blocked without any of this polling.)"
                 )
             else:
                 # Zero stamped (backlog #6 stuck signal): cancelling is now a
@@ -1151,8 +1162,8 @@ def build_routing_tools(node) -> dict:
                     "wait — a worker may still be setting up before its first "
                     "eval. A delegation that has stamped NOTHING for a long "
                     "time may be genuinely stuck; the run watchdog will reclaim "
-                    "it. For sequential tasks, Delegate(wait=True) blocks with "
-                    "zero polling."
+                    "it. (A task with nothing to overlap could have been "
+                    "wait=True — blocking with zero polling.)"
                 )
 
         # Budget broadcast: check if a new 10%-overbudget threshold is reached.
@@ -1337,8 +1348,8 @@ def build_routing_tools(node) -> dict:
         Second call: closes the run.
 
         Refused if any delegation is still Working — call GetStatus()
-        on all pending delegations first, or use Delegate(wait=True)
-        for sequential execution.
+        on all pending delegations first. (A delegation you launched
+        wait=True would already be collected here, with no pending poll.)
         """
         prefix = node._drain_notifications()
         # Liveness reconciled against the authoritative persistent log: a
@@ -1359,8 +1370,7 @@ def build_routing_tools(node) -> dict:
                 "start another delegation while these finish;\n"
                 "  (b) wait, then GetStatus(<id>) on each and interpret its "
                 "results before you conclude.\n"
-                "Re-call Done() once none are still running. "
-                "(Tip: Delegate(wait=True) avoids this for sequential tasks.)"
+                "Re-call Done() once none are still running."
             )
         # Exit-interview capture (final stage): the conclusion is already
         # accepted + recorded; this Done() carries ONLY the retrospective.
