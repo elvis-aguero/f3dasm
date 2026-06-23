@@ -349,26 +349,6 @@ def build_routing_tools(node) -> dict:
                     f"{sorted(known) or '(none proposed yet)'}."
                 )
 
-        # Delegation ID: globally unique when a shared DelegationLog
-        # is present (multiple orchestrating nodes share one log, so
-        # IDs must be unique across all of them).  Falls back to the
-        # per-node monotonic counter when no log is attached.
-        if node._delegation_log is not None:
-            delegation_id = node._delegation_log.next_id()
-            # Keep per-node seq in sync so checkpoint/WorkerNode
-            # paths that read _delegation_seq stay consistent.
-            with node._registry_lock:
-                try:
-                    node._delegation_seq = int(
-                        delegation_id[1:]
-                    )
-                except (ValueError, IndexError):
-                    pass
-        else:
-            with node._registry_lock:
-                node._delegation_seq += 1
-                delegation_id = f"D{node._delegation_seq:03d}"
-
         # Resolve the optional process-phase tag (DoE/DataGeneration/ML/…).
         # Unknown/None → None (soft; never refuses), stored as the canonical
         # value string for the log + critic flags + downstream grouping.
@@ -401,6 +381,26 @@ def build_routing_tools(node) -> dict:
                     "reason) if your study doesn't need it, then re-delegate. "
                     "(Not a tool error; a process gate.)"
                 )
+
+        # Delegation ID — allocated AFTER the milestone gate so a blocked attempt
+        # does not BURN an ID (next_id() advances a monotonic counter on every
+        # call; allocating before the gate left a permanent gap in the sequence,
+        # e.g. the milestone-blocked first implementer attempt always ate D002).
+        # Globally unique when a shared DelegationLog is present (multiple
+        # orchestrating nodes share one log); per-node counter otherwise.
+        if node._delegation_log is not None:
+            delegation_id = node._delegation_log.next_id()
+            # Keep per-node seq in sync so checkpoint/WorkerNode paths that read
+            # _delegation_seq stay consistent.
+            with node._registry_lock:
+                try:
+                    node._delegation_seq = int(delegation_id[1:])
+                except (ValueError, IndexError):
+                    pass
+        else:
+            with node._registry_lock:
+                node._delegation_seq += 1
+                delegation_id = f"D{node._delegation_seq:03d}"
 
         start_time_mono = time.monotonic()
         started_at = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
