@@ -9,9 +9,10 @@ Minimise `y = (x1 - 1)^2 + (x2 + 2)^2` over the design space below. The global
 minimum is `y = 0` at `(x1, x2) = (1, -2)`.
 
 ## Success criteria
-Report the argmin `(x1*, x2*)` and the **ledgered** `y*`, and ship a
-`pipeline.py` — a lazy f3dasm Pipeline that loads the canonical store and, run
-again, reproduces `y*` from ledgered rows (derived, not a hardcoded number).
+Report the argmin `(x1*, x2*)` and the **ledgered** `y*` in the deliverable
+`pipeline.ipynb` — a notebook whose code cells form a lazy f3dasm Pipeline that
+loads the canonical store and, re-executed, reproduces `y*` from ledgered rows
+(derived, not a hardcoded number).
 
 ## Design space
 | variable | type | bounds | units |
@@ -24,6 +25,7 @@ A shipped callable: `workspace/evaluator.py:evaluate` (one kwarg per input,
 returns `y`). Declared in `config.yaml` under `evaluator.entrypoint`.
 
 ## Deliverables
-- `solution.md` — the argmin, the ledgered `y*`, and a one-line conclusion.
-- `pipeline.py` — the lazy f3dasm Pipeline of the whole process; re-running it
-  reproduces `y*` from the canonical ledger (zero new evals) and asserts it.
+- `pipeline.ipynb` — the single deliverable. Its leading markdown cells hold the
+  writeup (the argmin, the ledgered `y*`, a one-line conclusion); its code cells
+  are the lazy f3dasm Pipeline of the whole process. Re-executed, it reproduces
+  `y*` from the canonical ledger (zero new evals) and asserts it.

@@ -33,7 +33,9 @@ Format per feature: **what** (plain language) · **why** · **where** (files) ·
   that the verdict obeys the charter, and nudges the strategizer if not.
 - **Why:** the gate critic only checks at the end; this catches charter violations
   at the moment of assertion.
-- **Where:** `verdict_validator.py`, wired in `nodes/strategizer.py` HypothesisUpdate.
+- **Where:** `verdict_validator.py` (judge logic); invoked by `nodes/strategizer.py`
+  HypothesisUpdate via `node._run_verdict_validator`, which is defined in
+  `nodes/critic_gate.py`.
 - **Config:** kill switch `F3DASM_VERDICT_VALIDATOR=0`. **Status:** advisory, non-blocking.
 
 ### Science monitor

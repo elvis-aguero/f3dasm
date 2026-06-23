@@ -43,7 +43,7 @@ def create_experimentdata(project_dir):                 # Step 1: LOAD-OR-CREATE
     domain.add_float("x0", -5.0, 5.0); domain.add_float("x1", -5.0, 5.0)
     domain.add_output("f")                              # declare outputs up front
     data = ExperimentData(domain=domain)
-    sampler = create_sampler("random", seed=0)
+    sampler = create_sampler("random_sampler", seed=0)
     sampler.arm(data=data)                              # ARM before CALL (two-phase API)
     data = sampler.call(data=data, n_samples=50)
     data.store(project_dir)
@@ -90,8 +90,9 @@ script against the shipped ledger and asserting zero new evals + your
   `add_output(name)` for every output column (custom objects:
   `add_output(name, to_disk=True, store_function=, load_function=)`).
 - Wrap an existing fn as a generator: `datagenerator(output_names="y")(fn)`.
-- Samplers (`"random"`, `"latin"`, `"sobol"`, `"grid"`): always `arm(data=)`
-  then `call(data=, n_samples=)`.
+- Samplers (`"random_sampler"`, `"latin_sampler"`, `"sobol_sampler"`,
+  `"grid_sampler"` — the preferred names; bare `"random"` etc. are deprecated
+  aliases): always `arm(data=)` then `call(data=, n_samples=)`.
 
 ## ExperimentData (the ledger)
 The **one canonical ledger** is written by `get_evaluator()` — every true-oracle

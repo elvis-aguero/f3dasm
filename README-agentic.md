@@ -189,17 +189,17 @@ evaluator:
   #   output_columns: [coilable, sigma_crit, energy]
   fidelity_column: null                      # e.g. "fidelity" for multi-fidelity
 
-required_deliverables:                        # hard gate before Done() (replicate.py
-  - replicate.py                              #   is always required regardless)
+required_deliverables:                        # hard gate before Done() (pipeline.ipynb
+  - pipeline.ipynb                            #   is always required regardless)
 ```
 
 **Budget semantics.** The wall-clock budget is a **soft** constraint: warnings
 at 95% and 100% are appended to the strategizer's context, but the run is never
 force-terminated for merely exceeding it. A separate **run-level cost backstop**
-(default `2×` the budget, `RUN_BACKSTOP_MULTIPLE` in `nodes.py`) aborts the whole
+(default `2×` the budget, `RUN_BACKSTOP_MULTIPLE` in `nodes/`) aborts the whole
 run with a `RUN BACKSTOP` banner — a guard against runaway cost, not a hard
-budget. Eval budget is a soft warning. `replicate.py` is always required;
-`Done()` is refused until it exists.
+budget. Eval budget is a soft warning. `pipeline.ipynb` is always required;
+`Done()` is refused until it exists and passes the reproduction gate.
 
 Note: budget/backstop checks happen between strategizer turns, so a single very
 long turn (e.g. polling a slow delegation) can overrun before the backstop
@@ -208,11 +208,15 @@ backstop.
 
 ## What "good" looks like
 
-A healthy run ends with `solution.md` (the critic-passed conclusion + run
-metadata) and a `replicate.py` that, when run, loads the canonical ledger and
-**asserts** the headline number. If you see `## ⚠ UNGATED RUN` or
-`## ⚠ BUDGET EXCEEDED` at the top of `solution.md`, the conclusion did **not**
-pass the gate — treat it as unaudited.
+A healthy run ends with a single deliverable: `pipeline.ipynb` — a Jupyter
+notebook that the runtime re-executes lazily through a reproduction gate. Its
+leading markdown cells ARE the writeup (no separate `solution.md`); its code
+cells form the complete, runnable f3dasm pipeline that loads the canonical
+ledger and reproduces the headline with **zero new evaluations**. There is no
+`replicate.py` — the notebook is both the recipe and its own replication check.
+The gate outcome is recorded in `run_status.json` and stamped into the
+notebook's `agentic` metadata; an `## ⚠ UNGATED RUN` (or FAILED) banner means
+the conclusion did **not** pass the critic gate — treat it as unaudited.
 
 See [Run outputs](#run-outputs-what-lands-on-disk) for the full artifact map.
 
@@ -330,7 +334,7 @@ Violations are re-validated at injection time, deduped, capped (≤2/turn with a
 digest), and logged to `diagnostics.jsonl` as `SCIENCE_DRIFT`. Repeated drift
 escalates to a synchronous adversarial-critic audit (≤2/run).
 
-### 4. Termination (route-aware, `nodes.py` `StrategizerNode.__call__`)
+### 4. Termination (route-aware, `nodes/strategizer.py` `StrategizerNode.__call__`)
 
 A run closes **only** through an accepted `Done()` (two-shot, critic-gated when a
 critic is connected). Ending a turn without one → bounded re-prompt (×3) → forced
@@ -415,7 +419,14 @@ delegation's `debug/delegations/D###/` folder.
 | `Done` | strategizer | end the run (two-shot, critic-gated) |
 | `FollowUp` | any | one clarifying question to the delegating party |
 | `WriteNote` / `ReadNote` | strategizer | `.md` lab-notebook notes / read study files |
-| `WriteDeliverable` | strategizer | write `replicate.py` (or other top-level deliverable) |
+| `WriteDeliverable` | strategizer | author the single deliverable `pipeline.ipynb` as raw nbformat-v4 JSON (a fallback; prefer the structured `*PipelineCell` tools) |
+| `AddPipelineCell` / `AddPipelineMarkdownCell` | strategizer | create one f3dasm-pillar code cell (+ its WHY-explainer) / one narrative markdown cell (problem, hypotheses) in `pipeline.ipynb` |
+| `EditPipelineCell` / `DeletePipelineCell` | strategizer | patch (surgical find/replace or full-field, rev-guarded) / remove an existing named cell |
+| `ShowNotebook` | strategizer | read `pipeline.ipynb` back — TOC of every cell, or one cell's full source + rev (read-only, free) |
+| `CheckDeliverable` | strategizer | dry-run `pipeline.ipynb` through the SAME reproduction gate Done() applies, without closing — debug until it passes |
+| `RunPipelineCell` | strategizer | execute `pipeline.ipynb` against a ledger COPY and return a per-cell trace — pinpoints which cell breaks reproduction |
+| `RunScratch` | strategizer | run a Python snippet against a COPY of the canonical ledger (scratchpad for inspecting state; off the eval budget) |
+| `Confer` | any | async inter-agent message — queued to the target's inbox, delivered when it next drains; never blocks |
 | `ReportEvals` | implementer | honor-system eval count (fallback when not using `get_evaluator`) |
 
 ### Topology-injected tools (never declare — added by the runtime)
@@ -440,7 +451,7 @@ responsibility; routing is enforced by the build/run split:
 
 | Agent | role | Tools | Purpose |
 |---|---|---|---|
-| `StrategizerAgent` | strategizer | Done, FollowUp, WriteNote, ReadNote, WriteDeliverable (+ injected) | scientific method, DoE decisions, hypotheses, synthesis, replicate.py, Done. Entry node. |
+| `StrategizerAgent` | strategizer | Done, FollowUp, WriteNote, ReadNote, WriteDeliverable, CheckDeliverable, Add/Edit/Delete/ShowPipelineCell, RunScratch, RunPipelineCell, Confer (+ injected) | scientific method, DoE decisions, hypotheses, synthesis, authors `pipeline.ipynb`, Done. Entry node. |
 | `LiteratureReviewAgent` | implementer | Read, Grep, Glob (+ corpus/MCP tools) | methodology from primary literature |
 | `DataGeneratorAgent` | implementer | Bash, Edit, Read, Write, Glob, Grep, ReportEvals | **BUILDS** the physics DataGenerator Block; validates on one sample; delivers artifact. Does NOT run/evaluate/fit. |
 | `F3dasmImplementerAgent` (`ImplementerAgent`) | implementer | Bash, Edit, Read, Write, Glob, Grep, ReportEvals | **RUNS** the f3dasm pipeline: DoE-execution (sampling), runs the DataGenerator Block to produce data, fits surrogates (sklearn/botorch), runs the exploit loop. The **only** agent that calls the evaluator. |
@@ -455,11 +466,15 @@ responsibility; routing is enforced by the build/run split:
 studies/<study>/
     PROBLEM_STATEMENT.md          # the only required input
     config.yaml                   # optional
-    solution.md                   # ← final report + metadata (study root)
-    replicate.py                  # ← agent-written: loads the ledger, asserts the headline
+    pipeline.ipynb                # ← THE deliverable: agent-authored notebook;
+                                  #   leading markdown cells = writeup, code cells
+                                  #   = runnable pipeline that lazily reproduces the
+                                  #   headline; run provenance + gate_outcome stamped
+                                  #   into its `agentic` metadata
     runs/<timestamp>/
         experiment_data/          # ← CANONICAL LEDGER (input/output/jobs/domain csv+json)
         debug/
+            run_status.json       # gate outcome (GATED/UNGATED/FAILED/crashed) + resumability
             run_config.json       # store/counter/lock paths + evaluator entrypoint
             delegation_log.jsonl  # every delegation (full task + deliverable + provenance)
             diagnostics.jsonl     # tool errors + SCIENCE_DRIFT records
@@ -470,7 +485,8 @@ studies/<study>/
             delegations/D###/     # per-delegation worker scratch space
 ```
 
-**Reading a run:** start at `solution.md` (banner check first). Cross-check
+**Reading a run:** start at `pipeline.ipynb` (gate-outcome check first — its
+`agentic` metadata / `run_status.json`, plus any UNGATED banner). Cross-check
 claims against `experiment_data/` (the ledger), audit the reasoning trail in
 `hypotheses.json` + `delegation_log.jsonl`, and inspect `diagnostics.jsonl` for
 `SCIENCE_DRIFT` to see where the run was nudged.
@@ -693,10 +709,10 @@ internet, so it is heavily guarded (`literature_corpus.py`, `agents/literature.p
 `system_prompt`, `tools`; add it to a `Graph` with `Edge`s. Closures are injected
 by role automatically.
 
-**Add a closure tool:** add a builder in the relevant `_build_*_closures` method
-in `nodes.py`, register it in the returned dict, and gate its injection (by role
-or by graph topology). Wrap it via `_wrap_closure` so `ERROR:`/exceptions are
-recorded.
+**Add a closure tool:** the closures are built in `nodes/tools/routing.py` —
+add the closure there, register it in the returned dict, and gate its injection
+(by role or by graph topology). Wrap it via `_wrap_closure` so
+`ERROR:`/exceptions are recorded.
 
 **Add a ScienceMonitor rule:** add a `_check_*` method returning `Violation`s and
 call it from `evaluate()`. Keep it stateless (recompute from ledger + log +
@@ -739,10 +755,22 @@ src/f3dasm/_src/agentic/
     agent_prompts.py        # prompt constants + run/workspace preambles
     graph_builder.py        # compile Agent/Graph spec → LangGraph StateGraph
     graph_state.py          # AgenticState
-    nodes.py                # StrategizerNode / WorkerNode (closures, routing, termination)
+    nodes/                  # StrategizerNode / WorkerNode package
+        strategizer.py      #   StrategizerNode.__call__ (routing, termination, gate)
+        critic_gate.py      #   critic-gated Done()
+        worker.py           #   WorkerNode
+        recording.py        #   delegation / diagnostics recording
+        lifecycle.py        #   run-status / crash handling
+        parsing.py          #   tool-arg parsing, ConsultHandbook lookup
+        base.py             #   shared node base
+        tools/routing.py    #   closure-tool builders + Command(goto=…) routing
     hypothesis_ledger.py    # Popperian HypothesisLedger
     science_monitor.py      # drift rules + escalation
     instrumented.py         # InstrumentedDataGenerator, get_evaluator, RunStateSummary
+    notebook_exec.py        # execute pipeline.ipynb under the reproduction gate
+    verdict_validator.py    # validate a strategizer's CLOSING hypothesis verdict
+    resource_backend.py     # OS-specific resource governance (mem limits, RSS, reaping)
+    watchdog_cleanup.py     # best-effort run cleanup the watchdog does before exit
     delegation_log.py       # graph-wide append-only delegation log
     lookup.py               # LookupDataGenerator (dataset/pool studies)
     literature_corpus.py    # corpus + rate-limited HTTP + dense retrieval
