@@ -24,6 +24,7 @@ Resolved items keep their write-up below for the record; `(commit)` is what fixe
 - [x] **#11** Orphaned background process survives watchdog kill — `5199b593` (process-group reap)
 - [x] **#12** Watchdog kill loses the strategizer's retrospective — `5199b593` (synthetic post-mortem entry)
 - [x] **#13** Per-cell notebook debugger — *DONE* (`RunPipelineCell` closure + `diagnose_notebook`; per-cell trace localizes a repro failure by cell name + traceback; runs against a ledger copy; kill-switch-free read-only diagnostic)
+- [ ] **#14** Watchdog reap (#11) MISSES detached campaign processes — *open, HIGH (real CPU leak)* — they escape the process-group kill (new session) and outlive the run
 
 ---
 
@@ -406,3 +407,39 @@ pinpointed by name + traceback (not a binary fail).
 **Reuse.** `notebook_exec.py` (nbclient runner behind `CheckDeliverable`), the notebook
 closures in `nodes/tools/routing.py` (`ShowNotebook`/`RunScratch` registration pattern),
 `metadata.name` cell addressing (already the notebook CRUD convention).
+
+---
+
+## 14. Watchdog reap (#11) misses detached campaign processes (real CPU leak)
+**Status:** raised 2026-06-23. Discovered live during audit run 20260623T015907.
+HIGH — leaks a full CPU core per watchdog-killed run; orphans accumulate for days.
+
+**Problem.** #11's reap (`watchdog_cleanup.reap_process_group` -> `os.killpg(pgid)`)
+kills only run.py's process GROUP. The implementer launches its optimization
+campaign as a DETACHED background process (`/tmp/campaign_v2.py`) with poll-loop
+bashes waiting on `campaign_report.json` -- these run in a NEW session, so they
+escape the group kill (the residual risk the code comments already flagged) and
+outlive the watchdog `os._exit(2)`.
+
+**Primary evidence (audit run 20260623T015907, watchdog_killed at 60min).** Minutes
+after the watchdog fired, `ps` showed PID 47561 `python3 /tmp/campaign_v2.py` at
+125% CPU / 42min CPU still running, plus two `until [ -f .../D003/
+campaign_report.json ]` poll bashes (63962, 59331), AND an ancient zombie from a
+2-day-old run (26085, "Waiting for 975 evaluations", polling run 20260621T155717).
+The leak accumulates across runs/days. Had to `kill` them by hand to free the CPU
+before the next run.
+
+**Fix direction (touches the watchdog -- needs approval).** At reap time the
+campaign's parent chain is still intact (it reparents to launchd only AFTER run.py
+exits), so a recursive process-TREE walk by PPID at reap time catches it where the
+process-group kill does not. Options: (a) dependency-free recursive `pgrep -P`
+BFS from os.getpid(), SIGTERM each (recommended); (b) `psutil.children(recursive=True)`
+(adds dep); (c) a spawned-PID registry. Keep the walk BEFORE `os._exit` (chain intact).
+
+**Done-when.** After a watchdog kill, `ps aux | grep -E 'campaign|campaign_report'`
+returns zero leftovers. Headless: extend `test_reap_kills_a_detached_background_process`
+to a GRANDCHILD in a new session that the group kill misses (the current test's
+child is a session leader pid==pgid, so the group kill happens to catch it).
+
+**Reuse.** `watchdog_cleanup.reap_process_group`, `studies/agentic_black_box_3d/run.py`
+`_watchdog`, `tests/agentic/test_watchdog_cleanup.py`.
