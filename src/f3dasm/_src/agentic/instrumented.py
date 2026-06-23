@@ -478,6 +478,40 @@ def load_inner_evaluator(
 
 # ==========================================================================
 
+_GOVERNOR_PID_APPLIED = False
+
+
+def _apply_process_governor(run_config: dict, store_dir: Path,
+                            delegation_id: str) -> None:
+    """At the oracle entry INSIDE a campaign process: apply the one hard memory
+    cap to this process and register its PID so the run's watcher can sample +
+    kill this delegation's tree regardless of how the agent's Bash launched it.
+    Idempotent per process; best-effort — never blocks evaluations."""
+    global _GOVERNOR_PID_APPLIED
+    if _GOVERNOR_PID_APPLIED:
+        return
+    _GOVERNOR_PID_APPLIED = True
+    try:
+        from .resource_backend import get_resource_backend
+        cap = run_config.get("mem_cap_bytes")
+        if cap:
+            get_resource_backend().set_self_limit(int(cap))
+        import json as _json
+        import os as _os
+        from datetime import datetime, timezone
+        run_dir = store_dir.parent  # store_dir == <run_dir>/experiment_data
+        reg = run_dir / "debug" / "governor_pids.jsonl"
+        if reg.parent.exists():
+            rec = {
+                "delegation_id": delegation_id,
+                "pid": _os.getpid(),
+                "ts": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
+            }
+            with reg.open("a", encoding="utf-8") as f:
+                f.write(_json.dumps(rec) + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+
 
 def get_evaluator() -> InstrumentedDataGenerator:
     """The ONE door to the registered ground-truth oracle.
@@ -541,6 +575,11 @@ def get_evaluator() -> InstrumentedDataGenerator:
             "registerable oracle, report evaluation counts manually via "
             "ReportEvals (honour-system, off-ledger)."
         )
+
+    # Hard memory cap + PID registration for THIS campaign process (the one
+    # hard resource boundary). Done here because every campaign reaches the
+    # oracle through get_evaluator, regardless of how it was launched.
+    _apply_process_governor(run_config, store_dir, delegation_id)
 
     return InstrumentedDataGenerator(
         inner=inner,
