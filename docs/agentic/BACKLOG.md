@@ -15,7 +15,7 @@ Resolved items keep their write-up below for the record; `(commit)` is what fixe
 - [ ] **#2** Richer delegator↔worker comms (typed blocker/escalation) — *deferred*
 - [ ] **#3** ProblemDefinerAgent pre-strategizer intake stage — *deferred*
 - [x] **#4** Single Jupyter-notebook deliverable — *DONE* (the live system; gate runs the notebook via nbclient; toolset completed `db288d5b`)
-- [ ] **#5** KB entry: running a study on SLURM — *deferred*
+- [x] **#5** KB entry: running a study on SLURM — *DONE* (`entries/0010-running-a-study-on-slurm.md`; the deliverable pipeline runs on SLURM, the agent graph stays local)
 - [ ] **#6** Detect a delegation running but making zero ledger progress — *open*
 - [ ] **#7** Remove the literature hand-listed tool docs (BF-13a) — *open* (needs corpus closures to carry docstrings first)
 - [x] **#8** Literature str/int error (lit-bug #3) — `64a8230a` (coerce arxiv `max_results` to int)
@@ -155,15 +155,15 @@ create→run→analyze pipeline. One human-readable, runnable artifact.
 ---
 
 ## 5. KB entry: running a study on SLURM
-**Status:** deferred. Raised 2026-06-15.
+**Status:** RESOLVED 2026-06-23 — `entries/0010-running-a-study-on-slurm.md`.
+Raised 2026-06-15.
 
-Add a knowledge-base entry (and/or doc) on running an agentic study on a SLURM
-cluster. f3dasm's `Pipeline.run(mode="slurm", cluster=...)` already exists
-(`pipeline/executors/`); the KB should cover how the agentic layer maps onto it
-— the canonical store / FileLock semantics across nodes, how `get_evaluator()`
-and the lazy job-status resume behave under cluster parallelism, resource
-declaration (`Step.resources`, `orchestrator_resources`), and what changes vs
-the current local mode.
+KB entry added: `Pipeline.run(mode="slurm", cluster=SlurmCluster(...))`, per-step
+`SlurmResources`, `parallel=True` → `cluster_array` striping, canonical-store
+FileLock making concurrent array writes + lazy FINISHED-skip resume safe, and the
+key boundary — the deliverable pipeline runs on SLURM, the agent graph stays
+LOCAL (no slurm path in agent_runtime/run.py). Lightweight by request; deeper
+how-to docs deferred (none requested).
 
 ---
 
