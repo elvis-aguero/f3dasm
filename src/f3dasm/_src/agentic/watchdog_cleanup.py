@@ -43,10 +43,11 @@ def reap_process_group(pgid: int) -> None:
 # tree kill — which catches the new-session/detached campaigns that os.killpg
 # misses (the #14 escape) regardless of how the agent's Bash launched them.
 
-def read_governor_pids(run_dir) -> dict[str, list[int]]:
-    """Parse governor_pids.jsonl into ``{delegation_id: [pid, ...]}``. Empty on
-    any error (best-effort)."""
-    out: dict[str, list[int]] = {}
+def read_governor_pids(run_dir) -> dict[str, list[tuple[int, float | None]]]:
+    """Parse governor_pids.jsonl into ``{delegation_id: [(pid, start_time), ...]}``.
+    ``start_time`` is the process creation time recorded at registration (or None);
+    it is the ownership token the kill path verifies. Empty on any error."""
+    out: dict[str, list[tuple[int, float | None]]] = {}
     try:
         reg = Path(run_dir) / "debug" / "governor_pids.jsonl"
         if not reg.exists():
@@ -61,27 +62,44 @@ def read_governor_pids(run_dir) -> dict[str, list[int]]:
                 continue
             did, pid = r.get("delegation_id"), r.get("pid")
             if did is not None and isinstance(pid, int):
-                out.setdefault(did, []).append(pid)
+                out.setdefault(did, []).append((pid, r.get("start_time")))
     except Exception:
         pass
     return out
 
 
+def _owned_pids(entries, be) -> list[int]:
+    """From ``[(pid, recorded_start), ...]`` return only the pids that are STILL
+    our campaign: the live process's start time matches what we recorded (±1s). A
+    RECYCLED pid (a different program that inherited the number), a dead pid, or
+    one we can't verify is EXCLUDED — so we never signal an innocent bystander.
+    Fail-safe: when in doubt, don't kill."""
+    owned: list[int] = []
+    for pid, recorded in entries:
+        cur = be.proc_start_time(pid)
+        if cur is None:
+            continue  # gone / unverifiable → not ours
+        if recorded is None or abs(cur - recorded) < 1.0:
+            owned.append(pid)
+    return owned
+
+
 def check_memory_and_kill(run_dir, cap_bytes: int, backend=None) -> list[str]:
-    """Sample each registered delegation's process-tree RSS; kill any tree over
-    ``cap_bytes``. Returns the delegation IDs killed. The HARD memory boundary's
-    active enforcer (and the macOS enforcer, where RLIMIT_AS is unreliable).
-    Best-effort — never raises."""
+    """Sample each registered delegation's process-tree RSS and kill any tree over
+    ``cap_bytes`` — the authoritative, REAL-USAGE memory enforcer. Verifies
+    ownership (start-time match) before reading/killing, so a recycled pid is
+    never touched. Returns the delegation IDs killed. Best-effort — never raises."""
     killed: list[str] = []
     if not cap_bytes or cap_bytes <= 0:
         return killed
     try:
         from .resource_backend import get_resource_backend
         be = backend or get_resource_backend()
-        for did, pids in read_governor_pids(run_dir).items():
+        for did, entries in read_governor_pids(run_dir).items():
             try:
-                if be.read_rss(pids) > cap_bytes:
-                    be.kill(pids)
+                owned = _owned_pids(entries, be)
+                if owned and be.read_rss(owned) > cap_bytes:
+                    be.kill(owned)
                     killed.append(did)
             except Exception:
                 pass
@@ -95,26 +113,29 @@ def check_memory_and_kill(run_dir, cap_bytes: int, backend=None) -> list[str]:
 def reap_governor_pids(run_dir, backend=None) -> int:
     """Recursively kill every registered campaign's process tree — the watchdog's
     catch-all for detached/new-session campaigns the process-group kill misses.
-    Returns processes signalled. Best-effort."""
+    Verifies ownership first (never signals a recycled pid). Returns processes
+    signalled. Best-effort."""
     try:
         from .resource_backend import get_resource_backend
         be = backend or get_resource_backend()
-        all_pids = [p for pids in read_governor_pids(run_dir).values() for p in pids]
-        return be.kill(all_pids) if all_pids else 0
+        owned = [
+            p for entries in read_governor_pids(run_dir).values()
+            for p in _owned_pids(entries, be)
+        ]
+        return be.kill(owned) if owned else 0
     except Exception:
         return 0
 
 
 def delegation_rss(run_dir, delegation_id: str, backend=None) -> int:
-    """Total process-tree RSS (bytes) of one delegation's registered campaign(s),
-    for GetStatus telemetry so the strategizer can SEE a fat delegation. 0 if no
-    registered pids / unknown. Best-effort — never raises."""
+    """Total process-tree RSS (bytes) of one delegation's OWNED campaign(s), for
+    GetStatus telemetry so the strategizer can SEE a fat delegation. 0 if none /
+    unknown. Best-effort — never raises."""
     try:
         from .resource_backend import get_resource_backend
-        pids = read_governor_pids(run_dir).get(delegation_id, [])
-        if not pids:
-            return 0
-        return (backend or get_resource_backend()).read_rss(pids)
+        be = backend or get_resource_backend()
+        owned = _owned_pids(read_governor_pids(run_dir).get(delegation_id, []), be)
+        return be.read_rss(owned) if owned else 0
     except Exception:
         return 0
 

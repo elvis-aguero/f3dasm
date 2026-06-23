@@ -8,7 +8,8 @@ Linux/HPC deploy) is a one-line change here, not a sweep through call sites.
 
 Backends:
   - ``PsutilBackend`` (default, cross-platform: Linux / macOS / Windows) — RSS via
-    psutil, kill via the recursive process tree, hard cap via ``RLIMIT_AS``.
+    psutil, kill via the recursive process tree (enforcement is RSS-based, no
+    RLIMIT_AS — see ResourceBackend below).
   - ``StdlibBackend`` (degraded fallback if psutil is absent) — best-effort.
   - (future) a cgroup-native ``LinuxBackend`` for HPC — reads ``memory.current`` /
     sets ``memory.max`` and cooperates with SLURM's job cgroup. The interface
@@ -18,24 +19,32 @@ from __future__ import annotations
 
 import abc
 import os
-import resource
 import signal
 from collections.abc import Sequence
 
 
 class ResourceBackend(abc.ABC):
-    """Governs the memory + lifetime of a delegation's process tree."""
+    """Governs the memory + lifetime of a delegation's process tree.
+
+    The authoritative memory enforcer is the RSS watcher (``read_rss`` →
+    ``kill``), which measures REAL resident memory. We deliberately do NOT impose
+    a per-process ``RLIMIT_AS`` ceiling: that caps RESERVED virtual address space,
+    which scientific libs (numpy/BLAS/multiprocessing) routinely over-reserve
+    without using — so it false-kills legitimate campaigns. A real per-process
+    hard cap on RESIDENT memory is a cgroup-backend capability (memory.max),
+    added at HPC deploy behind this same interface.
+    """
 
     @abc.abstractmethod
     def set_self_limit(self, cap_bytes: int) -> bool:
-        """Apply a hard memory ceiling to the CURRENT process (called at the
-        oracle entry inside a campaign). Returns True if the limit is expected to
-        be enforced by the OS (reliable on Linux; macOS often ignores RLIMIT_AS,
-        so the watcher is the real enforcer there)."""
+        """Apply a per-process hard cap to the CURRENT process. Returns True only
+        if a backend actually self-enforces (a future cgroup backend will).
+        psutil/stdlib backends do NOT self-cap — they return False, and the RSS
+        watcher is the sole, real-usage-based enforcer."""
 
     @abc.abstractmethod
     def read_rss(self, pids: Sequence[int]) -> int:
-        """Total resident memory (bytes) of the given root pids PLUS their
+        """Total RESIDENT memory (bytes) of the given root pids PLUS their
         descendants. 0 if unknowable (degraded backend) or all gone."""
 
     @abc.abstractmethod
@@ -44,19 +53,12 @@ class ResourceBackend(abc.ABC):
         regardless of session/new-session (the reap the process-group kill
         misses). Returns the number of processes signalled."""
 
-
-def _set_rlimit_as(cap_bytes: int) -> bool:
-    """RLIMIT_AS ceiling on the current process. Reliable on Linux; best-effort
-    on macOS (Darwin frequently ignores it). Shared by both backends."""
-    try:
-        soft, hard = resource.getrlimit(resource.RLIMIT_AS)
-        new_hard = cap_bytes if hard == resource.RLIM_INFINITY else min(cap_bytes, hard)
-        resource.setrlimit(resource.RLIMIT_AS, (cap_bytes, new_hard))
-        # Enforced reliably only on Linux.
-        import sys
-        return sys.platform.startswith("linux")
-    except (ValueError, OSError):
-        return False
+    @abc.abstractmethod
+    def proc_start_time(self, pid: int) -> float | None:
+        """Process creation time (epoch seconds) for ownership verification —
+        the watcher compares this against the value recorded at registration so a
+        RECYCLED pid (a different program that inherited the number) is never
+        killed. None if the process is gone or the start time is unreadable."""
 
 
 class PsutilBackend(ResourceBackend):
@@ -67,7 +69,15 @@ class PsutilBackend(ResourceBackend):
         self._psutil = psutil
 
     def set_self_limit(self, cap_bytes: int) -> bool:
-        return _set_rlimit_as(cap_bytes)
+        # No per-process self-cap: RLIMIT_AS would cap reserved virtual space (the
+        # wrong metric → false-kills). The RSS watcher is the enforcer.
+        return False
+
+    def proc_start_time(self, pid: int) -> float | None:
+        try:
+            return self._psutil.Process(pid).create_time()
+        except self._psutil.Error:
+            return None
 
     def _tree(self, pids: Sequence[int]):
         """Yield live psutil.Process for each root pid + its recursive children,
@@ -109,12 +119,12 @@ class PsutilBackend(ResourceBackend):
 
 
 class StdlibBackend(ResourceBackend):
-    """Degraded fallback when psutil is unavailable. RLIMIT_AS still applies;
-    RSS telemetry is unavailable (returns 0) and kill is shallow (no recursive
-    descendant discovery without psutil)."""
+    """Degraded fallback when psutil is unavailable. No self-cap; RSS telemetry
+    unavailable (returns 0, so the watcher can't enforce); kill is shallow (no
+    recursive descendant discovery) and ownership cannot be verified."""
 
     def set_self_limit(self, cap_bytes: int) -> bool:
-        return _set_rlimit_as(cap_bytes)
+        return False  # no self-cap; the RSS watcher (psutil) is the enforcer
 
     def read_rss(self, pids: Sequence[int]) -> int:
         return 0  # no portable stdlib way to sum a process tree's RSS
@@ -128,6 +138,9 @@ class StdlibBackend(ResourceBackend):
             except OSError:
                 pass
         return n
+
+    def proc_start_time(self, pid: int) -> float | None:
+        return None  # ownership verification needs psutil; unavailable here
 
 
 _BACKEND: ResourceBackend | None = None

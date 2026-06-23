@@ -21,11 +21,13 @@ class _SpyBackend:
     def __init__(self):
         self.cap_calls = []
     def set_self_limit(self, cap):
-        self.cap_calls.append(cap); return True
+        self.cap_calls.append(cap); return False  # no self-cap; watcher enforces
     def read_rss(self, pids):
         return 0
     def kill(self, pids):
         return 0
+    def proc_start_time(self, pid):
+        return 12345.0  # recorded into governor_pids for the ownership check
 
 
 def test_applies_cap_and_registers_pid(tmp_path, monkeypatch):
@@ -41,6 +43,7 @@ def test_applies_cap_and_registers_pid(tmp_path, monkeypatch):
     reg = tmp_path / "debug" / "governor_pids.jsonl"
     rec = json.loads(reg.read_text().splitlines()[-1])
     assert rec["delegation_id"] == "D002" and rec["pid"] == os.getpid()
+    assert rec["start_time"] == 12345.0  # recorded for the ownership check
 
 
 def test_idempotent_per_process(tmp_path, monkeypatch):

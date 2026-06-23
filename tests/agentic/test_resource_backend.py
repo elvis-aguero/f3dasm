@@ -60,14 +60,23 @@ def test_read_rss_unknown_pid_is_zero_not_error():
     assert get_resource_backend().read_rss([999_999]) == 0
 
 
-def test_set_self_limit_returns_bool():
-    # Don't actually clamp THIS test process tight; just assert it runs + types.
-    b = get_resource_backend()
-    assert isinstance(b.set_self_limit(8 * 1024 ** 3), bool)
+def test_set_self_limit_is_noop_false():
+    # No per-process self-cap (RLIMIT_AS = reserved/virtual = wrong metric); the
+    # RSS watcher is the enforcer. set_self_limit must report it does not enforce.
+    assert get_resource_backend().set_self_limit(8 * 1024 ** 3) is False
+
+
+def test_proc_start_time_for_self_and_dead_pid():
+    pytest.importorskip("psutil")
+    b = PsutilBackend()
+    t = b.proc_start_time(__import__("os").getpid())
+    assert isinstance(t, float) and t > 0      # our own process has a start time
+    assert b.proc_start_time(999_999) is None  # nonexistent → None (unverifiable)
 
 
 def test_stdlib_backend_degrades_cleanly():
     s = StdlibBackend()
     assert s.read_rss([999_999]) == 0          # telemetry unavailable, no raise
     assert s.kill([999_999]) == 0              # dead pid → nothing signalled
-    assert isinstance(s.set_self_limit(8 * 1024 ** 3), bool)
+    assert s.set_self_limit(8 * 1024 ** 3) is False
+    assert s.proc_start_time(999_999) is None  # ownership unverifiable w/o psutil

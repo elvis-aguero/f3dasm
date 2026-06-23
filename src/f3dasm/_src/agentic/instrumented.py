@@ -493,18 +493,24 @@ def _apply_process_governor(run_config: dict, store_dir: Path,
     _GOVERNOR_PID_APPLIED = True
     try:
         from .resource_backend import get_resource_backend
+        be = get_resource_backend()
         cap = run_config.get("mem_cap_bytes")
         if cap:
-            get_resource_backend().set_self_limit(int(cap))
+            be.set_self_limit(int(cap))  # no-op on psutil/stdlib; the RSS watcher enforces
         import json as _json
         import os as _os
         from datetime import datetime, timezone
         run_dir = store_dir.parent  # store_dir == <run_dir>/experiment_data
         reg = run_dir / "debug" / "governor_pids.jsonl"
         if reg.parent.exists():
+            _pid = _os.getpid()
             rec = {
                 "delegation_id": delegation_id,
-                "pid": _os.getpid(),
+                "pid": _pid,
+                # Process start time: the watcher checks this before killing, so a
+                # RECYCLED pid (a different program that inherited the number) is
+                # never killed — the ownership guard.
+                "start_time": be.proc_start_time(_pid),
                 "ts": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
             }
             with reg.open("a", encoding="utf-8") as f:
