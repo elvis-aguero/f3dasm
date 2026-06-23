@@ -71,7 +71,11 @@ agentic = [
   "langgraph>=0.2.0,<1.0.0",
   "langgraph-checkpoint-sqlite>=2.0",
   "ollama>=0.4.0",
-  "requests>=2.28.0"
+  "requests>=2.28.0",
+  # Cross-platform per-process memory telemetry + process-tree reap for the
+  # worker resource governor (macOS has no cgroups/proc; psutil is the portable
+  # RSS read + children(recursive) kill). Lightweight, no torch.
+  "psutil>=5.9.0"
 ]
 # Optional quality upgrade for the literature reviewer, installed ON TOP of
 # `agentic`: layout-aware PDF→MD via docling (which pulls torch via

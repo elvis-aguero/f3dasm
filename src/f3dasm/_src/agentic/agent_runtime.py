@@ -40,6 +40,11 @@ __all__ = [
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_OLLAMA_MODEL = "qwen2.5:1.5b"
+# Default per-campaign-process hard memory cap (bytes) — the one HARD resource
+# boundary. 4 GiB: comfortably above a healthy GP-BO campaign, below the runaway
+# GP-on-5302-points blowup that pegged the host. Override via config.yaml
+# `mem_cap` (bytes) or env F3DASM_MEM_CAP; on HPC default to SLURM's --mem.
+DEFAULT_MEM_CAP_BYTES = 4 * 1024 ** 3
 
 
 class AgenticRunError(Exception):
@@ -59,6 +64,8 @@ def _init_canonical_store(
     run_dir: Path,
     study_dir: Path,
     evaluator_config: dict | None = None,
+    eval_budget: int | None = None,
+    mem_cap_bytes: int | None = None,
 ) -> dict:
     """Create canonical store dirs and write run_config.json sidecar.
 
@@ -112,10 +119,23 @@ def _init_canonical_store(
         "evaluator_entrypoint": eval_cfg.get("entrypoint"),
         "evaluator_output_names": eval_cfg.get("output_names"),
         "evaluator_lookup": eval_cfg.get("lookup"),
+        # Resource-governor knobs read by the in-process governor at the eval
+        # boundary (get_evaluator/InstrumentedDataGenerator). eval_budget is a
+        # SOFT cap (nudge only); mem_cap_bytes is the one HARD cap (host safety).
+        "eval_budget": eval_budget,
+        "mem_cap_bytes": mem_cap_bytes,
     }
     (run_dir / "debug" / "run_config.json").write_text(
         _json.dumps(config, indent=2), encoding="utf-8"
     )
+    # Also export to the environment so a campaign subprocess that doesn't route
+    # through run_config (e.g. the watcher / a self-limit at import) can read
+    # them; campaigns are launched by the agent's Bash and inherit this env.
+    import os as _os
+    if eval_budget is not None:
+        _os.environ["F3DASM_EVAL_BUDGET"] = str(eval_budget)
+    if mem_cap_bytes is not None:
+        _os.environ["F3DASM_MEM_CAP"] = str(mem_cap_bytes)
     return config
 
 
@@ -372,6 +392,16 @@ class AgenticRun:
         self._eval_budget = (
             eval_budget if eval_budget is not None else cfg.get("eval_budget")
         )
+        # Hard memory cap (bytes) per campaign process — the single HARD resource
+        # boundary (host safety). config.yaml `mem_cap` (bytes) or env
+        # F3DASM_MEM_CAP override the default. Soft budgets stay soft (§4); this
+        # is not a science budget, it's a don't-melt-the-host guard.
+        import os as _os
+        _mem_env = _os.environ.get("F3DASM_MEM_CAP")
+        self._mem_cap_bytes = (
+            int(_mem_env) if _mem_env
+            else cfg.get("mem_cap") or DEFAULT_MEM_CAP_BYTES
+        )
         self._required_deliverables = cfg.get("required_deliverables") or []
 
         # budget from config is HH:MM:SS string or seconds float
@@ -466,7 +496,9 @@ class AgenticRun:
         _full_cfg = _load_study_config(self.study_dir)
         _eval_cfg = _full_cfg.get("evaluator")
         canonical_cfg = _init_canonical_store(
-            run_dir, self.study_dir, evaluator_config=_eval_cfg
+            run_dir, self.study_dir, evaluator_config=_eval_cfg,
+            eval_budget=getattr(self, "_eval_budget", None),
+            mem_cap_bytes=getattr(self, "_mem_cap_bytes", None),
         )
 
         # Ingest a precomputed pool as D000 ground-truth rows. Two sources,

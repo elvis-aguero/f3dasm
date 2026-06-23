@@ -9,9 +9,124 @@ import sys
 import time
 
 from f3dasm._src.agentic.watchdog_cleanup import (
+    check_memory_and_kill,
+    delegation_rss,
+    read_governor_pids,
+    reap_governor_pids,
     reap_process_group,
     write_watchdog_retrospective,
 )
+
+
+# ── L2b/#14: memory watch + recursive reap over self-registered campaign PIDs ──
+
+class _StubBackend:
+    """rss_by_pid maps pid→bytes; start_by_pid maps pid→creation time (the live
+    value the ownership check reads). Records killed pids."""
+    def __init__(self, rss_by_pid=None, start_by_pid=None):
+        self.rss_by_pid = rss_by_pid or {}
+        self.start_by_pid = start_by_pid or {}
+        self.killed = []
+    def set_self_limit(self, cap):
+        return False
+    def read_rss(self, pids):
+        return sum(self.rss_by_pid.get(p, 0) for p in pids)
+    def kill(self, pids):
+        self.killed.extend(pids); return len(pids)
+    def proc_start_time(self, pid):
+        return self.start_by_pid.get(pid, 1000.0)  # default matches recorded
+
+
+def _write_pids(run_dir, mapping, start=1000.0):
+    debug = run_dir / "debug"; debug.mkdir(parents=True, exist_ok=True)
+    with (debug / "governor_pids.jsonl").open("w") as f:
+        for did, pids in mapping.items():
+            for p in pids:
+                f.write(json.dumps(
+                    {"delegation_id": did, "pid": p, "start_time": start}) + "\n")
+
+
+def test_read_governor_pids_groups_by_delegation(tmp_path):
+    _write_pids(tmp_path, {"D001": [10, 11], "D002": [20]})
+    assert read_governor_pids(tmp_path) == {
+        "D001": [(10, 1000.0), (11, 1000.0)], "D002": [(20, 1000.0)]}
+    assert read_governor_pids(tmp_path / "nope") == {}  # missing → empty
+
+
+def test_recycled_pid_is_not_killed(tmp_path):
+    # Registered D001 pid 10 at start_time 1000; the LIVE pid 10 now reports a
+    # DIFFERENT start time (it's a recycled, unrelated process) → must be spared.
+    _write_pids(tmp_path, {"D001": [10]}, start=1000.0)
+    be = _StubBackend(rss_by_pid={10: 9_000_000_000},   # "over cap"
+                      start_by_pid={10: 5000.0})         # live start ≠ recorded
+    killed = check_memory_and_kill(tmp_path, cap_bytes=1024 ** 3, backend=be)
+    assert killed == [] and be.killed == []  # innocent bystander spared
+    # And a normally-matching pid still gets killed (kill path not broken):
+    be2 = _StubBackend(rss_by_pid={10: 9_000_000_000}, start_by_pid={10: 1000.0})
+    assert check_memory_and_kill(tmp_path, cap_bytes=1024 ** 3, backend=be2) == ["D001"]
+
+
+def test_check_memory_kills_only_the_over_cap_delegation(tmp_path):
+    _write_pids(tmp_path, {"D001": [10], "D002": [20, 21]})
+    # D002's tree is over a 1 GB cap; D001 is under.
+    be = _StubBackend(rss_by_pid={10: 500, 20: 800_000_000, 21: 800_000_000})
+    killed = check_memory_and_kill(tmp_path, cap_bytes=1024 ** 3, backend=be)
+    assert killed == ["D002"]
+    assert set(be.killed) == {20, 21}        # the whole D002 tree
+    # audit diagnostic written
+    diag = json.loads((tmp_path / "debug" / "diagnostics.jsonl").read_text().splitlines()[-1])
+    assert diag["error_type"] == "MEMORY_CAP_KILL"
+
+
+def test_check_memory_under_cap_kills_nothing(tmp_path):
+    _write_pids(tmp_path, {"D001": [10]})
+    be = _StubBackend(rss_by_pid={10: 100})
+    assert check_memory_and_kill(tmp_path, cap_bytes=1024 ** 3, backend=be) == []
+    assert be.killed == []
+
+
+def test_reap_governor_pids_kills_all_registered(tmp_path):
+    _write_pids(tmp_path, {"D001": [10, 11], "D002": [20]})
+    be = _StubBackend()
+    n = reap_governor_pids(tmp_path, backend=be)
+    assert n == 3 and set(be.killed) == {10, 11, 20}
+
+
+def test_memory_cap_actually_kills_a_real_over_cap_process(tmp_path):
+    """End-to-end proof of the RSS-based hard cap: a real subprocess that holds
+    ~300 MB resident, registered with its true start time, is killed by
+    check_memory_and_kill under a 100 MB cap — via the real psutil backend."""
+    import pytest
+    psutil = pytest.importorskip("psutil")
+    # Hold ~300 MB resident (bytearray is zero-filled → resident), then idle.
+    child = subprocess.Popen([
+        sys.executable, "-c",
+        "x=bytearray(300*1024*1024); import time; time.sleep(120)",
+    ])
+    try:
+        time.sleep(1.5)  # let it allocate
+        start = psutil.Process(child.pid).create_time()  # the TRUE ownership token
+        debug = tmp_path / "debug"; debug.mkdir(parents=True)
+        (debug / "governor_pids.jsonl").write_text(json.dumps(
+            {"delegation_id": "D001", "pid": child.pid, "start_time": start}) + "\n")
+        killed = check_memory_and_kill(tmp_path, cap_bytes=100 * 1024 ** 2)  # real backend
+        assert killed == ["D001"]
+        for _ in range(40):
+            if child.poll() is not None:
+                break
+            time.sleep(0.1)
+        assert child.poll() is not None, "over-cap process was not killed"
+    finally:
+        if child.poll() is None:
+            child.kill()
+
+
+def test_delegation_rss_sums_the_delegations_tree(tmp_path):
+    _write_pids(tmp_path, {"D001": [10, 11], "D002": [20]})
+    be = _StubBackend(rss_by_pid={10: 100, 11: 200, 20: 999})
+    assert delegation_rss(tmp_path, "D001", backend=be) == 300  # 10+11 only
+    assert delegation_rss(tmp_path, "D002", backend=be) == 999
+    assert delegation_rss(tmp_path, "D999", backend=be) == 0   # unknown → 0
 
 
 # ── #11: reap leftover background processes ──────────────────────────────────
