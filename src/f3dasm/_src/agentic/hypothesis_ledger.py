@@ -67,6 +67,10 @@ class StatusLogEntry:
     posterior: float | None
     triggered_by: str | None
     ts: str = field(default_factory=_now_iso)
+    # Advisory critique from the #9 live verdict validator on THIS status change
+    # (None = not validated / no concern). Defaulted, so old ledger entries that
+    # predate the field still load via from_dict.
+    validator_note: str | None = None
 
 
 @dataclass
@@ -342,6 +346,22 @@ class HypothesisLedger:
                 f"Updated {h_id}: status → {status} "
                 f"(belief {post_f})."
             )
+
+    def annotate_last(self, h_id: str, note: str) -> None:
+        """Stamp an advisory note on the most recent status_log entry of ``h_id``.
+
+        The #9 live verdict validator records its critique here — on the exact
+        status change it judged. Best-effort: a no-op if the hypothesis or its
+        log is absent, and it never raises (an advisory must never break the
+        update it annotates).
+        """
+        with self._lock:
+            data = self._load()
+            h = data.get(h_id)
+            if not h or not h.get("status_log"):
+                return
+            h["status_log"][-1]["validator_note"] = note
+            self._save(data)
 
     def list_all(self) -> list[dict]:
         """Summaries: id, statement, current_status, prior, belief."""

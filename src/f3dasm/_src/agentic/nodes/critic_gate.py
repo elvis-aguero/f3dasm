@@ -3,6 +3,7 @@ audit, persist the verdict, build the feedback task message. A mixin on the
 strategizer (uses its instance attrs + RecordingMixin methods via MRO)."""
 from __future__ import annotations
 
+import os
 import traceback
 from pathlib import Path
 
@@ -11,6 +12,25 @@ from pathlib import Path
 # bounded, not an ever-growing transcript.
 _MAX_PRIOR_REVIEWS = 6
 _PRIOR_REVIEWS_CHAR_BUDGET = 6000
+
+# #9 live verdict validator: on the Nth repeat flag of the SAME hypothesis,
+# append a louder warning pointing at the gate critic (the lightweight "teeth";
+# a full critic re-audit on repeat is a deferred §4 follow-up).
+VERDICT_FLAG_ESCALATE_AFTER = 2
+
+_VERDICT_VALIDATOR_OFF = {"0", "false", "off", "no"}
+
+
+def verdict_validator_enabled() -> bool:
+    """The #9 live verdict validator is ON by default. Set the env var
+    ``F3DASM_VERDICT_VALIDATOR=0`` (or false/off/no) to disable it entirely —
+    HypothesisUpdate then behaves exactly as it did before #9 (no judge call, no
+    note, no diagnostics). The single, easy kill switch for the sentinel.
+    """
+    return (
+        os.environ.get("F3DASM_VERDICT_VALIDATOR", "1").strip().lower()
+        not in _VERDICT_VALIDATOR_OFF
+    )
 
 
 def _extract_md_section(text: str, header: str) -> str:
@@ -182,6 +202,114 @@ class CriticGateMixin:
         self._persist_critic_review(_n, critique)
         self._record_retrospective("critic", f"critic-{_n}", critique)
         return critique
+
+    # ── #9: live hypothesis-verdict validator (advisory, non-blocking) ────────
+
+    def _invoke_verdict_validator(self, prompt: str) -> str:
+        """One-shot LLM judgement reusing the CRITIC's adapter (same judge as the
+        gate), but lighter than ``_invoke_critic`` — it does NOT persist a critic
+        review or a retrospective. Records token usage so the call lands in the
+        run cost. Best-effort: returns "" if no critic is connected or the call
+        fails (the validator is advisory; a missing judge must not break the run).
+        """
+        critic_name = self._find_critic_name()
+        if critic_name is None:
+            return ""
+        adapter = self._worker_adapters[critic_name]
+        worker = adapter.copy() if hasattr(adapter, "copy") else adapter
+        try:
+            reply = worker.invoke([{"role": "user", "content": prompt}])
+        except Exception:  # noqa: BLE001
+            return ""
+        self._record_usage(
+            getattr(worker, "last_usage", {}) or {},
+            role=self._role_of(critic_name),
+            model=getattr(worker, "model", None),
+            phase="verdict_validation",
+            delegation_id="verdict-validator",
+        )
+        return reply or ""
+
+    def _cited_delegation_brief(self, evidence: dict | None) -> str | None:
+        """A short brief on the cited delegation — what it was asked to do and
+        whether it was flagged a falsification attempt — so the judge can weigh
+        §2 attempt-adequacy. The numeric result the verdict rests on is carried
+        separately in ``evidence['numbers']``. None if no delegation is cited or
+        the record is absent.
+        """
+        d = (evidence or {}).get("delegation")
+        if not d or self._delegation_log is None:
+            return None
+        rec = next(
+            (r for r in self._delegation_log.query_all() if r.get("id") == d),
+            None,
+        )
+        if rec is None:
+            return None
+        return (
+            f"delegation {d} (to {rec.get('to_node')}, "
+            f"is_falsification_attempt={rec.get('is_falsification_attempt')}, "
+            f"evals={rec.get('evals')}):\n"
+            f"  task: {rec.get('task', '')}\n"
+            f"  deliverable: {rec.get('deliverable', '')}"
+        )
+
+    def _run_verdict_validator(
+        self, h_id: str, status: str, comment: str, evidence: dict | None,
+    ) -> str:
+        """Advise (never block) on a closing verdict's substance against the
+        charter. Persists the critique on the verdict it judged, emits a
+        ``VERDICT_SUBSTANCE_FLAG`` diagnostics event on a flag, and on the Nth
+        repeat flag of the same hypothesis appends a louder gate-critic warning.
+        Returns the text to append to the HypothesisUpdate result ("" = no concern
+        / validator unavailable). NEVER raises — the update it annotates must
+        always stand (Q1=(B), advise-with-teeth).
+        """
+        if not verdict_validator_enabled():
+            return ""  # kill switch (F3DASM_VERDICT_VALIDATOR=0) — fully bypassed
+        try:
+            from ..verdict_validator import build_judge_prompt, parse_judge_reply
+            h = (self._ledger.get(h_id) or {}) if self._ledger else {}
+            if not h:
+                return ""
+            prompt = build_judge_prompt(
+                statement=h.get("statement", ""),
+                prediction=h.get("prediction", ""),
+                criterion=h.get("falsification_criterion", ""),
+                status=status,
+                comment=comment,
+                evidence=evidence,
+                delegation_report=self._cited_delegation_brief(evidence),
+            )
+            reply = self._invoke_verdict_validator(prompt)
+            if not reply:
+                return ""  # no judge / call failed — silent; the update stands
+            flagged, critique = parse_judge_reply(reply)
+            if not flagged:
+                if self._ledger:
+                    self._ledger.annotate_last(h_id, "validated: no charter concern")
+                return ""
+            # Flagged: persist on the verdict, surface to the agent, count, escalate.
+            if self._ledger:
+                self._ledger.annotate_last(h_id, critique)
+            self._record_science_drift({
+                "error_type": "VERDICT_SUBSTANCE_FLAG",
+                "hypothesis": h_id,
+                "status": status,
+                "message": critique[:300],
+            })
+            counts = self.__dict__.setdefault("_verdict_flag_counts", {})
+            counts[h_id] = counts.get(h_id, 0) + 1
+            msg = f"[VERDICT VALIDATOR] {critique}"
+            if counts[h_id] >= VERDICT_FLAG_ESCALATE_AFTER:
+                msg += (
+                    f"\n[VERDICT VALIDATOR] {h_id}'s verdict has now been flagged "
+                    f"{counts[h_id]}× — the gate critic will scrutinise this. "
+                    "Re-examine the cited charter clause before relying on it."
+                )
+            return msg
+        except Exception:  # noqa: BLE001
+            return ""  # advisory must never break the update
 
     def _persist_critic_review(self, n: int, critique_text: str) -> None:
         """Write the critic's full review to debug/critic_reviews/ so the
