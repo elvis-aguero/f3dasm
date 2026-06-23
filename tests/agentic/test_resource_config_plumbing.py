@@ -12,9 +12,7 @@ from f3dasm._src.agentic.agent_runtime import (
 )
 
 
-def test_run_config_carries_eval_budget_and_mem_cap(tmp_path, monkeypatch):
-    monkeypatch.delenv("F3DASM_EVAL_BUDGET", raising=False)
-    monkeypatch.delenv("F3DASM_MEM_CAP", raising=False)
+def test_run_config_carries_eval_budget_and_mem_cap(tmp_path):
     run_dir = tmp_path / "run"
     (run_dir / "debug").mkdir(parents=True)
     study_dir = tmp_path / "study"
@@ -24,24 +22,26 @@ def test_run_config_carries_eval_budget_and_mem_cap(tmp_path, monkeypatch):
         run_dir, study_dir, evaluator_config=None,
         eval_budget=1000, mem_cap_bytes=DEFAULT_MEM_CAP_BYTES,
     )
-    # returned dict + the on-disk sidecar both carry the knobs
+    # The knobs travel via run_config.json (sourced from config.yaml) — the single
+    # channel. Both the returned dict and the on-disk sidecar carry them.
     assert cfg["eval_budget"] == 1000
     assert cfg["mem_cap_bytes"] == DEFAULT_MEM_CAP_BYTES
     on_disk = json.loads((run_dir / "debug" / "run_config.json").read_text())
     assert on_disk["eval_budget"] == 1000
     assert on_disk["mem_cap_bytes"] == DEFAULT_MEM_CAP_BYTES
-    # exported to env so child campaign processes inherit them
-    assert os.environ["F3DASM_EVAL_BUDGET"] == "1000"
-    assert os.environ["F3DASM_MEM_CAP"] == str(DEFAULT_MEM_CAP_BYTES)
 
 
-def test_none_budget_does_not_set_env(tmp_path, monkeypatch):
-    monkeypatch.delenv("F3DASM_EVAL_BUDGET", raising=False)
+def test_config_is_not_exported_to_env(tmp_path):
+    # Config is explicit in config.yaml, NEVER through env vars (policy). The
+    # init must not export F3DASM_* — the run_config.json sidecar is the channel.
     run_dir = tmp_path / "run"
     (run_dir / "debug").mkdir(parents=True)
-    cfg = _init_canonical_store(run_dir, tmp_path / "s", eval_budget=None)
-    assert cfg["eval_budget"] is None
+    _init_canonical_store(
+        run_dir, tmp_path / "s", eval_budget=1000,
+        mem_cap_bytes=DEFAULT_MEM_CAP_BYTES,
+    )
     assert "F3DASM_EVAL_BUDGET" not in os.environ
+    assert "F3DASM_MEM_CAP" not in os.environ
 
 
 def test_default_mem_cap_is_sane():

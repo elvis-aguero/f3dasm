@@ -150,6 +150,16 @@ not seconds — the agent's reasoning time is negligible next to the simulations
 
 ## config.yaml reference
 
+**Configuration is explicit in `config.yaml` — not environment variables.** Run
+knobs (model, backend, time/eval budgets, `mem_cap`, the evaluator block,
+required deliverables) are declared here and reach the worker processes and the
+memory watcher through the per-run `run_config.json` sidecar the runtime writes
+from `config.yaml`. The runtime does **not** read run/resource behaviour from
+`F3DASM_*` env vars — to change a behaviour, edit `config.yaml`, don't export a
+variable or hardcode it in `run.py`. (A few *operational* tuners for transient-API
+resilience and the Ollama endpoint remain env-based; those are infra, not run
+science/resource config.)
+
 `config.yaml` is optional; every key has a default.
 
 ```yaml
@@ -157,7 +167,10 @@ model: claude-haiku-4-5-20251001    # LLM model id
 backend: claude                      # "claude" (default) or "ollama"
 budget: "00:30:00"                   # HH:MM:SS wall-clock (soft warn at 95/100%,
                                      #   HARD stop past the 5% cleanup window)
-eval_budget: 1000                    # max function evaluations (soft warn)
+eval_budget: 1000                    # SOFT cap on evaluations (mid-campaign nudge)
+mem_cap: 4294967296                  # HARD per-delegation memory cap, in BYTES
+                                     #   (4 GiB; the one hard boundary — host safety).
+                                     #   On a big node/SLURM, raise it BELOW --mem.
 checkpoint_every: 30                 # NOTE: currently a NO-OP — not read by the
                                      #   runtime today; setting it does nothing.
 

@@ -2,6 +2,9 @@ model: claude-haiku-4-5-20251001
 backend: claude
 budget: "00:15:00"
 eval_budget: 1000
+# Hard per-delegation memory cap, in BYTES (host safety; the one hard boundary).
+# 4 GiB. On a big node/SLURM, raise it (keep it below the job's --mem).
+mem_cap: 4294967296
 
 # Run knobs live here now (config.yaml is the source of truth; F3DASM_* env
 # vars override). debug=true captures per-turn strategizer/critic transcripts.

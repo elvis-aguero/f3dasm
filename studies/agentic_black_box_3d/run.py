@@ -183,23 +183,30 @@ def _watchdog() -> None:
 
 def _memory_watcher() -> None:
     """Daemon: every 5s, kill any delegation whose process tree exceeds the hard
-    memory cap (F3DASM_MEM_CAP, set by _init_canonical_store once the run starts).
-    The active enforcer of the one hard boundary — catches between-flush spikes
-    (e.g. a GP fit on a bloated store) and macOS, where RLIMIT_AS is unreliable."""
+    memory cap. The cap is read from the run's run_config.json (`mem_cap_bytes`,
+    sourced from config.yaml) — config is explicit in config.yaml, not env. The
+    active enforcer of the one hard boundary; catches between-flush spikes (e.g. a
+    GP fit) the per-row governor can't see."""
+    import json as _json
     while True:
         time.sleep(5)
-        cap = os.environ.get("F3DASM_MEM_CAP")
-        if not cap:
-            continue  # run not started / no cap configured yet
         try:
             runs_dir = STUDY_DIR / "runs"
             run_dirs = sorted(d for d in runs_dir.iterdir() if d.is_dir()) \
                 if runs_dir.exists() else []
-            if run_dirs:
-                killed = check_memory_and_kill(run_dirs[-1], int(cap))
-                if killed:
-                    print(f"MEMORY WATCHER: killed over-cap delegation(s) "
-                          f"{killed} (cap {cap} bytes)", flush=True)
+            if not run_dirs:
+                continue
+            rd = run_dirs[-1]
+            cfg_path = rd / "debug" / "run_config.json"
+            if not cfg_path.exists():
+                continue  # run not initialised yet
+            cap = _json.loads(cfg_path.read_text()).get("mem_cap_bytes")
+            if not cap:
+                continue
+            killed = check_memory_and_kill(rd, int(cap))
+            if killed:
+                print(f"MEMORY WATCHER: killed over-cap delegation(s) "
+                      f"{killed} (cap {cap} bytes)", flush=True)
         except Exception:
             pass
 

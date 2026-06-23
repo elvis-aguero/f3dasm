@@ -128,14 +128,9 @@ def _init_canonical_store(
     (run_dir / "debug" / "run_config.json").write_text(
         _json.dumps(config, indent=2), encoding="utf-8"
     )
-    # Also export to the environment so a campaign subprocess that doesn't route
-    # through run_config (e.g. the watcher / a self-limit at import) can read
-    # them; campaigns are launched by the agent's Bash and inherit this env.
-    import os as _os
-    if eval_budget is not None:
-        _os.environ["F3DASM_EVAL_BUDGET"] = str(eval_budget)
-    if mem_cap_bytes is not None:
-        _os.environ["F3DASM_MEM_CAP"] = str(mem_cap_bytes)
+    # No env-var export: run_config.json (written from config.yaml) is the single
+    # channel — the campaign reads it via get_evaluator, the watcher reads it from
+    # the run dir. Config is explicit in config.yaml, never through the environment.
     return config
 
 
@@ -392,16 +387,10 @@ class AgenticRun:
         self._eval_budget = (
             eval_budget if eval_budget is not None else cfg.get("eval_budget")
         )
-        # Hard memory cap (bytes) per campaign process — the single HARD resource
-        # boundary (host safety). config.yaml `mem_cap` (bytes) or env
-        # F3DASM_MEM_CAP override the default. Soft budgets stay soft (§4); this
-        # is not a science budget, it's a don't-melt-the-host guard.
-        import os as _os
-        _mem_env = _os.environ.get("F3DASM_MEM_CAP")
-        self._mem_cap_bytes = (
-            int(_mem_env) if _mem_env
-            else cfg.get("mem_cap") or DEFAULT_MEM_CAP_BYTES
-        )
+        # Hard per-campaign memory cap (bytes) — the single HARD resource boundary
+        # (host safety, not a science budget). Source of truth is config.yaml
+        # `mem_cap` (explicit, like every run knob); falls back to the default.
+        self._mem_cap_bytes = cfg.get("mem_cap") or DEFAULT_MEM_CAP_BYTES
         self._required_deliverables = cfg.get("required_deliverables") or []
 
         # budget from config is HH:MM:SS string or seconds float
