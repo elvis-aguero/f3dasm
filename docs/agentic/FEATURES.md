@@ -133,7 +133,9 @@ Format per feature: **what** (plain language) · **why** · **where** (files) ·
   kills every campaign process tree — including detached/new-session ones that a
   process-group kill misses.
 - **Where:** `studies/.../run.py` `_watchdog`; `watchdog_cleanup.py` `reap_governor_pids`.
-- **Config:** watchdog = 2× the run's time budget. **Status:** done.
+- **Config:** watchdog = 2× the run's time budget. Operational kill-switch
+  `F3DASM_DISABLE_WATCHDOG=1` turns the wall-clock force-exit OFF (the memory-cap
+  watcher stays on) — for long supervised runs. **Status:** done.
 
 ### Synthetic watchdog retrospective (#12)
 - **What:** a watchdog kill leaves a labelled post-mortem so the analysis protocol

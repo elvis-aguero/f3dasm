@@ -250,7 +250,11 @@ if __name__ == "__main__":
         os.setpgrp()
     except OSError:
         pass  # already a leader / unsupported — reap falls back to a no-op
-    threading.Thread(target=_watchdog, daemon=True).start()
+    if os.environ.get("F3DASM_DISABLE_WATCHDOG"):
+        print("WATCHDOG: disabled via F3DASM_DISABLE_WATCHDOG — wall-clock force-exit OFF "
+              "(memory cap watcher stays on for host safety)", flush=True)
+    else:
+        threading.Thread(target=_watchdog, daemon=True).start()
     threading.Thread(target=_memory_watcher, daemon=True).start()
     result = AgenticRun(
         study_dir=STUDY_DIR,
