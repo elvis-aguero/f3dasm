@@ -38,9 +38,13 @@ from f3dasm._src.agentic.watchdog_cleanup import (
 STUDY_DIR = Path(__file__).parent
 BUDGET_SECONDS = 45 * 60  # 45 minutes
 MODEL = "claude-haiku-4-5-20251001"
-# Per-agent strategizer model override; None → use MODEL (Haiku). (Was set to
-# Sonnet for the orchestrator A/B; reverted to Haiku for the notebook e2e.)
-STRATEGIZER_MODEL = None
+# Per-agent strategizer model override; None → use MODEL (Haiku).
+# Sonnet A/B (20260623): strategizer + implementer on Sonnet to test whether a
+# stronger model reduces the verdict-validator oscillation seen in the Haiku
+# baseline 20260623T194849 (verdict flip-flopped FALSIFIED↔INCONCLUSIVE 4-5×).
+# The verdict validator inherits the strategizer's model → also Sonnet. The
+# gate critic / datagenerator / lit-reviewer stay on MODEL (Haiku).
+STRATEGIZER_MODEL = "claude-sonnet-4-6"
 
 # ── dirty-tree guard ─────────────────────────────────────────────────────────
 # The ledger stamps the current git SHA as provenance; a dirty working tree
@@ -97,7 +101,7 @@ graph = Graph(
         "strategizer":       StrategizerAgent(model=STRATEGIZER_MODEL),
         "literature_reviewer": LiteratureReviewAgent(),
         "datagenerator":     DataGeneratorAgent(),
-        "implementer":       ImplementerAgent(),
+        "implementer":       ImplementerAgent(model="claude-sonnet-4-6"),
         "critic":            AdversarialCritiqueAgent(),
     },
     edges=(
