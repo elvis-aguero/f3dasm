@@ -113,9 +113,11 @@ graph = Graph(
 # stall OUTSIDE that loop — startup, inside an LLM/CLI call, inside a tool —
 # zombies forever (observed: a claude-CLI startup stall ran 80 min, idle CPU).
 # This hard wall-clock watchdog force-exits a stalled run so it can never zombie.
-# Generous (> any healthy run ~22-38 min and the in-run backstop) — it only ever
-# fires on a true stall.
-WATCHDOG_SECONDS = 60 * 60
+# Set to 2x the in-run time budget: the 2026-06-23 audit showed runs were
+# watchdog-killed on TIME (lit review + campaign + multi-attempt gate) before the
+# deliverable could close, not on a true stall — so give the work room while still
+# bounding a genuine zombie.
+WATCHDOG_SECONDS = 2 * BUDGET_SECONDS
 
 
 def _watchdog() -> None:
