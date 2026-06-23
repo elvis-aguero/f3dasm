@@ -38,13 +38,32 @@ def build_judge_prompt(
     comment: str,
     evidence: dict | None,
     delegation_report: str | None,
+    prior_rulings: str = "",
 ) -> str:
     """Assemble the one-shot referee prompt for a proposed closing verdict.
 
     Injects ``FALSIFICATION_CHARTER`` verbatim (the same text the gate critic
     sees) so the live judge and the gate apply one identical standard.
+
+    ``prior_rulings`` (optional) is a digest of this referee's earlier rulings on
+    the SAME hypothesis this run — without it the judge is stateless and re-judges
+    a borderline case from scratch each call, which lets the verdict oscillate
+    (the gate critic already avoids this with its prior-reviews digest). When
+    supplied, the judge is told to stay consistent and reverse only on stated new
+    grounds.
     """
     report = (delegation_report or "").strip() or "(no delegation report available)"
+    prior_block = ""
+    if prior_rulings.strip():
+        prior_block = (
+            "\nYOUR PRIOR RULINGS ON THIS SAME HYPOTHESIS (oldest first)\n"
+            f"{prior_rulings.strip()}\n"
+            "Apply the charter CONSISTENTLY with the above. If the cited evidence\n"
+            "has not materially changed since a prior ruling, your verdict must\n"
+            "not change. You may reverse a prior ruling ONLY by explicitly naming\n"
+            "the NEW evidence or reasoning that justifies it — a borderline result\n"
+            "must not flip the verdict between calls on identical evidence.\n"
+        )
     return f"""\
 You are an independent referee applying the SCIENTIFIC-METHOD CHARTER to ONE
 proposed hypothesis-verdict change. Judge ONLY whether the verdict's SUBSTANCE
@@ -66,7 +85,7 @@ THE PROPOSED VERDICT
 
 THE CITED DELEGATION'S RESULT (the work the verdict rests on)
 {report}
-
+{prior_block}
 Check three things, each by clause number:
   1. §2 ATTEMPT ADEQUACY — did the cited work SEVERELY test the REGISTERED
      prediction (could it have refuted the claim had it been false), or is it a

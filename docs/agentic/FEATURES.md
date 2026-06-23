@@ -35,7 +35,12 @@ Format per feature: **what** (plain language) · **why** · **where** (files) ·
   at the moment of assertion.
 - **Where:** `verdict_validator.py` (judge logic); invoked by `nodes/strategizer.py`
   HypothesisUpdate via `node._run_verdict_validator`, which is defined in
-  `nodes/critic_gate.py`.
+  `nodes/critic_gate.py`. Runs on the **critic's** model (reuses the critic adapter),
+  not the strategizer's — one refereeing standard, decoupled from the agent it judges.
+- **Memory (anti-oscillation):** the judge is fed its own prior rulings on the SAME
+  hypothesis (from the ledger `status_log`, via `_prior_rulings_digest`) with a
+  justify-any-reversal guard, so a borderline verdict can't silently flip between
+  calls. Mirrors the gate critic's prior-reviews digest.
 - **Config:** kill switch `F3DASM_VERDICT_VALIDATOR=0`. **Status:** advisory, non-blocking.
 
 ### Science monitor

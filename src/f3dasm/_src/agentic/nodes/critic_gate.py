@@ -33,6 +33,30 @@ def verdict_validator_enabled() -> bool:
     )
 
 
+def _prior_rulings_digest(h: dict, *, max_entries: int = 6, max_chars: int = 240) -> str:
+    """Digest of the verdict validator's EARLIER rulings on this same hypothesis,
+    from its status_log. The current (just-applied) entry being judged is the
+    last one — exclude it; everything before is prior history. Without this the
+    judge is stateless and a borderline verdict oscillates between calls; with it
+    the judge sees what it ruled before (and why) and must justify any reversal.
+    Returns "" when there is no prior ruling (the first verdict on a hypothesis).
+    """
+    log = (h or {}).get("status_log") or []
+    prior = log[:-1]  # the last entry is the verdict currently under judgement
+    if not prior:
+        return ""
+    lines = []
+    for e in prior[-max_entries:]:
+        st = e.get("status", "?")
+        cm = " ".join((e.get("comment") or "").split())[:max_chars]
+        line = f"- ruled {st}: {cm}"
+        note = " ".join((e.get("validator_note") or "").split())[:max_chars]
+        if note:
+            line += f"\n    [your ruling then: {note}]"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _extract_md_section(text: str, header: str) -> str:
     """Return the body under a `### Header` up to the next `### ` heading.
 
@@ -280,6 +304,7 @@ class CriticGateMixin:
                 comment=comment,
                 evidence=evidence,
                 delegation_report=self._cited_delegation_brief(evidence),
+                prior_rulings=_prior_rulings_digest(h),
             )
             reply = self._invoke_verdict_validator(prompt)
             if not reply:
