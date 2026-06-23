@@ -537,7 +537,7 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                     ]
                 if done_entries:
                     triggered_by = done_entries[-1][0]
-            return node._ledger.update(
+            result = node._ledger.update(
                 hypothesis_id,
                 status,
                 comment,
@@ -545,6 +545,18 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                 posterior,
                 triggered_by,
             )
+            # #9: advisory live verdict-substance check — closing verdicts only,
+            # and only when a NEW entry was actually appended ("Updated …"); not
+            # on ERROR/SETTLED no-ops. Non-blocking: it appends a charter critique
+            # to what the agent sees this turn, but never changes the update.
+            from ..verdict_validator import CLOSING_STATUSES as _CLOSING
+            if status in _CLOSING and result.startswith("Updated "):
+                advisory = node._run_verdict_validator(
+                    hypothesis_id, status, comment, evidence,
+                )
+                if advisory:
+                    result = f"{result}\n{advisory}"
+            return result
 
         def LinkFalsificationAttempt(
             delegation_id: str, hypothesis_id: str
