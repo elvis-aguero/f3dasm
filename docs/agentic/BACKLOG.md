@@ -19,10 +19,11 @@ Resolved items keep their write-up below for the record; `(commit)` is what fixe
 - [ ] **#6** Detect a delegation running but making zero ledger progress — *open*
 - [ ] **#7** Remove the literature hand-listed tool docs (BF-13a) — *open* (needs corpus closures to carry docstrings first)
 - [x] **#8** Literature str/int error (lit-bug #3) — `64a8230a` (coerce arxiv `max_results` to int)
-- [ ] **#9** Orchestrator-owned live validator for HypothesisUpdate — *open, §4 user-owned* (next to spec)
+- [x] **#9** Orchestrator-owned live validator for HypothesisUpdate — *DONE* (advise-with-teeth, charter-grounded, kill-switchable via `F3DASM_VERDICT_VALIDATOR`; merged into dev/confer; validated live run `20260623T002417` — fired, judged H1 correctly vs the gate critic, non-blocking)
 - [ ] **#10** Strategizer delegates the optimization as one monolithic un-budgeted campaign — *open, §4 user-owned* (**current binding constraint** — watchdog-kills runs)
 - [x] **#11** Orphaned background process survives watchdog kill — `5199b593` (process-group reap)
 - [x] **#12** Watchdog kill loses the strategizer's retrospective — `5199b593` (synthetic post-mortem entry)
+- [ ] **#13** Per-cell notebook debugger — agent can't see WHICH cell failed reproduction — *open, SPEC below (awaiting approval to build)*
 
 ---
 
@@ -352,3 +353,55 @@ retrospectives only for D001/D004, none for the strategizer, so its campaign-
 decomposition reasoning had to be reconstructed from the transcript (§1 Step 4) instead
 of read directly (Step 1). **Fix direction:** have the watchdog handler flush a
 best-effort strategizer retrospective (or a partial "interrupted" one) before os._exit.
+
+---
+
+## 13. Per-cell notebook debugger (agent can't see WHICH cell failed reproduction)
+**Status:** raised 2026-06-23. SPEC below — awaiting approval to build (new tool).
+Surfaced by run 20260623T002417 (FAILED).
+
+**Problem.** `CheckDeliverable` runs `pipeline.ipynb` top-to-bottom via nbclient and
+returns a BINARY pass/fail with a high-level message. When reproduction fails the
+strategizer cannot see *which* cell raised, its traceback, or its stdout/state — so it
+iterates blindly. Primary evidence: run 20260623T002417 burned ~10 gate attempts
+(`REPRO_GATE_BOUNCE`×6 → `REPRO_GATE_FAILED`) and FAILED; the strategizer's DONE
+retrospective BLOCKED field reads verbatim: *"No tool to execute and debug pipeline.ipynb
+cell-by-cell in isolation… the CheckDeliverable gate was binary fail/pass with high-level
+error messages only. I needed a cell-level executor (run cell 'analysis' and return
+stdout/stderr/state) to pinpoint whether the failure was in data loading, ledger path
+resolution, output formatting, or the gate's expectations."* It never diagnosed that its
+own pillar cells were stubs (`print('doe')`, …), so the REJECT was unavoidable.
+
+**Why this is parsimonious (not overfit).** "An agent must be able to observe the failure
+it is asked to fix" is a general observability principle — a philosopher nods. The binary
+gate throws away per-cell information nbclient ALREADY produces. This is not a workaround
+for one run; it is the diagnostic counterpart the repro gate has always lacked.
+
+**Proposed tool (DRY — reuse the gate's runner).** Add a strategizer closure, e.g.
+`RunPipelineCell(name: str | None = None)`, registered alongside `ShowNotebook` /
+`RunScratch` / `CheckDeliverable` (`nodes/tools/routing.py`), backed by the SAME nbclient
+execution `notebook_exec.py` already uses for the gate:
+- `name` given → execute `pipeline.ipynb` top-to-bottom up to AND INCLUDING the cell with
+  that `metadata.name` (fresh kernel, the gate's environment + canonical store), return that
+  cell's stdout / stderr / traceback + an `errored` flag. (Top-to-bottom because cells share
+  state — imports/vars from earlier cells; "run cell N in isolation" would spuriously fail.)
+- `name` omitted → execute the whole notebook and return a PER-CELL trace (each cell:
+  ok | errored, the first failing cell's name + traceback, stdout tail) — the granular
+  version of `CheckDeliverable`.
+
+**Boundary / safety.** Read-only diagnostic: run in the same sandboxed, zero-new-eval mode
+the gate uses (must NOT mutate the canonical ledger — a notebook that calls
+`get_evaluator()` against a full store is lazy/no-op; guard the same way the gate does).
+Pure diagnostic — does not change the gate's accept/reject criteria (not §4 critic
+substance). Likely the minimal change is to expose what nbclient already captures, so much
+of the work is surfacing, not new execution.
+
+**Done-when (KPI).** A subsequent run that hits a repro failure resolves it WITHOUT
+exhausting gate attempts — i.e. `REPRO_GATE_BOUNCE` count on a recovered run drops to ≤2
+(vs 6 in 20260623T002417), or the strategizer's retrospective no longer lists the
+cell-level executor as a BLOCKED gap. Headless: a test that a deliberately-broken cell is
+pinpointed by name + traceback (not a binary fail).
+
+**Reuse.** `notebook_exec.py` (nbclient runner behind `CheckDeliverable`), the notebook
+closures in `nodes/tools/routing.py` (`ShowNotebook`/`RunScratch` registration pattern),
+`metadata.name` cell addressing (already the notebook CRUD convention).
