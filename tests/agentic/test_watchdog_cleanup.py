@@ -10,6 +10,7 @@ import time
 
 from f3dasm._src.agentic.watchdog_cleanup import (
     check_memory_and_kill,
+    delegation_rss,
     read_governor_pids,
     reap_governor_pids,
     reap_process_group,
@@ -70,6 +71,14 @@ def test_reap_governor_pids_kills_all_registered(tmp_path):
     be = _StubBackend()
     n = reap_governor_pids(tmp_path, backend=be)
     assert n == 3 and set(be.killed) == {10, 11, 20}
+
+
+def test_delegation_rss_sums_the_delegations_tree(tmp_path):
+    _write_pids(tmp_path, {"D001": [10, 11], "D002": [20]})
+    be = _StubBackend(rss_by_pid={10: 100, 11: 200, 20: 999})
+    assert delegation_rss(tmp_path, "D001", backend=be) == 300  # 10+11 only
+    assert delegation_rss(tmp_path, "D002", backend=be) == 999
+    assert delegation_rss(tmp_path, "D999", backend=be) == 0   # unknown → 0
 
 
 # ── #11: reap leftover background processes ──────────────────────────────────

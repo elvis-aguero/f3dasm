@@ -1113,6 +1113,17 @@ def build_routing_tools(node) -> dict:
                 f"{cur_stamped} evals stamped, none new for {stale}s")
         else:
             progress_desc = f"0 evals stamped after {elapsed}s"
+        # Per-delegation memory telemetry (resource-governance L3): surface this
+        # delegation's process-tree RSS so the strategizer can SEE a fat campaign
+        # and Confer the implementer. Best-effort; appended only if known.
+        if _store is not None:
+            try:
+                from ...watchdog_cleanup import delegation_rss
+                _rss = delegation_rss(_store.parent, delegation_id)
+                if _rss > 0:
+                    progress_desc += f"; ~{_rss / 1024 ** 2:.0f} MB RSS"
+            except Exception:  # noqa: BLE001
+                pass
         note_desc = ""
         if progress_note:
             _ntext, _nts = progress_note

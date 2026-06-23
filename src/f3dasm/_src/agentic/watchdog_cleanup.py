@@ -105,6 +105,20 @@ def reap_governor_pids(run_dir, backend=None) -> int:
         return 0
 
 
+def delegation_rss(run_dir, delegation_id: str, backend=None) -> int:
+    """Total process-tree RSS (bytes) of one delegation's registered campaign(s),
+    for GetStatus telemetry so the strategizer can SEE a fat delegation. 0 if no
+    registered pids / unknown. Best-effort — never raises."""
+    try:
+        from .resource_backend import get_resource_backend
+        pids = read_governor_pids(run_dir).get(delegation_id, [])
+        if not pids:
+            return 0
+        return (backend or get_resource_backend()).read_rss(pids)
+    except Exception:
+        return 0
+
+
 def _log_memory_kill(run_dir, killed: list[str], cap_bytes: int) -> None:
     """Append a MEMORY_CAP_KILL diagnostic so the kill is auditable. Best-effort."""
     try:
