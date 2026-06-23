@@ -1,6 +1,28 @@
 # Spec 04 — Single Jupyter-notebook deliverable
 
-**Backlog #4.** Priority: low (polish). Status: spec.
+**Backlog #4.** Priority: low (polish). **Status: SUPERSEDED — IMPLEMENTED.**
+
+> ⚠️ **This spec is a historical design record, not a description of the live
+> system.** It is written in the future tense and lists open questions that have
+> since been settled. What actually shipped:
+> - `pipeline.ipynb` is the **sole, always-required** deliverable — NOT the
+>   opt-in extra this spec recommended. There is no `solution.md` and no
+>   `pipeline.py`; both are gone.
+> - The reproduction gate executes the notebook lazily via **nbclient**
+>   (`notebook_exec.run_deliverable` / `_reproduction_gate`) with the same
+>   zero-new-evals + `REPRODUCED:` asserts.
+> - The **agent authors the cells** through structured CRUD tools
+>   (`AddPipelineCell` / `AddPipelineMarkdownCell` / `EditPipelineCell` /
+>   `DeletePipelineCell` / `ShowNotebook`); the prose lives in the notebook's
+>   leading markdown cells. The runtime no longer writes `solution.md`.
+> - Open questions below are resolved: the **agent** authors the prose cells;
+>   authoring is via the structured tools (not raw JSON); the notebook is
+>   required for all agentic runs (not opt-in).
+>
+> For the live contract see [`../authoring-a-study.md`](../authoring-a-study.md),
+> `notebook_exec.py`, and `tests/agentic/test_study_contract.py`. The line
+> numbers and "current mechanics" below describe the pre-migration code and are
+> stale. The original write-up is kept for the record.
 
 Merge the two deliverables — `solution.md` (prose) + `pipeline.py` (executable) —
 into **one `.ipynb`**: markdown cells for the writeup, code cells for the lazy
