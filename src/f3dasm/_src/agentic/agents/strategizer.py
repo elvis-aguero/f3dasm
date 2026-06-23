@@ -391,7 +391,8 @@ class StrategizerAgent(Agent):
                        "WriteDeliverable", "CheckDeliverable",
                        "AddPipelineMarkdownCell", "AddPipelineCell",
                        "EditPipelineCell", "DeletePipelineCell", "ShowNotebook",
-                       "RunScratch", "Wait", "Confer", "GetStatus"})
+                       "RunScratch", "RunPipelineCell", "Wait", "Confer",
+                       "GetStatus"})
     # NOTE (audit): GetStatus/CancelDelegation are now opt-in (plug-and-play).
     # GetStatus is retained here pending the poll→push re-architecture that lets
     # Confer fully supersede it. CancelDelegation is intentionally NOT listed —

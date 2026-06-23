@@ -276,6 +276,91 @@ def run_deliverable(path: Path, *, cwd: Path, env: dict, timeout: float):
     )
 
 
+def diagnose_notebook(path: Path, *, cwd: Path, env: dict, timeout: float,
+                      upto_name: str | None = None) -> dict:
+    """Execute a notebook and return a PER-CELL execution trace — the granular
+    diagnostic the binary ``run_deliverable`` gate aggregates away (#13).
+
+    Mirrors ``_execute_notebook`` exactly (same interpreter-pinned kernel + env
+    patch + ``allow_errors=True``) so it reproduces the gate's environment, but
+    keeps each cell's outputs instead of merging them. With ``upto_name`` it runs
+    only the cells up to AND INCLUDING the code cell carrying that
+    ``metadata.name`` — cells share kernel state top-to-bottom, so this localizes
+    WHERE reproduction breaks without spuriously failing on missing prior state.
+
+    Returns ``{"cells": [{"index","name","cell_type","errored","stdout",
+    "error"}], "first_error": <that cell|None>, "executed": int,
+    "truncated": bool, "timed_out": bool, "missing_name": bool}``.
+    """
+    import re as _re
+
+    import nbformat
+    from jupyter_client.manager import KernelManager
+    from nbclient import NotebookClient
+    from nbclient.exceptions import CellTimeoutError, DeadKernelError
+
+    _ansi = _re.compile(r"\x1b\[[0-9;]*m")  # strip terminal colour codes from tracebacks
+
+    nb = nbformat.read(str(path), as_version=4)
+    truncated = False
+    if upto_name is not None:
+        idx = next(
+            (i for i, c in enumerate(nb.cells)
+             if c.get("cell_type") == "code"
+             and (c.get("metadata", {}) or {}).get("name") == upto_name),
+            None,
+        )
+        if idx is None:
+            return {"cells": [], "first_error": None, "executed": 0,
+                    "truncated": False, "timed_out": False, "missing_name": True}
+        nb.cells = nb.cells[:idx + 1]
+        truncated = True
+
+    km = KernelManager(kernel_name="python3")
+    try:
+        km.kernel_spec.argv[0] = sys.executable
+    except Exception:  # noqa: BLE001 — fall back to the spec's python
+        pass
+    client = NotebookClient(
+        nb, km=km, timeout=int(timeout), allow_errors=True,
+        resources={"metadata": {"path": str(cwd)}},
+    )
+    timed_out = False
+    with _patched_environ(env):
+        try:
+            client.execute()
+        except (CellTimeoutError, DeadKernelError):
+            timed_out = True
+
+    cells, first_error = [], None
+    for i, cell in enumerate(nb.cells):
+        out_parts, err_parts, errored = [], [], False
+        for o in cell.get("outputs", []):
+            ot = o.get("output_type")
+            if ot == "stream":
+                (out_parts if o.get("name") == "stdout" else err_parts).append(
+                    o.get("text", ""))
+            elif ot == "error":
+                errored = True
+                err_parts.append(_ansi.sub(
+                    "",
+                    f"{o.get('ename', '')}: {o.get('evalue', '')}\n"
+                    + "\n".join(o.get("traceback", []))))
+        rec = {
+            "index": i,
+            "name": (cell.get("metadata", {}) or {}).get("name"),
+            "cell_type": cell.get("cell_type"),
+            "errored": errored,
+            "stdout": "".join(out_parts),
+            "error": "".join(err_parts),
+        }
+        cells.append(rec)
+        if errored and first_error is None:
+            first_error = rec
+    return {"cells": cells, "first_error": first_error, "executed": len(cells),
+            "truncated": truncated, "timed_out": timed_out, "missing_name": False}
+
+
 def build_notebook(cells: list[dict]):
     """Assemble a notebook from a simple cell list (avoids hand-written JSON).
 

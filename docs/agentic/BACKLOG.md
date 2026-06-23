@@ -23,7 +23,7 @@ Resolved items keep their write-up below for the record; `(commit)` is what fixe
 - [ ] **#10** Strategizer delegates the optimization as one monolithic un-budgeted campaign — *open, §4 user-owned* (**current binding constraint** — watchdog-kills runs)
 - [x] **#11** Orphaned background process survives watchdog kill — `5199b593` (process-group reap)
 - [x] **#12** Watchdog kill loses the strategizer's retrospective — `5199b593` (synthetic post-mortem entry)
-- [ ] **#13** Per-cell notebook debugger — agent can't see WHICH cell failed reproduction — *open, SPEC below (awaiting approval to build)*
+- [x] **#13** Per-cell notebook debugger — *DONE* (`RunPipelineCell` closure + `diagnose_notebook`; per-cell trace localizes a repro failure by cell name + traceback; runs against a ledger copy; kill-switch-free read-only diagnostic)
 
 ---
 
@@ -357,8 +357,9 @@ best-effort strategizer retrospective (or a partial "interrupted" one) before os
 ---
 
 ## 13. Per-cell notebook debugger (agent can't see WHICH cell failed reproduction)
-**Status:** raised 2026-06-23. SPEC below — awaiting approval to build (new tool).
-Surfaced by run 20260623T002417 (FAILED).
+**Status:** RESOLVED 2026-06-23 — `RunPipelineCell` closure (`nodes/tools/routing.py`)
++ `diagnose_notebook` (`notebook_exec.py`); 5 headless tests + live closure smoke.
+Original spec below. Surfaced by run 20260623T002417 (FAILED).
 
 **Problem.** `CheckDeliverable` runs `pipeline.ipynb` top-to-bottom via nbclient and
 returns a BINARY pass/fail with a high-level message. When reproduction fails the

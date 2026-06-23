@@ -2572,6 +2572,95 @@ def build_routing_tools(node) -> dict:
         finally:
             _shutil.rmtree(sandbox, ignore_errors=True)
 
+    def RunPipelineCell(name: str = None) -> str:
+        """Execute pipeline.ipynb against a COPY of the canonical ledger and return
+        a PER-CELL trace — the cell-level debugger CheckDeliverable's binary
+        pass/fail lacks. With `name` (a pillar cell: doe / data_generation / ml /
+        optimization / analysis) it runs top-to-bottom UP TO AND INCLUDING that
+        cell and reports it — cells share kernel state, so this pinpoints WHICH
+        cell breaks reproduction and shows its exact traceback + stdout. With no
+        name it runs the WHOLE notebook and reports every cell plus the first
+        failure. Runs against a COPY (cannot touch the real ledger or
+        pipeline.ipynb) and does NOT count toward the eval budget. Use it to
+        localize a CheckDeliverable failure to one cell before editing, instead of
+        re-running the binary gate blindly."""
+        import json as _json
+        import os as _os
+        import shutil as _shutil
+        import subprocess as _sub
+        import tempfile as _tempfile
+        prefix = node._drain_notifications()
+        nb_path = Path(node._study_dir) / "pipeline.ipynb"
+        if not nb_path.exists():
+            return prefix + ("No pipeline.ipynb yet — author it first "
+                             "(AddPipelineCell / AddPipelineMarkdownCell).")
+        notes = getattr(node, "_current_notes_dir", None)
+        if notes is None:
+            return prefix + "ERROR: no run context available for cell execution."
+        run_dir = notes.parent.parent
+        store_dir = run_dir / "experiment_data"
+        run_config = run_dir / "debug" / "run_config.json"
+        sandbox = Path(_tempfile.mkdtemp(prefix="f3dasm_cell_"))
+        try:
+            sb_store = sandbox / "experiment_data"
+            if store_dir.exists():
+                _shutil.copytree(store_dir, sb_store)
+            else:
+                sb_store.mkdir(parents=True, exist_ok=True)
+            _cfg = (_json.loads(run_config.read_text())
+                    if run_config.exists() else {})
+            _cfg["store_dir"] = str(sb_store)
+            sb_cfg = sandbox / "run_config.json"
+            sb_cfg.write_text(_json.dumps(_cfg))
+            env = dict(_os.environ)
+            env["F3DASM_CANONICAL_STORE"] = str(sb_store)
+            env["F3DASM_RUN_CONFIG"] = str(sb_cfg)
+            env.setdefault("F3DASM_DELEGATION_ID", "D999")
+            try:
+                from ...notebook_exec import diagnose_notebook
+                trace = diagnose_notebook(
+                    nb_path, cwd=sandbox, env=env, timeout=180, upto_name=name)
+            except _sub.TimeoutExpired:
+                return (prefix + "Notebook diagnosis exceeded 180s and was killed "
+                        "— a cell is running a real campaign; it should load the "
+                        "ledger lazily, not recompute.")
+            if trace.get("missing_name"):
+                return (prefix + f"No cell named {name!r}. Valid pillar names: "
+                        "doe, data_generation, ml, optimization, analysis "
+                        "(use ShowNotebook() to see the cells).")
+            lines = []
+            scope = (f"up to & including '{name}'" if name
+                     else "whole notebook")
+            for c in trace["cells"]:
+                if c["cell_type"] != "code":
+                    continue
+                tag = "ERROR" if c["errored"] else "ok"
+                nm = c["name"] or f"cell{c['index']}"
+                lines.append(f"  [{tag}] {nm}")
+                out = (c["stdout"] or "").strip()
+                if out:
+                    lines.append("        stdout: " + out[-300:].replace("\n", "\n        "))
+                if c["errored"]:
+                    lines.append("        " + (c["error"] or "").strip()[-700:].replace("\n", "\n        "))
+            fe = trace["first_error"]
+            head = (
+                f"{'TIMED OUT — ' if trace['timed_out'] else ''}"
+                f"per-cell trace ({scope}, against a COPY of the ledger):\n"
+                + ("\n".join(lines) or "  (no code cells)")
+            )
+            verdict = (
+                f"\n\nFIRST FAILURE: cell '{fe['name'] or fe['index']}' — fix this "
+                "cell, then RunPipelineCell() again or CheckDeliverable()."
+                if fe else
+                "\n\nAll code cells ran without error against the copy. If "
+                "CheckDeliverable still fails, the issue is the gate's checks "
+                "(zero-new-evals / REPRODUCED line / ledger unchanged), not a cell "
+                "exception."
+            )
+            return prefix + head + verdict
+        finally:
+            _shutil.rmtree(sandbox, ignore_errors=True)
+
     if "Done" in _agent_tools:
         closures["Done"] = Done
     if "EditPipelineCell" in _agent_tools:
@@ -2582,6 +2671,8 @@ def build_routing_tools(node) -> dict:
         closures["ShowNotebook"] = ShowNotebook
     if "RunScratch" in _agent_tools:
         closures["RunScratch"] = RunScratch
+    if "RunPipelineCell" in _agent_tools:
+        closures["RunPipelineCell"] = RunPipelineCell
     if "WriteNote" in _agent_tools:
         closures["WriteNote"] = WriteNote
     if "ReadNote" in _agent_tools:
