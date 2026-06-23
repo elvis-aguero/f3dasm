@@ -194,3 +194,22 @@ def test_repeat_flag_escalates(tmp_path):
     )
     assert "[VERDICT VALIDATOR]" in r2
     assert "scrutinise" in r2 and "2" in r2  # escalation on the 2nd flag
+
+
+# ── kill switch: F3DASM_VERDICT_VALIDATOR=0 fully bypasses the validator ──────
+
+def test_env_kill_switch_disables_validator(tmp_path, monkeypatch):
+    monkeypatch.setenv("F3DASM_VERDICT_VALIDATOR", "0")
+    n, critic, diag = _node(tmp_path, critic_reply="SUBSTANCE: FLAG\nCRITIQUE: x")
+    h = _propose(n)
+    _record_done(n, "D001", h_ids=[h])
+    result = n.adapter.closure_tools["HypothesisUpdate"](
+        h, "FALSIFIED", "x", 0.1,
+        evidence={"delegation": "D001", "numbers": {"best_f": 1.47}},
+    )
+    # update lands exactly as pre-#9: no judge call, no note, no diagnostics
+    assert result.startswith("Updated ")
+    assert "[VERDICT VALIDATOR]" not in result
+    assert critic.calls == 0
+    assert _last_note(n, h) is None
+    assert not diag.exists() or "VERDICT_SUBSTANCE_FLAG" not in diag.read_text()

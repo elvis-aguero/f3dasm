@@ -3,6 +3,7 @@ audit, persist the verdict, build the feedback task message. A mixin on the
 strategizer (uses its instance attrs + RecordingMixin methods via MRO)."""
 from __future__ import annotations
 
+import os
 import traceback
 from pathlib import Path
 
@@ -16,6 +17,20 @@ _PRIOR_REVIEWS_CHAR_BUDGET = 6000
 # append a louder warning pointing at the gate critic (the lightweight "teeth";
 # a full critic re-audit on repeat is a deferred §4 follow-up).
 VERDICT_FLAG_ESCALATE_AFTER = 2
+
+_VERDICT_VALIDATOR_OFF = {"0", "false", "off", "no"}
+
+
+def verdict_validator_enabled() -> bool:
+    """The #9 live verdict validator is ON by default. Set the env var
+    ``F3DASM_VERDICT_VALIDATOR=0`` (or false/off/no) to disable it entirely —
+    HypothesisUpdate then behaves exactly as it did before #9 (no judge call, no
+    note, no diagnostics). The single, easy kill switch for the sentinel.
+    """
+    return (
+        os.environ.get("F3DASM_VERDICT_VALIDATOR", "1").strip().lower()
+        not in _VERDICT_VALIDATOR_OFF
+    )
 
 
 def _extract_md_section(text: str, header: str) -> str:
@@ -250,6 +265,8 @@ class CriticGateMixin:
         / validator unavailable). NEVER raises — the update it annotates must
         always stand (Q1=(B), advise-with-teeth).
         """
+        if not verdict_validator_enabled():
+            return ""  # kill switch (F3DASM_VERDICT_VALIDATOR=0) — fully bypassed
         try:
             from ..verdict_validator import build_judge_prompt, parse_judge_reply
             h = (self._ledger.get(h_id) or {}) if self._ledger else {}
