@@ -37,6 +37,92 @@ def reap_process_group(pgid: int) -> None:
         pass
 
 
+# ── per-delegation memory watch + recursive reap (resource-governance L2b/#14) ──
+# These read the campaign PIDs that get_evaluator self-registered
+# (<run_dir>/debug/governor_pids.jsonl) and use the ResourceBackend's RECURSIVE
+# tree kill — which catches the new-session/detached campaigns that os.killpg
+# misses (the #14 escape) regardless of how the agent's Bash launched them.
+
+def read_governor_pids(run_dir) -> dict[str, list[int]]:
+    """Parse governor_pids.jsonl into ``{delegation_id: [pid, ...]}``. Empty on
+    any error (best-effort)."""
+    out: dict[str, list[int]] = {}
+    try:
+        reg = Path(run_dir) / "debug" / "governor_pids.jsonl"
+        if not reg.exists():
+            return out
+        for ln in reg.read_text().splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                r = json.loads(ln)
+            except Exception:
+                continue
+            did, pid = r.get("delegation_id"), r.get("pid")
+            if did is not None and isinstance(pid, int):
+                out.setdefault(did, []).append(pid)
+    except Exception:
+        pass
+    return out
+
+
+def check_memory_and_kill(run_dir, cap_bytes: int, backend=None) -> list[str]:
+    """Sample each registered delegation's process-tree RSS; kill any tree over
+    ``cap_bytes``. Returns the delegation IDs killed. The HARD memory boundary's
+    active enforcer (and the macOS enforcer, where RLIMIT_AS is unreliable).
+    Best-effort — never raises."""
+    killed: list[str] = []
+    if not cap_bytes or cap_bytes <= 0:
+        return killed
+    try:
+        from .resource_backend import get_resource_backend
+        be = backend or get_resource_backend()
+        for did, pids in read_governor_pids(run_dir).items():
+            try:
+                if be.read_rss(pids) > cap_bytes:
+                    be.kill(pids)
+                    killed.append(did)
+            except Exception:
+                pass
+        if killed:
+            _log_memory_kill(run_dir, killed, cap_bytes)
+    except Exception:
+        pass
+    return killed
+
+
+def reap_governor_pids(run_dir, backend=None) -> int:
+    """Recursively kill every registered campaign's process tree — the watchdog's
+    catch-all for detached/new-session campaigns the process-group kill misses.
+    Returns processes signalled. Best-effort."""
+    try:
+        from .resource_backend import get_resource_backend
+        be = backend or get_resource_backend()
+        all_pids = [p for pids in read_governor_pids(run_dir).values() for p in pids]
+        return be.kill(all_pids) if all_pids else 0
+    except Exception:
+        return 0
+
+
+def _log_memory_kill(run_dir, killed: list[str], cap_bytes: int) -> None:
+    """Append a MEMORY_CAP_KILL diagnostic so the kill is auditable. Best-effort."""
+    try:
+        debug = Path(run_dir) / "debug"
+        if not debug.exists():
+            return
+        rec = {
+            "ts": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
+            "node": ",".join(killed),
+            "error_type": "MEMORY_CAP_KILL",
+            "message": f"killed {killed} over hard mem cap {cap_bytes} bytes",
+        }
+        with (debug / "diagnostics.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass
+
+
 def write_watchdog_retrospective(run_dir, watchdog_seconds: int) -> None:
     """Append a synthetic post-mortem to ``<run_dir>/debug/retrospectives.jsonl``.
 

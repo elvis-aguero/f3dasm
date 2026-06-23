@@ -29,6 +29,8 @@ from f3dasm.agentic import (
     StrategizerAgent,
 )
 from f3dasm._src.agentic.watchdog_cleanup import (
+    check_memory_and_kill,
+    reap_governor_pids,
     reap_process_group,
     write_watchdog_retrospective,
 )
@@ -163,10 +165,43 @@ def _watchdog() -> None:
         import signal as _signal
         _signal.signal(_signal.SIGTERM, _signal.SIG_IGN)
         reap_process_group(os.getpgid(0))
+        # Catch detached/new-session campaigns the group-kill misses (#14): the
+        # recursive backend kill over the self-registered campaign PIDs.
+        try:
+            runs_dir = STUDY_DIR / "runs"
+            _rds = sorted(d for d in runs_dir.iterdir() if d.is_dir()) \
+                if runs_dir.exists() else []
+            if _rds:
+                reap_governor_pids(_rds[-1])
+        except Exception:
+            pass
         time.sleep(0.5)
     except Exception as _e:
         print(f"WATCHDOG: child reap failed: {_e}", flush=True)
     os._exit(2)
+
+
+def _memory_watcher() -> None:
+    """Daemon: every 5s, kill any delegation whose process tree exceeds the hard
+    memory cap (F3DASM_MEM_CAP, set by _init_canonical_store once the run starts).
+    The active enforcer of the one hard boundary — catches between-flush spikes
+    (e.g. a GP fit on a bloated store) and macOS, where RLIMIT_AS is unreliable."""
+    while True:
+        time.sleep(5)
+        cap = os.environ.get("F3DASM_MEM_CAP")
+        if not cap:
+            continue  # run not started / no cap configured yet
+        try:
+            runs_dir = STUDY_DIR / "runs"
+            run_dirs = sorted(d for d in runs_dir.iterdir() if d.is_dir()) \
+                if runs_dir.exists() else []
+            if run_dirs:
+                killed = check_memory_and_kill(run_dirs[-1], int(cap))
+                if killed:
+                    print(f"MEMORY WATCHER: killed over-cap delegation(s) "
+                          f"{killed} (cap {cap} bytes)", flush=True)
+        except Exception:
+            pass
 
 
 # ── mechanical analysis brief ─────────────────────────────────────────────────
@@ -209,6 +244,7 @@ if __name__ == "__main__":
     except OSError:
         pass  # already a leader / unsupported — reap falls back to a no-op
     threading.Thread(target=_watchdog, daemon=True).start()
+    threading.Thread(target=_memory_watcher, daemon=True).start()
     result = AgenticRun(
         study_dir=STUDY_DIR,
         graph=graph,

@@ -9,9 +9,67 @@ import sys
 import time
 
 from f3dasm._src.agentic.watchdog_cleanup import (
+    check_memory_and_kill,
+    read_governor_pids,
+    reap_governor_pids,
     reap_process_group,
     write_watchdog_retrospective,
 )
+
+
+# ── L2b/#14: memory watch + recursive reap over self-registered campaign PIDs ──
+
+class _StubBackend:
+    """rss_by_pid maps pid→bytes; records killed pids."""
+    def __init__(self, rss_by_pid=None):
+        self.rss_by_pid = rss_by_pid or {}
+        self.killed = []
+    def set_self_limit(self, cap):
+        return True
+    def read_rss(self, pids):
+        return sum(self.rss_by_pid.get(p, 0) for p in pids)
+    def kill(self, pids):
+        self.killed.extend(pids); return len(pids)
+
+
+def _write_pids(run_dir, mapping):
+    debug = run_dir / "debug"; debug.mkdir(parents=True, exist_ok=True)
+    with (debug / "governor_pids.jsonl").open("w") as f:
+        for did, pids in mapping.items():
+            for p in pids:
+                f.write(json.dumps({"delegation_id": did, "pid": p}) + "\n")
+
+
+def test_read_governor_pids_groups_by_delegation(tmp_path):
+    _write_pids(tmp_path, {"D001": [10, 11], "D002": [20]})
+    assert read_governor_pids(tmp_path) == {"D001": [10, 11], "D002": [20]}
+    assert read_governor_pids(tmp_path / "nope") == {}  # missing → empty
+
+
+def test_check_memory_kills_only_the_over_cap_delegation(tmp_path):
+    _write_pids(tmp_path, {"D001": [10], "D002": [20, 21]})
+    # D002's tree is over a 1 GB cap; D001 is under.
+    be = _StubBackend(rss_by_pid={10: 500, 20: 800_000_000, 21: 800_000_000})
+    killed = check_memory_and_kill(tmp_path, cap_bytes=1024 ** 3, backend=be)
+    assert killed == ["D002"]
+    assert set(be.killed) == {20, 21}        # the whole D002 tree
+    # audit diagnostic written
+    diag = json.loads((tmp_path / "debug" / "diagnostics.jsonl").read_text().splitlines()[-1])
+    assert diag["error_type"] == "MEMORY_CAP_KILL"
+
+
+def test_check_memory_under_cap_kills_nothing(tmp_path):
+    _write_pids(tmp_path, {"D001": [10]})
+    be = _StubBackend(rss_by_pid={10: 100})
+    assert check_memory_and_kill(tmp_path, cap_bytes=1024 ** 3, backend=be) == []
+    assert be.killed == []
+
+
+def test_reap_governor_pids_kills_all_registered(tmp_path):
+    _write_pids(tmp_path, {"D001": [10, 11], "D002": [20]})
+    be = _StubBackend()
+    n = reap_governor_pids(tmp_path, backend=be)
+    assert n == 3 and set(be.killed) == {10, 11, 20}
 
 
 # ── #11: reap leftover background processes ──────────────────────────────────
