@@ -92,11 +92,19 @@ class InstrumentedDataGenerator(DataGenerator):
         lock_path: Optional[Path | str] = None,
         flush_every: int = 1,
         extra_provenance: Optional[dict] = None,
+        eval_budget: Optional[int] = None,
     ) -> None:
         self.inner = inner
         self.store_dir = Path(store_dir)
         self.delegation_id = delegation_id
         self.source = source
+        # SOFT eval-budget governor (resource-governance L1). Fires at the flush
+        # boundary — i.e. MID-delegation, where the strategizer's turn-gated check
+        # is blind. eval_budget is soft (§4): it NUDGES the offender, never stops
+        # the campaign. `_nudge_bands_hit` caps the nudge at one per threshold band
+        # (flush_every defaults to 1 → per-row → uncapped would spam).
+        self.eval_budget = eval_budget
+        self._nudge_bands_hit: set[int] = set()
         self.fidelity_column = fidelity_column  # unused Phase 1
         self.flush_every = flush_every
         # Extensible, oracle-stamped provenance: arbitrary {column: value}
@@ -214,10 +222,71 @@ class InstrumentedDataGenerator(DataGenerator):
 
             merged = canon + batch
             merged.store(project_dir=self.store_dir)
+            _n_total = len(merged)
+
+        # SOFT eval-budget nudge (lock released): fire MID-delegation at the eval
+        # boundary, to THE OFFENDER (this campaign's own stdout → the implementer's
+        # delegation report). Never stops the campaign; capped at one per band.
+        self._maybe_nudge_budget(_n_total)
 
         self._buffer.clear()
 
     # ------------------------------------------------------------------
+
+    # Soft eval-budget nudge bands (fraction of eval_budget). One nudge per band
+    # max → at most 3 nudges per delegation (the fixed cap).
+    _NUDGE_BANDS = (0.8, 1.0, 1.5)
+
+    def _maybe_nudge_budget(self, n_total: int) -> None:
+        """SOFT, capped, offender-directed eval-budget nudge. Best-effort: a
+        governor must never break the eval path, so it swallows everything."""
+        try:
+            budget = self.eval_budget
+            if not budget or budget <= 0:
+                return
+            # Bands crossed by this flush that we haven't nudged yet.
+            crossed = [
+                int(b * 100) for b in self._NUDGE_BANDS
+                if n_total >= b * budget and int(b * 100) not in self._nudge_bands_hit
+            ]
+            if not crossed:
+                return
+            # Mark ALL crossed bands hit (so a big batch that jumps two bands
+            # still nudges only once) and nudge for the highest.
+            self._nudge_bands_hit.update(crossed)
+            pct = round(100 * n_total / budget)
+            msg = (
+                f"[EVAL BUDGET — {self.delegation_id}] {n_total}/{budget} ledgered "
+                f"evals ({pct}% of the SOFT budget). The budget is soft (not "
+                "enforced), but this is the SHARED canonical ledger: every campaign "
+                "re-run APPENDS to it, so re-running a full campaign to debug burns "
+                "the budget fast. Debug on RunScratch / a stub, not the real oracle; "
+                "re-plan rather than spend more real evaluations."
+            )
+            # Channel 1 — the campaign's OWN stdout → captured into the offender's
+            # (implementer's) delegation report. This is the cross-process path to
+            # the offender (the governor runs in the campaign subprocess).
+            print(msg, flush=True)
+            # Channel 2 — a BUDGET_WARN diagnostic line for the audit trail ONLY
+            # (NOT the nudge). store_dir is <run_dir>/experiment_data.
+            try:
+                import json as _json
+                from datetime import datetime, timezone
+                diag = self.store_dir.parent / "debug" / "diagnostics.jsonl"
+                if diag.parent.exists():
+                    rec = {
+                        "ts": datetime.now(tz=timezone.utc).isoformat(
+                            timespec="seconds"),
+                        "node": self.delegation_id,
+                        "error_type": "BUDGET_WARN",
+                        "message": f"{n_total}/{budget} evals ({pct}%)",
+                    }
+                    with diag.open("a", encoding="utf-8") as f:
+                        f.write(_json.dumps(rec) + "\n")
+            except Exception:  # noqa: BLE001
+                pass
+        except Exception:  # noqa: BLE001
+            pass
 
     def _build_batch_domain(self) -> Domain:
         """Build a Domain that covers inner inputs + outputs + provenance cols.
@@ -481,6 +550,7 @@ def get_evaluator() -> InstrumentedDataGenerator:
         fidelity_column=fidelity_column,
         lock_path=lock_path,
         extra_provenance=extra_provenance,
+        eval_budget=run_config.get("eval_budget"),
     )
 
 
