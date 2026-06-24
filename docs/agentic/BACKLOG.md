@@ -27,6 +27,7 @@ Resolved items keep their write-up below for the record; `(commit)` is what fixe
 - [ ] **#14** Watchdog reap (#11) MISSES detached campaign processes — *open, HIGH (real CPU leak)* — they escape the process-group kill (new session) and outlive the run
 - [ ] **#16** ABAQUS subprocess can't import workspace modules (PYTHONPATH) — *open, abaqus2py-owned* (recommendation only; not an f3dasm fix)
 - [ ] **#17** Closure + budget-severity model (Memory>Time>Eval; dynamic constraints) — *open, §4 user-owned* — Done() prompt iterated (`0400a653`); runtime nudge + severity model deferred
+- [ ] **#18** Critic should flag an infeasible-extremum headline on a constrained study — *open, §4 user-owned* — grounding moved to the critic (`6494489b`) but it only checks the value is real, not feasible
 
 ---
 
@@ -565,3 +566,28 @@ on it is unresolved. The benchmark `PROBLEM_STATEMENT.md` framing (objective exc
 strain; Riks demoted to a separate "Validation requirement"; criterion #4 buried)
 contributed and is owned by the user (handled in the benchmark repo, not f3dasm —
 robustness must not depend on a perfectly-framed problem statement).
+
+## 18. Critic should flag an infeasible-extremum headline on a constrained study — §4
+
+**Status: open, §4 user-owned.** Commit `6494489b` removed the runtime
+`REPRODUCED` extremum machine-check (it forced constrained studies to headline
+their infeasible unconstrained extremum) and shifted headline grounding onto the
+critic. But the critic's HEADLINE PROVENANCE mandate (`agents/critic.py:31-41`)
+only verifies the headline value is **real** (traces to a ledger row) — it does
+NOT verify the headline is **feasible**. So nothing currently flags the specific
+failure of run 20260624T021359: a headline equal to the unconstrained extremum
+(λ_cr_nd = 0.90709, a NON-coilable design) on a study whose objective is
+`maximize λ_cr_nd subject to coilable = True`.
+
+**Proposed (one clause, §4):** add to the critic's headline check that, when the
+study declares a feasibility constraint (a constraint output column), the headline
+must be the best **feasible** design; a headline equal to an infeasible extremum
+is a MAJOR finding. The constraint identity could come from
+run_config (an explicit constraint column) or be inferred from the deliverable's
+stated objective. Deferred pending the user's call on how to represent the
+constraint to the critic (it is the epistemic-contract owner's decision).
+
+**Why not the runtime instead:** the runtime can't judge which ledger column is
+the constraint or what counts as feasible generically without more config; the
+critic already reads the deliverable's stated objective, so it is the better
+place to judge feasibility-of-headline. See `6494489b` and `agents/critic.py`.
