@@ -65,8 +65,13 @@ Format per feature: **what** (plain language) · **why** · **where** (files) ·
 
 ### Notebook authoring + reproduction gate
 - **What:** the single deliverable is a Jupyter notebook; the runtime re-executes it
-  lazily and only accepts it if it reproduces the headline from the ledger.
-- **Where:** `notebook_exec.py`, `nodes/tools/routing.py`.
+  lazily and accepts it only if it runs cleanly, adds zero new oracle evals, and
+  leaves the ledger unchanged. The printed `REPRODUCED:` headline is informational —
+  the critic checks its provenance (it must trace to a real ledger row); the runtime
+  no longer machine-matches it to an objective extremum (that wrongly rejected
+  constrained optima — audit 20260624T021359).
+- **Where:** `notebook_exec.py`, `nodes/tools/routing.py`, `nodes/strategizer.py`
+  (`_reproduction_gate`).
 - **Tools:** `AddPipelineCell`, `AddPipelineMarkdownCell`, `EditPipelineCell`,
   `DeletePipelineCell`, `ShowNotebook`, `WriteDeliverable`, `CheckDeliverable`.
 - **Status:** core (the live deliverable).

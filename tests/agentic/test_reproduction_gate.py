@@ -134,28 +134,43 @@ def test_empty_ledger_rejected_by_gate(tmp_path):
     assert problem is not None and "no rows" in problem.lower()
 
 
-# ── gate hardening (controlled reproduction) ──────────────────────────────────
+# ── headline grounding is the critic's job, not a runtime extremum match ──────
+# The runtime gate enforces clean-exit + zero-new-evals + ledger-integrity. It
+# does NOT machine-match the REPRODUCED value: that wrongly rejected legitimate
+# CONSTRAINED optima (a constrained best is not an objective extremum), forcing
+# studies to headline their infeasible unconstrained extremum (run
+# 20260624T021359 shipped REPRODUCED: 0.907090, a non-coilable design). Grounding
+# now lives in the critic's HEADLINE PROVENANCE check.
 
-def test_gate_rejects_fabricated_headline(tmp_path):
-    """A REPRODUCED value not grounded in the ledger (seeded extrema are 0.0/1.0)
-    is rejected — kills hardcoded/fabricated headlines."""
+def test_gate_does_not_machine_check_headline_value(tmp_path):
+    """A REPRODUCED value the runtime cannot tie to an extremum (e.g. 999.0) now
+    PASSES the runtime gate — provenance is the critic's job, not the runtime's."""
     node, study_dir = _setup(tmp_path)
     (study_dir / "pipeline.py").write_text("print('REPRODUCED: 999.0')\n")
-    problem = node._reproduction_gate({"study_dir": str(study_dir)})
-    assert problem is not None and "grounded" in problem.lower()
+    assert node._reproduction_gate({"study_dir": str(study_dir)}) is None
 
 
-def test_gate_rejects_missing_headline(tmp_path):
-    """A pipeline that runs but prints no verifiable headline is rejected."""
+def test_gate_passes_without_headline_line(tmp_path):
+    """The REPRODUCED line is informational, not gate-binding: a pipeline that
+    reproduces cleanly but prints no headline still PASSES the runtime gate."""
     node, study_dir = _setup(tmp_path)
     (study_dir / "pipeline.py").write_text("print('all done, trust me')\n")
-    problem = node._reproduction_gate({"study_dir": str(study_dir)})
-    assert problem is not None and "headline" in problem.lower()
+    assert node._reproduction_gate({"study_dir": str(study_dir)}) is None
 
 
-def test_gate_passes_grounded_headline(tmp_path):
-    """REPRODUCED matching a real ledger extremum (max=1.0) passes."""
-    node, study_dir = _setup(tmp_path)
+def test_gate_passes_constrained_nonextremum_headline(tmp_path):
+    """Regression for run 20260624T021359: a CONSTRAINED optimum — a real
+    evaluated value that is NOT the objective extremum — must PASS. Seed f∈{0,1,2}
+    so REPRODUCED: 1.0 is a genuine mid-ledger value (extrema are 0.0 and 2.0).
+    Pre-fix the runtime rejected it as 'not grounded'; post-fix it passes."""
+    study_dir = tmp_path / "study"; study_dir.mkdir()
+    run_dir = tmp_path / "runs" / "T0"
+    (run_dir / "debug" / "strategizer_notes").mkdir(parents=True)
+    _seed_store(run_dir / "experiment_data", n=3)  # f = 0.0, 1.0, 2.0
+    node = StrategizerNode(
+        _StubAdapter(), name="strategizer", outgoing=["implementer"],
+        spec=_spec(), study_dir=study_dir)
+    node._current_notes_dir = run_dir / "debug" / "strategizer_notes"
     (study_dir / "pipeline.py").write_text("print('REPRODUCED: 1.0')\n")
     assert node._reproduction_gate({"study_dir": str(study_dir)}) is None
 

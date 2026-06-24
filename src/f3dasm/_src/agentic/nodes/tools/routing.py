@@ -2194,8 +2194,10 @@ def build_routing_tools(node) -> dict:
         the runtime applies at Done(), and return the full result WITHOUT closing
         the run. This is how you DEBUG pipeline.ipynb before closing: it executes
         the notebook lazily against the canonical ledger and checks it (a)
-        runs cleanly, (b) adds zero new evals, (c) doesn't modify the ledger,
-        (d) prints a ledger-grounded 'REPRODUCED: <value>'. On failure you get
+        runs cleanly, (b) adds zero new evals, (c) doesn't modify the ledger.
+        It also surfaces the printed 'REPRODUCED: <value>' headline (the critic
+        checks its provenance; the runtime no longer machine-matches it, so a
+        constrained optimum is a valid headline). On failure you get
         the full error (stderr) to fix the exact problem; on success the Done()
         gate will pass. It runs ONLY pipeline.ipynb through the gate — not
         arbitrary code. Call it repeatedly until it passes, THEN call Done()."""

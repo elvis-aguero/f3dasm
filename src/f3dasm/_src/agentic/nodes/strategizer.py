@@ -746,9 +746,11 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
           (b) add ZERO new oracle rows (lazy: skip FINISHED evals);
           (c) NOT modify/delete existing ledger rows (integrity — no faking the
               zero-delta by delete+re-add or value rewrite);
-          (d) print ``REPRODUCED: <value>`` that the runtime INDEPENDENTLY
-              confirms is grounded in the ledger (an extremum of the objective),
-              so the headline cannot be hardcoded/fabricated.
+          (d) print ``REPRODUCED: <value>`` — an informational headline marker
+              for the critic/human; the runtime does NOT gate on it. Headline
+              grounding (the value traces to a real ledger row) is the critic's
+              HEADLINE PROVENANCE check, not an independent runtime extremum
+              match (which wrongly rejected constrained optima).
         Returns None on PASS (and stashes ``self._repro_ok_detail``), else a
         problem string. Skips silently when there is no run context. Callable
         without ``state`` — study dir comes from ``self._study_dir``.
@@ -786,12 +788,11 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         store_dir = run_dir / "experiment_data"
         run_config = run_dir / "debug" / "run_config.json"
 
-        def _ledger_snapshot(store: Path) -> tuple[int, str, list[float]]:
-            """(row_count, content_hash, objective_extrema) for a store dir.
+        def _ledger_snapshot(store: Path) -> tuple[int, str]:
+            """(row_count, content_hash) for a store dir.
 
             content_hash is order-independent (sorted rounded values) so a
-            faithful lazy re-store doesn't false-trip it; objective_extrema are
-            the min/max used for the independent headline check.
+            faithful lazy re-store doesn't false-trip it.
             """
             import hashlib
             try:
@@ -799,29 +800,14 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                 data = ExperimentData.from_file(project_dir=store)
                 _, out = data.to_pandas()
             except Exception:  # noqa: BLE001
-                return 0, "", []
+                return 0, ""
             cols = [c for c in out.columns if not str(c).startswith("_")]
             if not cols:
-                return len(out), "", []
+                return len(out), ""
             vals = out[cols].round(10)
             rows = sorted(tuple(r) for r in vals.to_numpy().tolist())
             h = hashlib.sha256(repr(rows).encode()).hexdigest()
-            obj_cols = cols
-            try:
-                if run_config.exists():
-                    _on = _json.loads(run_config.read_text()).get(
-                        "evaluator_output_names")
-                    if _on and _on[0] in cols:
-                        obj_cols = [_on[0]]
-            except Exception:  # noqa: BLE001
-                pass
-            extrema: list[float] = []
-            for c in obj_cols:
-                try:
-                    extrema += [float(out[c].min()), float(out[c].max())]
-                except Exception:  # noqa: BLE001
-                    pass
-            return len(out), h, extrema
+            return len(out), h
 
         # ── HERMETIC SANDBOX ──────────────────────────────────────────────────
         # CRITICAL: run the deliverable against a COPY of the canonical store, never
@@ -830,7 +816,7 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         # that as "not lazy" while the real ledger stays pristine. Without this,
         # checking a non-lazy pipeline pollutes + inflates the canonical store
         # (and CheckDeliverable could be looped to balloon it without bound).
-        before_n, before_hash, extrema = _ledger_snapshot(store_dir)
+        before_n, before_hash = _ledger_snapshot(store_dir)
         if before_n == 0:
             return (
                 "Canonical store has no rows — the campaign has not been "
@@ -876,7 +862,7 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                     "reproduction must be lightweight — load the ledger and skip "
                     "finished evals and heavy refits (cache-or-load surrogates). "
                     "Make it lazy.")
-            after_n, after_hash, _ = _ledger_snapshot(sb_store)
+            after_n, after_hash = _ledger_snapshot(sb_store)
         finally:
             shutil.rmtree(sandbox, ignore_errors=True)
 
@@ -902,31 +888,20 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                 "read the ledger READ-ONLY (it may re-store identical rows, but "
                 "must not rewrite values or delete+re-add). Do not tamper with "
                 "the canonical store.")
-        # (d) independent headline check — the printed REPRODUCED value must be
-        # grounded in the ledger, not hardcoded/fabricated.
+        # (d) The printed ``REPRODUCED:`` line is an informational headline
+        # marker for the critic / human reader — the runtime no longer gates on
+        # it. Headline GROUNDING (the value traces to a real ledger row) is
+        # owned by the critic's HEADLINE PROVENANCE check; an independent
+        # runtime extremum match wrongly rejected legitimate CONSTRAINED optima
+        # (a constrained best is, by definition, not an objective extremum), so
+        # it forced studies to headline their infeasible unconstrained extremum
+        # — see audit run 20260624T021359.
         m = re.search(r"REPRODUCED:\s*([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)",
                       proc.stdout or "")
-        if m is None:
-            return (
-                f"{deliverable.name} did not print a headline the runtime can verify. "
-                "Its analysis cell must derive the result FROM the ledger and "
-                "print exactly 'REPRODUCED: <value>' so the runtime can confirm "
-                "it independently (this is how a fabricated/hardcoded headline "
-                "is caught).")
-        claimed = float(m.group(1))
-        if extrema:
-            tol = 1e-6 + 1e-6 * max(abs(x) for x in extrema)
-            if not any(abs(claimed - x) <= tol for x in extrema):
-                return (
-                    f"{deliverable.name} printed REPRODUCED: {claimed}, which is NOT "
-                    "grounded in the ledger (objective extrema in the canonical "
-                    f"store: {sorted(set(round(x, 6) for x in extrema))}). "
-                    "Derive the headline from the loaded rows — do not hardcode "
-                    "or fabricate it.")
+        headline = f", REPRODUCED={m.group(1)}" if m else ""
         self._repro_ok_detail = (
-            f"verified REPRODUCED={claimed} against the ledger "
-            f"({before_n} rows, unchanged, 0 new evals, "
-            f"ran in <{_timeout:.0f}s)")
+            f"reproduced cleanly ({before_n} rows, unchanged, 0 new evals, "
+            f"ran in <{_timeout:.0f}s{headline})")
         return None
 
     def __call__(self, state: AgenticState) -> Any:

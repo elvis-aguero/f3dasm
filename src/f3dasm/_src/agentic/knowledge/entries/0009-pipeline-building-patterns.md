@@ -64,8 +64,12 @@ the run config to resolve the registered source and the canonical store). Every
 row it evaluates is ledgered automatically — derive your headline from that
 canonical store (what the runtime reproduces from), never from hardcoded
 numbers or a step's local scratch copy. The runtime reproduces by running THIS
-script against the shipped ledger and asserting zero new evals + your
-`REPRODUCED:` line — the load-or-create create step is exactly what passes it.
+script against the shipped ledger and asserting zero new evals — the
+load-or-create create step is exactly what passes it. Derive your `REPRODUCED:`
+headline from the ledger too: for a CONSTRAINED objective it is the best
+FEASIBLE value (e.g. `out[out['coilable']==1]['f'].max()`), NOT necessarily an
+objective extremum. The critic checks the headline's provenance; the runtime
+does not machine-match the value, so a constrained optimum is a valid headline.
 
 ## The composition API (the actual idioms)
 - **`Step(block=, name=, parallel=, kwargs=)`** wraps a callable, a `Block`, or a
