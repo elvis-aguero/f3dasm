@@ -33,6 +33,15 @@ def test_strategizer_documents_new_signatures():
         assert token in STRATEGIZER_SYSTEM_PROMPT, token
 
 
+def test_implementer_doe_example_has_no_store_after_evaluator():
+    """B7 (run 20260624T021359): the implementer's DoE example must not show a
+    data.store() AFTER get_evaluator()/flush() — that re-writes FINISHED rows as
+    IN_PROGRESS and corrupts the ledger (contradicts the prompt's own rule)."""
+    from f3dasm._src.agentic.agents.implementer import IMPLEMENTER_SYSTEM_PROMPT
+    assert 'data.store("{delegation_id}/results")' not in IMPLEMENTER_SYSTEM_PROMPT
+    assert "Do NOT call data.store() afterwards" in IMPLEMENTER_SYSTEM_PROMPT
+
+
 def test_deliverable_spec_requires_explicit_objective_column():
     """B3 (run 20260624T021359): the notebook spec must NOT recommend the
     sort-order auto-detect idiom (a constraint flag sorts before the objective

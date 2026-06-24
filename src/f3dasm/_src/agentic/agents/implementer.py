@@ -145,7 +145,10 @@ PREFER f3dasm primitives over raw numpy/scipy equivalents.
   gen = get_evaluator()
   data = gen.call(data, mode="sequential")   # or mode="parallel"
   gen.flush()
-  data.store("{delegation_id}/results")
+  # get_evaluator() + flush() already wrote every FINISHED row to the canonical
+  # store. Do NOT call data.store() afterwards — it would re-write those rows as
+  # IN_PROGRESS and corrupt the ledger. Reload with ExperimentData.from_file()
+  # if you need the updated outputs.
 
 ─── SURROGATE FIT (ML block) ────────────────────────────────────────────
   # f3dasm ships no built-in GP. Use sklearn or botorch — both are
