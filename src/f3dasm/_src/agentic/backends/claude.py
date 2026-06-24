@@ -213,6 +213,39 @@ async def _stream_with_idle_timeout(
         yield msg
 
 
+def _build_session_env() -> dict:
+    """Per-session env vars injected into the worker subprocess (thread-local).
+
+    - ``F3DASM_DELEGATION_ID`` (race-safe) so get_evaluator() resolves without
+      the worker cd-ing into its D### dir (audit Finding 2).
+    - ``F3DASM_RUN_CONFIG`` — explicit path to run_config.json so get_evaluator()
+      resolves it regardless of cwd (the SDK spawns the worker in study_dir, from
+      which the old walk-up never reached runs/<id>/debug/run_config.json).
+    - ``F3DASM_CANONICAL_STORE`` — the canonical store path, derived from
+      run_config["store_dir"]. get_evaluator() reads store_dir from the config,
+      but a worker's OWN campaign scripts read os.environ["F3DASM_CANONICAL_STORE"]
+      directly; without this the var is empty in the worker shell, so a campaign
+      defaults to the wrong namespace and can overwrite another delegation's
+      scratch data (audit run 20260624T021359, D005→D006 sim-dir clobber).
+    """
+    from .base import get_delegation_id, get_run_config_path
+    env: dict = {}
+    did = get_delegation_id()
+    if did:
+        env["F3DASM_DELEGATION_ID"] = did
+    rc = get_run_config_path()
+    if rc:
+        env["F3DASM_RUN_CONFIG"] = rc
+        try:
+            import json as _json
+            store = _json.loads(Path(rc).read_text()).get("store_dir")
+            if store:
+                env["F3DASM_CANONICAL_STORE"] = str(store)
+        except Exception:  # noqa: BLE001 — best-effort, never fatal
+            pass
+    return env
+
+
 class ClaudeAdapter:
     """Wraps claude-agent-sdk; runs one agent turn and returns assistant text.
 
@@ -421,21 +454,10 @@ class ClaudeAdapter:
         except Exception:  # noqa: BLE001 — nudge is best-effort, never fatal
             _hooks = None
 
-        # Per-session env: inject the delegation id (race-safe, thread-local)
-        # so get_evaluator() resolves without the worker having to cd into its
-        # D### dir (audit Finding 2). The SDK MERGES this over the inherited
-        # environment (PATH etc. preserved), so a bare extra key is safe.
-        from .base import get_delegation_id, get_run_config_path
-        _sess_env: dict = {}
-        _did = get_delegation_id()
-        if _did:
-            _sess_env["F3DASM_DELEGATION_ID"] = _did
-        # Explicit path to run_config.json so get_evaluator() resolves it
-        # regardless of cwd (the SDK spawns the worker in study_dir, from which
-        # the old walk-up never reached runs/<id>/debug/run_config.json).
-        _rc = get_run_config_path()
-        if _rc:
-            _sess_env["F3DASM_RUN_CONFIG"] = _rc
+        # Per-session env: the SDK MERGES this over the inherited environment
+        # (PATH etc. preserved), so bare extra keys are safe. See
+        # _build_session_env for what is injected and why.
+        _sess_env: dict = _build_session_env()
 
         from ..settings import get_float
         _max_buf_mb = get_float("llm_max_buffer_mb", 30.0)
