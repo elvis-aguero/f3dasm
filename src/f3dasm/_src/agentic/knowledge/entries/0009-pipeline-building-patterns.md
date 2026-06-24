@@ -88,7 +88,14 @@ script against the shipped ledger and asserting zero new evals + your
 ## Domain / oracle / sampler
 - `Domain()` + `add_float/add_int/add_category(name, ...)` for inputs;
   `add_output(name)` for every output column (custom objects:
-  `add_output(name, to_disk=True, store_function=, load_function=)`).
+  `add_output(name, to_disk=True, store_function=, load_function=)`). Outputs are
+  **untyped** — there is **no `add_float_output`** (a common wrong guess); always
+  `add_output(name)`.
+- **Imports (a common slip):** `create_sampler`, `Pipeline`, `Step`,
+  `ExperimentData` are **top-level** — `from f3dasm import create_sampler`.
+  **Only `Domain` lives in `f3dasm.design`** (`from f3dasm.design import Domain`);
+  `get_evaluator` is `from f3dasm.agentic import get_evaluator`. Importing
+  `create_sampler` from `f3dasm.design` fails.
 - Wrap an existing fn as a generator: `datagenerator(output_names="y")(fn)`.
 - Samplers (`"random_sampler"`, `"latin_sampler"`, `"sobol_sampler"`,
   `"grid_sampler"` — the preferred names; bare `"random"` etc. are deprecated
