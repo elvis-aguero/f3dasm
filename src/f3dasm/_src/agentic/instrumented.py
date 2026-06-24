@@ -220,6 +220,16 @@ class InstrumentedDataGenerator(DataGenerator):
                         *self.extra_provenance):
                 canon._domain.add_output(col, exist_ok=True)
 
+            # Re-type the batch's input parameters to the canonical domain's:
+            # the canonical store is authoritative on types. _build_batch_domain
+            # declares inputs as untyped base Parameter(); merging one into a
+            # typed canonical param (e.g. add_int → DiscreteParameter) raises
+            # "Cannot add non-continuous parameter to continuous!". Adopting the
+            # canonical typed param makes the per-key merge typed+typed.
+            for key, cparam in canon._domain.input_space.items():
+                if key in batch._domain.input_space:
+                    batch._domain.input_space[key] = cparam
+
             merged = canon + batch
             merged.store(project_dir=self.store_dir)
             _n_total = len(merged)

@@ -396,3 +396,31 @@ def test_store_rows_accumulate_across_generator_instances(tmp_path):
     assert summary is not None
     # Store accumulates across both generator instances
     assert summary.n_per_delegation.get("D001", 0) == 3
+
+
+def test_flush_merges_into_typed_canonical_domain(tmp_path):
+    """Regression (run 20260624T021359): flushing a batch into a canonical store
+    whose domain has a TYPED (add_int) parameter must not raise. The batch domain
+    declares inputs as untyped base Parameter(); the merge previously failed with
+    'Cannot add non-continuous parameter to continuous!'."""
+    import pandas as pd
+    from f3dasm._src.agentic.instrumented import InstrumentedDataGenerator
+
+    # Pre-seed a canonical store with a TYPED domain (int + float).
+    domain = Domain()
+    domain.add_int("n", 1, 3)
+    domain.add_float("x0", 0.0, 1.0)
+    seed = ExperimentData(
+        domain=domain, input_data=pd.DataFrame([{"n": 2, "x0": 0.5}]))
+    seed.store(project_dir=tmp_path)
+
+    # Flush a new eval through the instrumented generator (untyped batch domain).
+    gen = InstrumentedDataGenerator(
+        inner=_SumGenerator(), store_dir=tmp_path,
+        delegation_id="D002", flush_every=1)
+    gen.execute(ExperimentSample(
+        _input_data={"n": 3, "x0": 0.25}, _output_data={},
+        job_status=JobStatus.OPEN))  # must NOT raise the typed/untyped ValueError
+
+    _, df_out = ExperimentData.from_file(project_dir=tmp_path).to_pandas()
+    assert len(df_out) == 2
