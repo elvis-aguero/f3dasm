@@ -244,7 +244,17 @@ tests/agentic/test_literature_wet.py -s --no-cov`) to localize before fixing —
 do not guess-patch without the stack.
 
 ## 9. Orchestrator-owned live validator for HypothesisUpdate
-**Status:** raised 2026-06-22 (user's idea). **§4 — epistemic contract, user owns it.**
+**Status:** IMPLEMENTED (advisory) 2026-06-22 — the #9 live verdict validator
+(`verdict_validator.py` + `nodes/critic_gate.py` `_run_verdict_validator`)
+validates each closing verdict's substance against the charter at the
+HypothesisUpdate boundary, ADVISES (never blocks), escalates on repeat flags.
+Runs on the **critic's** model (one refereeing standard, decoupled from the
+strategizer it judges). Given prior-rulings **MEMORY** 2026-06-23 (commit
+88856cb9) so a borderline verdict can't oscillate between calls — see #15.
+**§4 — user owns it.** The DEEPER architectural separation below (dedicated
+verdict-adjudicator node / freeze the criterion at proposal time / binding
+`LinkFalsificationAttempt`) remains OPEN — the advisory validator is one
+realization, not the full separation.
 
 Today the strategizer carries a triple burden for every hypothesis: it (1) states
 the hypothesis + falsification criterion, (2) frames the falsification attempt,
@@ -411,7 +421,14 @@ closures in `nodes/tools/routing.py` (`ShowNotebook`/`RunScratch` registration p
 ---
 
 ## 14. Watchdog reap (#11) misses detached campaign processes (real CPU leak)
-**Status:** raised 2026-06-23. Discovered live during audit run 20260623T015907.
+**Status:** RESOLVED 2026-06-23 — recursive reap via per-delegation PID
+self-registration at the oracle entry (`governor_pids.jsonl`) +
+`watchdog_cleanup.reap_governor_pids`, which kills each campaign's process tree
+(incl. detached/new-session escapees the `killpg` missed). Wired into
+`studies/.../run.py` `_watchdog` and the memory watcher; see FEATURES.md §E.
+Validated on the resource-governance wet run (zero orphans at close).
+Original write-up kept for the record.
+Discovered live during audit run 20260623T015907.
 HIGH — leaks a full CPU core per watchdog-killed run; orphans accumulate for days.
 
 **Problem.** #11's reap (`watchdog_cleanup.reap_process_group` -> `os.killpg(pgid)`)
@@ -443,3 +460,44 @@ child is a session leader pid==pgid, so the group kill happens to catch it).
 
 **Reuse.** `watchdog_cleanup.reap_process_group`, `studies/agentic_black_box_3d/run.py`
 `_watchdog`, `tests/agentic/test_watchdog_cleanup.py`.
+
+---
+
+## 15. Verdict oscillation on borderline cases — finding + open trigger
+**Status:** root cause FIXED 2026-06-23 (commit 88856cb9, the #9 validator memory);
+the upstream driver is a §4 question that remains OPEN. Captured here because the
+run artifacts that surfaced it are ephemeral (wiped on the next run).
+
+**Finding (two wet runs, bb3d).** Haiku run `20260623T194849` GATED but took 4 gate
+attempts; H1/H2 each oscillated FALSIFIED↔INCONCLUSIVE 4-5× (`VERDICT_SUBSTANCE_FLAG`=4).
+The live verdict validator was **stateless** — it re-judged each verdict from
+scratch, with no view of its own prior rulings, so on a *borderline* result it
+flipped. The Sonnet-strategizer A/B `20260623T212346` GATED in 2 attempts with
+**0 oscillation** (best_f ≈ −1.000, the true optimum; cheaper: $1.34 vs $1.61).
+
+**Crucial nuance (don't over-read the A/B).** The validator ran on **Haiku in BOTH
+runs** (it reuses the CRITIC adapter, telemetry-confirmed: `verdict_validation |
+model=claude-haiku-4-5`), so validator model strength was a *constant*. The Sonnet
+win came from the **strategizer** writing grounded, calibrated predictions
+(`f ≤ −0.998` vs the known prior-best −0.9958) that produced CLEAR met→SUPPORTED
+outcomes — it avoided the borderline trigger UPSTREAM, it did not make the referee
+more consistent. So: **oscillation is triggered by borderline verdicts**, not by a
+weak referee per se.
+
+**What was fixed.** #9 validator now gets its prior rulings on the same hypothesis
+(ledger `status_log`) + a justify-any-reversal guard → can't silently flip. This is
+INSURANCE: on harder problems (supercompressible), a severe test that misses a
+*well-calibrated* prediction by a hair is genuine knife-edge science, not a
+calibration artifact — so the borderline case WILL recur regardless of model
+strength, and the stateless defect would have bitten again.
+
+**OPEN (§4, user owns).** The Charter has no rule for "adequate/severe test misses
+the prediction by a sliver" — is that FALSIFIED (literal §3) or INCONCLUSIVE? The
+campaign delegations independently invented "zone-based" logic (result between
+falsify/support thresholds → INCONCLUSIVE) the Charter doesn't sanction. Resolving
+this is the user's epistemic call; do NOT patch the Charter without it (parsimony).
+
+**Minor tool friction (1 occurrence, note-only).** `EditPipelineCell` rejected a
+full-field edit lacking `expected_rev` (an optimistic-concurrency guard) → one
+`ERROR_RETURN`; the agent had to `ShowNotebook` first to get the rev. Watch for
+recurrence before treating as a fix.
