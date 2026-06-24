@@ -33,6 +33,17 @@ def test_strategizer_documents_new_signatures():
         assert token in STRATEGIZER_SYSTEM_PROMPT, token
 
 
+def test_deliverable_spec_requires_explicit_objective_column():
+    """B3 (run 20260624T021359): the notebook spec must NOT recommend the
+    sort-order auto-detect idiom (a constraint flag sorts before the objective
+    and is silently picked); it must require naming the objective explicitly."""
+    from f3dasm._src.agentic.notebook_exec import notebook_deliverable_spec
+    spec = notebook_deliverable_spec()
+    assert "not c.startswith('_')" not in spec  # the fragile idiom is gone
+    assert "EXPLICITLY" in spec
+    assert "evaluator_output_names" in spec
+
+
 def test_strategizer_requires_primary_criteria_met_before_done():
     """Closure discipline (run 20260624T021359): Done() must require the PRIMARY
     success criteria to be MET, not merely tested, and frame budget as runway."""

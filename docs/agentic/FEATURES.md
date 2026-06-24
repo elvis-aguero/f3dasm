@@ -83,8 +83,11 @@ Format per feature: **what** (plain language) · **why** · **where** (files) ·
 - **Tools:** `RunPipelineCell`. **Status:** done.
 
 ### Output-column guidance fix
-- **What:** notebook guidance derives the objective column as the first non-provenance
-  output (provenance columns sort first and would otherwise be mistaken for it).
+- **What:** notebook guidance requires naming the objective column EXPLICITLY. The
+  earlier "first non-provenance output" auto-detect was unsafe: `output_names` is
+  sorted, so with multiple outputs a constraint flag (e.g. `coilable`) sorts before
+  the objective and gets silently picked (audit 20260624T021359). If derived, read
+  `run_config['evaluator_output_names'][0]`, not column order.
 - **Where:** `notebook_exec.py`. **Status:** done.
 
 ## C. Workers & ground truth
