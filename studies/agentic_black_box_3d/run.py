@@ -37,14 +37,14 @@ from f3dasm._src.agentic.watchdog_cleanup import (
 
 STUDY_DIR = Path(__file__).parent
 BUDGET_SECONDS = 45 * 60  # 45 minutes
-MODEL = "claude-haiku-4-5-20251001"
-# Per-agent strategizer model override; None → use MODEL (Haiku).
-# Sonnet A/B (20260623): strategizer + implementer on Sonnet to test whether a
-# stronger model reduces the verdict-validator oscillation seen in the Haiku
-# baseline 20260623T194849 (verdict flip-flopped FALSIFIED↔INCONCLUSIVE 4-5×).
-# The verdict validator inherits the strategizer's model → also Sonnet. The
-# gate critic / datagenerator / lit-reviewer stay on MODEL (Haiku).
-STRATEGIZER_MODEL = "claude-sonnet-4-6"
+# Model is config-driven: config.yaml `model:` is the source of truth, and the
+# runtime default (Haiku, DEFAULT_MODEL) applies when it's absent. Do NOT hardcode
+# a model here — AgenticRun resolves `passed-arg → config.yaml → default`, so a
+# hardcode would shadow config.yaml. (A 20260623 Sonnet A/B lived here; reverted.)
+MODEL = None  # None → let config.yaml / the runtime default decide
+# Per-agent override; None → inherit the run model. Set a model id here ONLY for a
+# deliberate per-agent A/B (e.g. strategizer-on-Sonnet); leave None for production.
+STRATEGIZER_MODEL = None
 
 # ── dirty-tree guard ─────────────────────────────────────────────────────────
 # The ledger stamps the current git SHA as provenance; a dirty working tree
@@ -101,7 +101,7 @@ graph = Graph(
         "strategizer":       StrategizerAgent(model=STRATEGIZER_MODEL),
         "literature_reviewer": LiteratureReviewAgent(),
         "datagenerator":     DataGeneratorAgent(),
-        "implementer":       ImplementerAgent(model="claude-sonnet-4-6"),
+        "implementer":       ImplementerAgent(),
         "critic":            AdversarialCritiqueAgent(),
     },
     edges=(
