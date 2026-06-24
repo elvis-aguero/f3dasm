@@ -463,10 +463,11 @@ child is a session leader pid==pgid, so the group kill happens to catch it).
 
 ---
 
-## 15. Verdict oscillation on borderline cases — finding + open trigger
-**Status:** root cause FIXED 2026-06-23 (commit 88856cb9, the #9 validator memory);
-the upstream driver is a §4 question that remains OPEN. Captured here because the
-run artifacts that surfaced it are ephemeral (wiped on the next run).
+## 15. Verdict oscillation on borderline cases — finding + resolved trigger
+**Status:** RESOLVED 2026-06-23. Root cause FIXED (commit 88856cb9, the #9
+validator memory); the §4 trigger question was RESOLVED **with no Charter change**
+(see "RESOLVED" below). Captured here because the run artifacts that surfaced it
+are ephemeral (wiped on the next run).
 
 **Finding (two wet runs, bb3d).** Haiku run `20260623T194849` GATED but took 4 gate
 attempts; H1/H2 each oscillated FALSIFIED↔INCONCLUSIVE 4-5× (`VERDICT_SUBSTANCE_FLAG`=4).
@@ -491,11 +492,24 @@ INSURANCE: on harder problems (supercompressible), a severe test that misses a
 calibration artifact — so the borderline case WILL recur regardless of model
 strength, and the stateless defect would have bitten again.
 
-**OPEN (§4, user owns).** The Charter has no rule for "adequate/severe test misses
-the prediction by a sliver" — is that FALSIFIED (literal §3) or INCONCLUSIVE? The
-campaign delegations independently invented "zone-based" logic (result between
-falsify/support thresholds → INCONCLUSIVE) the Charter doesn't sanction. Resolving
-this is the user's epistemic call; do NOT patch the Charter without it (parsimony).
+**RESOLVED (§4, user's call 2026-06-23) — NO Charter change.** The question was
+whether a near-miss on a severe test is FALSIFIED or INCONCLUSIVE. Conclusion: the
+existing Charter §3 already answers it by the correct variable — **adequacy, not
+margin** — so a new "boundary" rule would be overfit AND a claim-protecting
+loophole:
+- near-miss from an **inadequate/under-budgeted** search → INCONCLUSIVE via the
+  existing §3 confound/Duhem–Quine clause (did the hypothesis fail, or did the
+  optimizer just not get there?);
+- near-miss from a **genuinely adequate** test → FALSIFIED, and that is correct
+  (the registered prediction was simply false; declining it would "protect a
+  favoured claim", which §3/§4 forbid).
+A blanket "near-miss → INCONCLUSIVE" collapses those two and lets an agent dodge a
+real refutation — a step away from Popper, not a refinement. The campaign
+delegations' "zone-based" logic is the loophole, not the intent. If a threshold
+turns out to be a bad operationalization, §4 already prescribes the fix: revise the
+prediction explicitly and re-test — don't reinterpret the old result. The
+oscillation itself is handled by the validator-memory fix + calibration, not by
+softening §3.
 
 **Minor tool friction (1 occurrence, note-only).** `EditPipelineCell` rejected a
 full-field edit lacking `expected_rev` (an optimistic-concurrency guard) → one
