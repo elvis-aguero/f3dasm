@@ -280,3 +280,47 @@ class TestStrategizerGranularity:
         # domain-neutral: no leaked example framings, but the principle is there
         assert "not a bet on which method" in STRATEGIZER_SYSTEM_PROMPT.lower() \
             or "NOT a bet on which method" in STRATEGIZER_SYSTEM_PROMPT
+
+
+class TestRetrospectiveTextCap:
+    def test_long_retrospective_not_truncated_at_2000(self, tmp_path):
+        """B9 (run 20260624T021359): the strategizer's end-of-run retrospective
+        is the highest-signal first-person record; the old 2000-char cap cut it
+        mid-sentence (losing the BLOCKED field). The cap is now uniform at 8000."""
+        import json
+
+        from f3dasm._src.agentic.backends.base import Agent, Edge, Graph
+        from f3dasm._src.agentic.nodes import StrategizerNode
+
+        class A(Agent):
+            role = "strategizer"
+            tools = frozenset({"Done"})
+            description = "s"
+
+        class B(Agent):
+            description = "i"
+
+        spec = Graph(nodes={"strategizer": A(), "implementer": B()},
+                     edges=(Edge("strategizer", "implementer"),), entry="strategizer")
+
+        class _Stub:
+            def __init__(self):
+                self.closure_tools = {}
+
+            def invoke(self, messages):
+                return "ok"
+
+        notes = tmp_path / "debug" / "strategizer_notes"
+        notes.mkdir(parents=True)
+        node = StrategizerNode(_Stub(), name="strategizer", outgoing=["implementer"],
+                               spec=spec, study_dir=tmp_path)
+        node._current_notes_dir = notes
+
+        body = "- CONSISTENCY: ok\n- BLOCKED: " + ("x" * 3000)
+        node._record_retrospective(
+            "strategizer", "DONE", f"## Report\n\n### Retrospective\n{body}\n")
+
+        line = (tmp_path / "debug" / "retrospectives.jsonl").read_text().splitlines()[0]
+        rec = json.loads(line)
+        assert len(rec["text"]) > 2000  # pre-fix this was capped at exactly 2000
+        assert rec["text"].rstrip().endswith("x")  # the tail survived, not cut off

@@ -9,6 +9,12 @@ from typing import Any
 
 from .parsing import _extract_report_section
 
+# Max chars persisted per retrospective. The strategizer's end-of-run exit
+# interview (CONSISTENCY/DECISION/FRICTION/BLOCKED) is the highest-signal
+# first-person record there is; the old 2000-char cap truncated it mid-sentence
+# (run 20260624T021359). Uniform across roles — no node-specific special-casing.
+_RETRO_TEXT_CAP = 8000
+
 
 class RecordingMixin:
     def _role_of(self, target: str) -> str:
@@ -135,7 +141,7 @@ class RecordingMixin:
             now = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
             rec = {
                 "ts": now, "source_id": source_id, "role": role,
-                "flagged": flagged, "text": retro[:2000],
+                "flagged": flagged, "text": retro[:_RETRO_TEXT_CAP],
             }
             with (debug_dir / "retrospectives.jsonl").open(
                     "a", encoding="utf-8") as f:
