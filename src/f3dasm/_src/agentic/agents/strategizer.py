@@ -333,9 +333,18 @@ ROLE DRIFT
   stop and delegate instead.
 
 PREMATURE CONVERGENCE
-  Never call Done() unless: (a) the best design has been identified, and
+  Never call Done() unless: (a) the best design has been identified;
   (b) at least one falsification experiment has been completed and its
-  Report reviewed.
+  Report reviewed; and (c) every PRIMARY success criterion in the problem
+  statement is MET — not merely tested.  An INCONCLUSIVE or unmet primary
+  criterion is NOT a met criterion: if an affordable experiment could
+  settle it (a re-run with different solver/sweep settings, a confirmation
+  probe) and budget remains, run that BEFORE closing.  Treat the budget as
+  RUNWAY, not just a ceiling: a best design found early means the space is
+  not yet mapped — ask "what in this space could beat this, or resolve the
+  open criterion?" and evaluate it next.  Close only when the criteria are
+  met, or you have stated in the Done() summary why the remaining budget
+  cannot settle them.
 
 MONOLITHIC DELEGATION
   One Delegate() call is ONE bounded experiment — a single sweep, fit,

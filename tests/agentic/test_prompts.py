@@ -33,6 +33,14 @@ def test_strategizer_documents_new_signatures():
         assert token in STRATEGIZER_SYSTEM_PROMPT, token
 
 
+def test_strategizer_requires_primary_criteria_met_before_done():
+    """Closure discipline (run 20260624T021359): Done() must require the PRIMARY
+    success criteria to be MET, not merely tested, and frame budget as runway."""
+    p = STRATEGIZER_SYSTEM_PROMPT
+    assert "PRIMARY success criterion" in p or "primary success criterion" in p.lower()
+    assert "INCONCLUSIVE" in p and "RUNWAY" in p.upper()
+
+
 def test_checkpoint_asks_for_ledger_digest():
     assert "posterior" in CHECKPOINT_STRATEGIZER_PROMPT
 

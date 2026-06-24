@@ -1364,10 +1364,13 @@ def build_routing_tools(node) -> dict:
         """Signal end of run with a summary of findings (two-shot).
 
         Call only when: a best design is in hand with numerical support from
-        Reports; at least one falsification attempt has been carried out; and
+        Reports; at least one falsification attempt has been carried out; every
+        PRIMARY success criterion is MET (an INCONCLUSIVE/unmet one is not — run
+        the affordable experiment that would settle it if budget remains); and
         pipeline.ipynb has been authored via WriteDeliverable("pipeline.ipynb", …).
         summary should state the best design + supporting numbers + the
-        falsification outcome + remaining uncertainty.
+        falsification outcome + remaining uncertainty + (if closing with budget
+        left) why the remaining budget cannot settle any unmet criterion.
 
         First call: issues a WARNING and lists any open delegations or
         unmet conditions; does NOT close.
