@@ -141,8 +141,8 @@ def test_literature_review_wet(tmp_path, capfd):
             # pipeline.ipynb is a hard Done() requirement — author it via the
             # structured tools (a minimal self-asserting analysis cell).
             if "AddPipelineCell" in self.closure_tools:
-                self.closure_tools["SetNotebookIntro"](
-                    "Literature review of the problem.", "n/a")
+                self.closure_tools["AddPipelineMarkdownCell"](
+                    "problem", "Literature review of the problem.")
                 self.closure_tools["AddPipelineCell"](
                     "analysis", "re-run the literature review delegation",
                     "print('REPRODUCED: 0.0')")
