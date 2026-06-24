@@ -433,6 +433,19 @@ class AgenticRun:
         )
         self._run_dir = None  # set in execute()
 
+    @staticmethod
+    def _write_run_status(debug_dir: Path, **payload) -> None:
+        """Persist ``debug/run_status.json`` — the terminal status the §1 analysis
+        protocol reads FIRST. Written on every close (normal gate outcome, crash,
+        watchdog kill) so a run's outcome is always on disk, not only in the
+        notebook metadata + the longitudinal ledger. Best-effort: a status write
+        must never fail a run."""
+        try:
+            (debug_dir / "run_status.json").write_text(
+                json.dumps(payload, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+
     def execute(self) -> str:
         """Run the agentic loop; return the final report text.
 
@@ -634,18 +647,11 @@ class AgenticRun:
                 # Any unhandled crash (GraphRecursionError, KeyboardInterrupt,
                 # OOM, …): record a resumable status so resume_from is always
                 # an option after a break, then re-raise (we do not swallow).
-                try:
-                    (debug_dir / "run_status.json").write_text(
-                        json.dumps({
-                            "status": "crashed",
-                            "reason": f"{type(_exc).__name__}: {_exc}"[:500],
-                            "resumable": True,
-                            "thread_id": thread_id,
-                        }, indent=2),
-                        encoding="utf-8",
-                    )
-                except OSError:
-                    pass
+                self._write_run_status(
+                    debug_dir, status="crashed",
+                    reason=f"{type(_exc).__name__}: {_exc}"[:500],
+                    resumable=True, thread_id=thread_id,
+                )
                 raise
         # Merge per-call telemetry into an analysis-ready summary.json (additive,
         # off the decision path — a failure here must not fail the run).
@@ -743,6 +749,17 @@ class AgenticRun:
                 nbformat.write(nb, str(nb_path))
             except Exception:  # noqa: BLE001
                 log.warning("notebook provenance stamp failed", exc_info=True)
+
+        # Persist the terminal gate outcome to run_status.json on the NORMAL
+        # close too (the crash path above writes its own). Without this a
+        # cleanly-closed run leaves no run_status.json and the §1 protocol's
+        # first KPI (gate outcome) is unreadable — the outcome would live only in
+        # the notebook metadata + the ledger. (audit: 3 GATED runs, none had it.)
+        self._write_run_status(
+            debug_dir, status=_gate_outcome, model=self._model,
+            evals_used=evals, timestamp=now_ts, run=str(run_dir),
+            thread_id=thread_id,
+        )
 
         # Append a KPI row to the longitudinal ledger automatically (best
         # effort). The extraction logic lives in studies/run_ledger.py (the one
