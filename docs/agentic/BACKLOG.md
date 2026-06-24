@@ -25,6 +25,8 @@ Resolved items keep their write-up below for the record; `(commit)` is what fixe
 - [x] **#12** Watchdog kill loses the strategizer's retrospective — `5199b593` (synthetic post-mortem entry)
 - [x] **#13** Per-cell notebook debugger — *DONE* (`RunPipelineCell` closure + `diagnose_notebook`; per-cell trace localizes a repro failure by cell name + traceback; runs against a ledger copy; kill-switch-free read-only diagnostic)
 - [ ] **#14** Watchdog reap (#11) MISSES detached campaign processes — *open, HIGH (real CPU leak)* — they escape the process-group kill (new session) and outlive the run
+- [ ] **#16** ABAQUS subprocess can't import workspace modules (PYTHONPATH) — *open, abaqus2py-owned* (recommendation only; not an f3dasm fix)
+- [ ] **#17** Closure + budget-severity model (Memory>Time>Eval; dynamic constraints) — *open, §4 user-owned* — Done() prompt iterated (`0400a653`); runtime nudge + severity model deferred
 
 ---
 
@@ -515,3 +517,51 @@ softening §3.
 full-field edit lacking `expected_rev` (an optimistic-concurrency guard) → one
 `ERROR_RETURN`; the agent had to `ShowNotebook` first to get the rev. Watch for
 recurrence before treating as a fix.
+
+---
+
+## 16. ABAQUS subprocess can't import workspace modules (PYTHONPATH) — abaqus2py-owned
+
+**Status: open — recommendation only (not an f3dasm fix).** During run
+`20260624T021359`, all 51 ABAQUS runs of the first D003 attempt failed with
+`ImportError: No module named 'supercompressible_lin_buckle_param'`: the workspace
+dir was not on `PYTHONPATH` when the ABAQUS subprocess ran (it worked in validation
+only because a validate script did `sys.path.insert(0, WORKSPACE)`). This also
+contaminated the canonical store with 51 NEW-status rows that had to be cleared
+before D004 (meta_errors.md Bug 1).
+
+**Owner: the external `abaqus2py` package**, not f3dasm — `F3DASMAbaqusSimulator`
+(which generates the `preprocess.py` wrapper and launches ABAQUS) is imported from
+`abaqus2py` (`studies/fragile_becomes_supercompressible/main.py`), which is not in
+this repo. **Recommended fix (in abaqus2py):** inject the workspace dir into the
+ABAQUS subprocess environment (`PYTHONPATH`) or emit `sys.path.insert(0, WORKSPACE)`
+into the generated `preprocess.py`, so worker-authored param modules resolve without
+relying on the parent process's cwd/sys.path.
+
+## 17. Closure decoupled from success-criteria + budget; budget-severity model — §4
+
+**Status: open, §4 user-owned. Partially addressed.** Run `20260624T021359` closed
+at ~22% of a 12h budget with its PRIMARY success criterion (Stage-2 Riks
+`max_strain ≥ 0.90`) left INCONCLUSIVE and the affordable settling experiment (a
+refined Riks re-run) never delegated. Root: a three-way gap — the strategizer prompt
+made Done() eligible on "best design + one falsification attempt" (no criteria-met
+notion), budget reached the agent only as a 95%/100% *brake* (never as runway,
+`strategizer.py` budget warnings), Done() is budget-blind (`routing.py`), and the
+critic is *forbidden* to weigh budget ("RESOURCE BOOKKEEPING IS NOT VALIDITY",
+`agents/critic.py`) and is not scoped to closure timing.
+
+**Done (`0400a653`):** the strategizer PREMATURE CONVERGENCE rule now requires
+primary criteria MET (not merely tested), frames budget as runway, and asks for a
+recorded reason when closing early; mirrored in the Done() docstring.
+
+**Deferred (the open §4 design question):** a *runtime* closure nudge (soft — a
+two-shot reconsider when closing with large budget unused and a criterion
+unmet/INCONCLUSIVE, mirroring the 95% wind-down nudge), and a **budget-severity
+model**. The user's framing: budgets differ in severity — roughly **Memory > Time >
+Eval** — and *accidental* constraints (e.g. a Riks `max_strain` gate) are
+**dynamically assigned**, so they should receive *differentiated* treatment rather
+than one uniform nudge. How to represent constraint severity/type and key the nudge
+on it is unresolved. The benchmark `PROBLEM_STATEMENT.md` framing (objective excludes
+strain; Riks demoted to a separate "Validation requirement"; criterion #4 buried)
+contributed and is owned by the user (handled in the benchmark repo, not f3dasm —
+robustness must not depend on a perfectly-framed problem statement).
