@@ -20,6 +20,21 @@ from ..parsing import (
     _stamped_eval_count,
 )
 
+
+def _strip_leading_md_header(text: str) -> str:
+    """Drop a single leading markdown header line from author-supplied cell text.
+
+    The notebook cell tools PREPEND the canonical heading themselves (e.g.
+    ``## Hypotheses`` for the hypotheses cell, ``### doe`` for a pillar's
+    WHY-explainer). When the author also opens their content with a header, the
+    cell renders a duplicated heading (observed in run 20260623T212346:
+    ``## Hypotheses\\n\\n## Hypotheses``, ``### analysis\\n\\n### analysis``). The
+    tool owns the heading, so we strip a leading ``#``-header here to guarantee
+    exactly one. Only a LEADING header is removed — sub-headings inside the body
+    are preserved.
+    """
+    return re.sub(r"^\s*#{1,6}[^\n]*(?:\n+|$)", "", (text or "").lstrip(), count=1)
+
 # Roles whose delegations actually reach the ground-truth oracle and so are
 # subject to the eval-ledger guards (raw-oracle nudge, unledgered bounce,
 # off-ledger reconciliation). Role-based (not node-name-based) so it stays
@@ -2299,7 +2314,7 @@ def build_routing_tools(node) -> dict:
                     "AddPipelineMarkdownCell is create-only — change it with "
                     "EditPipelineCell or remove it with DeletePipelineCell first.")
         cell = nbformat.v4.new_markdown_cell(
-            _NARRATIVE[name] + "\n\n" + content.strip())
+            _NARRATIVE[name] + "\n\n" + _strip_leading_md_header(content))
         cell.metadata["name"] = name
         by[name] = cell
         _emit_notebook(by, nb, nb_path)
@@ -2337,7 +2352,8 @@ def build_routing_tools(node) -> dict:
                     f"(rev {_rev(by[phase].get('source', ''))}). AddPipelineCell "
                     "is create-only — change it with EditPipelineCell or remove "
                     "it with DeletePipelineCell first.")
-        wc = nbformat.v4.new_markdown_cell(f"### {phase}\n\n" + why.strip())
+        wc = nbformat.v4.new_markdown_cell(
+            f"### {phase}\n\n" + _strip_leading_md_header(why))
         wc.metadata["name"] = f"{phase}__why"
         cc = nbformat.v4.new_code_cell(code)
         cc.metadata["name"] = phase
@@ -2423,7 +2439,7 @@ def build_routing_tools(node) -> dict:
                     if not why.strip():
                         return "ERROR: `why` is empty."
                     wname = f"{name}__why"
-                    body = f"### {name}\n\n" + why.strip()
+                    body = f"### {name}\n\n" + _strip_leading_md_header(why)
                     if wname in by:
                         by[wname]["source"] = body
                     else:
@@ -2439,7 +2455,7 @@ def build_routing_tools(node) -> dict:
                     return f"ERROR: `content` is empty for {name!r}."
                 heading = (_NARRATIVE[name] if name in _NARRATIVE
                            else f"### {name[:-len('__why')]}")
-                by[name]["source"] = heading + "\n\n" + content.strip()
+                by[name]["source"] = heading + "\n\n" + _strip_leading_md_header(content)
         _emit_notebook(by, nb, nb_path)
         new_rev = _rev(by[name].get("source", ""))
         return prefix + f"Edited {name} in pipeline.ipynb (rev {cur_rev} → {new_rev})."
