@@ -406,3 +406,32 @@ def test_write_deliverable_accepts_ipynb(tmp_path):
     assert "Written" in wd("pipeline.ipynb", good)
     assert (study_dir / "pipeline.ipynb").exists()
     assert "ERROR" in wd("bad.ipynb", "{ this is not notebook json }")
+
+
+def test_write_deliverable_accepts_declared_required_deliverable(tmp_path):
+    """B4 regression (run 20260624T021359): the Done() gate REQUIRES files in
+    config.yaml required_deliverables (e.g. replicate.py), so WriteDeliverable
+    must accept them verbatim — otherwise gate-vs-tool deadlock. A non-.ipynb
+    that is NOT declared is still rejected."""
+    study_dir = tmp_path / "study"; study_dir.mkdir()
+
+    class A(Agent):
+        role = "strategizer"
+        tools = frozenset({"Done", "WriteNote", "WriteDeliverable"})
+        description = "s"
+
+    class B(Agent):
+        description = "i"
+
+    spec = Graph(nodes={"strategizer": A(), "implementer": B()},
+                 edges=(Edge("strategizer", "implementer"),), entry="strategizer")
+    node = StrategizerNode(_StubAdapter(), name="strategizer",
+                           outgoing=["implementer"], spec=spec, study_dir=study_dir)
+    # Simulate __call__ having synced state["required_deliverables"] onto the node.
+    node._required_deliverables = ["replicate.py"]
+    wd = node.adapter.closure_tools["WriteDeliverable"]
+
+    assert "Written" in wd("replicate.py", "print('reproduce me')\n")
+    assert (study_dir / "replicate.py").exists()
+    # An undeclared non-notebook file is still rejected.
+    assert "ERROR" in wd("rogue.py", "print('nope')\n")

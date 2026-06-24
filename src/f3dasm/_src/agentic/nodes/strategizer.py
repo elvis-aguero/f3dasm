@@ -936,6 +936,11 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         # framing (judge the best honest conclusion within evals spent).
         self._eval_budget = state.get("eval_budget")
 
+        # Required aux deliverables (config.yaml) → on the node so WriteDeliverable
+        # may write them: the gate REQUIRES them, so the writing tool must accept
+        # them (else gate-vs-tool deadlock — audit run 20260624T021359).
+        self._required_deliverables = state.get("required_deliverables") or []
+
         # Capture total_delegations so Delegate() can seed the counter.
         self._state_total_delegations = state.get("total_delegations", 0)
         # Seed the monotonic counter from state on first __call__ (or

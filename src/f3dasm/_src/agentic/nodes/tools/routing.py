@@ -2154,8 +2154,10 @@ def build_routing_tools(node) -> dict:
         into the notebook's cells — lift proven code, don't re-derive from
         scratch (re-deriving is where you hit bugs and run out of room).
 
-        filename must be pipeline.ipynb; content must be valid nbformat-v4 JSON.
-        Verify with CheckDeliverable() before Done().
+        filename is normally pipeline.ipynb (content must be valid nbformat-v4
+        JSON); files declared in config.yaml required_deliverables (e.g.
+        replicate.py) may also be written here, verbatim. Verify with
+        CheckDeliverable() before Done().
         """
         prefix = node._drain_notifications()
         if node._study_dir is None:
@@ -2164,28 +2166,37 @@ def build_routing_tools(node) -> dict:
         p = Path(filename)
         if "/" in filename or "\\" in filename:
             return "ERROR: filename must be a bare name (no path separators)."
-        # The deliverable is a Jupyter notebook ONLY. There is no pipeline.py and
-        # no solution.md — the notebook IS both the runnable pipeline and the
-        # writeup. Reject any other suffix loudly so the agent doesn't ship a
-        # script the gate would never execute.
-        if p.suffix != ".ipynb":
+        # The primary deliverable is a Jupyter notebook: the notebook IS both the
+        # runnable pipeline and the writeup. The ONLY other files writable here are
+        # the AUX deliverables the study declared in config.yaml
+        # (required_deliverables) — the Done() gate REQUIRES those, so the writing
+        # tool must accept them or the run deadlocks (gate demands a file the tool
+        # refuses — audit run 20260624T021359). Any other suffix is rejected loudly
+        # so the agent doesn't ship a script the gate would never execute.
+        _required_aux = {
+            Path(x).name for x in (getattr(node, "_required_deliverables", None) or [])
+        }
+        if p.suffix != ".ipynb" and p.name not in _required_aux:
             return (
                 f"ERROR: the deliverable must be pipeline.ipynb (a notebook), "
                 f"not {filename!r}. There is no pipeline.py / solution.md — the "
-                "notebook's markdown cells ARE the writeup. See "
+                "notebook's markdown cells ARE the writeup. (Files declared in "
+                "config.yaml required_deliverables may also be written here.) See "
                 "<deliverable_format>."
             )
         # A .ipynb must be valid notebook JSON — reject a malformed notebook here
-        # rather than letting the gate fail opaquely later.
-        try:
-            import nbformat
-            nbformat.reads(content, as_version=4)
-        except Exception as exc:  # noqa: BLE001
-            return (
-                f"ERROR: {filename!r} is not valid notebook JSON ({exc}). "
-                "Prefer the structured tools (AddPipelineMarkdownCell / "
-                "AddPipelineCell); if you author raw, write valid nbformat v4."
-            )
+        # rather than letting the gate fail opaquely later. Aux files (e.g. a .py)
+        # are written verbatim.
+        if p.suffix == ".ipynb":
+            try:
+                import nbformat
+                nbformat.reads(content, as_version=4)
+            except Exception as exc:  # noqa: BLE001
+                return (
+                    f"ERROR: {filename!r} is not valid notebook JSON ({exc}). "
+                    "Prefer the structured tools (AddPipelineMarkdownCell / "
+                    "AddPipelineCell); if you author raw, write valid nbformat v4."
+                )
 
         # Write directly to study_dir/ — the user-visible output location.
         target = Path(node._study_dir) / p.name
