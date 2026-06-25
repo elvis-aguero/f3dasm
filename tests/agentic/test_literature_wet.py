@@ -13,10 +13,94 @@ Run with:
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
 import pytest
+
+
+# ---------------------------------------------------------------------------
+# Deterministic: SS throttle
+# ---------------------------------------------------------------------------
+
+def test_ss_throttle_enforces_interval(monkeypatch):
+    """_throttled_ss sleeps when the prior call was too recent."""
+    import f3dasm._src.agentic.agents.literature as lit
+
+    slept = []
+    monkeypatch.setattr(lit.time, "sleep", lambda s: slept.append(s))
+    monkeypatch.setattr(lit, "_call_in_fresh_thread", lambda fn, *a, **kw: fn())
+
+    # Reset throttle state: last call at epoch → first call never sleeps.
+    with lit._ss_throttle_lock:
+        lit._ss_last_call_t[0] = 0.0
+
+    dummy = lambda: "ok"  # noqa: E731
+
+    lit._throttled_ss(dummy)
+    assert slept == [], "first call (no recent history) must not sleep"
+
+    # Simulate a call that happened "just now" so the next one must wait.
+    with lit._ss_throttle_lock:
+        lit._ss_last_call_t[0] = lit.time.monotonic()
+
+    lit._throttled_ss(dummy)
+    assert len(slept) == 1, "second call (hot path) must sleep"
+    assert 0 < slept[0] <= lit._SS_MIN_INTERVAL
+
+
+def test_ss_missing_key_warns(monkeypatch, caplog):
+    """A missing SEMANTIC_SCHOLAR_API_KEY emits a warning, not an error."""
+    import logging
+    import tempfile
+    import f3dasm._src.agentic.agents.literature as lit
+
+    monkeypatch.delenv("SEMANTIC_SCHOLAR_API_KEY", raising=False)
+
+    # build_closure_tools needs a real study dir to resolve corpus paths.
+    with tempfile.TemporaryDirectory() as td:
+        from pathlib import Path
+        study = Path(td)
+        (study / "runs").mkdir()
+        agent = lit.LiteratureReviewAgent()
+        with caplog.at_level(logging.WARNING, logger=lit.__name__):
+            agent.build_closure_tools(study)
+
+    assert any("SEMANTIC_SCHOLAR_API_KEY" in r.message for r in caplog.records), (
+        "expected a warning about missing SEMANTIC_SCHOLAR_API_KEY"
+    )
+
+
+def test_openalex_missing_key_warns(monkeypatch, caplog):
+    """A missing OPENALEX_API_KEY emits a warning, not an error."""
+    import logging
+    import tempfile
+    import f3dasm._src.agentic.agents.literature as lit
+
+    monkeypatch.delenv("OPENALEX_API_KEY", raising=False)
+
+    with tempfile.TemporaryDirectory() as td:
+        from pathlib import Path
+        study = Path(td)
+        (study / "runs").mkdir()
+        agent = lit.LiteratureReviewAgent()
+        with caplog.at_level(logging.WARNING, logger=lit.__name__):
+            agent.build_closure_tools(study)
+
+    assert any("OPENALEX_API_KEY" in r.message for r in caplog.records), (
+        "expected a warning about missing OPENALEX_API_KEY"
+    )
+
+
+def test_arxiv_client_self_throttles():
+    """arxiv.Client default delay is 3 s — no extra throttle needed."""
+    import arxiv
+    c = arxiv.Client()
+    assert c.delay_seconds == 3.0, (
+        f"arxiv.Client default delay changed to {c.delay_seconds!r}; "
+        "review whether _build_arxiv_closures needs its own throttle"
+    )
 
 from f3dasm._src.agentic.agent_runtime import AgenticRun
 from f3dasm._src.agentic.agents import LiteratureReviewAgent, StrategizerAgent

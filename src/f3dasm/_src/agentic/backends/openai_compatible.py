@@ -257,7 +257,7 @@ def _make_literature_tools() -> list:
     try:
         from semanticscholar import SemanticScholar as _SS
 
-        _ss = _SS()
+        _ss = _SS(api_key=os.environ.get("SEMANTIC_SCHOLAR_API_KEY"))
 
         def get_paper_details(paper_id: str) -> str:
             """Get details for a paper by its S2, DOI, or arxiv ID."""

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
+import threading
+import time
 
 from ..backends.base import Agent
 
@@ -17,6 +20,29 @@ def _call_in_fresh_thread(fn, *args, timeout=30.0, **kwargs):
     import concurrent.futures as _cf
     with _cf.ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(fn, *args, **kwargs).result(timeout=timeout)
+
+
+# ---------------------------------------------------------------------------
+# Semantic Scholar rate throttle
+# ---------------------------------------------------------------------------
+# Authenticated key: 100 req / 5 min ≈ 1 per 3 s.  Same interval as arXiv.
+# Pattern mirrors literature_corpus._rate_limit_wait: read under lock,
+# sleep outside, record under lock — never hold the lock during sleep.
+_SS_MIN_INTERVAL: float = 3.0
+_ss_throttle_lock = threading.Lock()
+_ss_last_call_t: list = [0.0]  # mutable so closures can rebind
+
+
+def _throttled_ss(fn, *args, **kwargs):
+    """Call fn via _call_in_fresh_thread after honouring _SS_MIN_INTERVAL."""
+    with _ss_throttle_lock:
+        gap = _SS_MIN_INTERVAL - (time.monotonic() - _ss_last_call_t[0])
+    if gap > 0:
+        time.sleep(gap)
+    with _ss_throttle_lock:
+        _ss_last_call_t[0] = time.monotonic()
+    return _call_in_fresh_thread(fn, *args, **kwargs)
+
 
 log = logging.getLogger(__name__)
 
@@ -332,14 +358,21 @@ class LiteratureReviewAgent(Agent):
         # Semantic Scholar tools via the semanticscholar library.
         try:
             from semanticscholar import SemanticScholar as _SS
-            _sch = _SS()
+            _ss_api_key = os.environ.get("SEMANTIC_SCHOLAR_API_KEY")
+            if not _ss_api_key:
+                log.warning(
+                    "SEMANTIC_SCHOLAR_API_KEY not set — proceeding with "
+                    "unauthenticated Semantic Scholar access (very low rate "
+                    "limit). Set SEMANTIC_SCHOLAR_API_KEY for reliable access."
+                )
+            _sch = _SS(api_key=_ss_api_key)
 
             def search_semantic_scholar(
                 query: str, num_results: int = 10
             ) -> str:
                 """Search for papers on Semantic Scholar."""
                 try:
-                    results = _call_in_fresh_thread(
+                    results = _throttled_ss(
                         _sch.search_paper,
                         query,
                         limit=int(num_results),
@@ -376,7 +409,7 @@ class LiteratureReviewAgent(Agent):
             ) -> str:
                 """Get details for a paper by S2/DOI/arxiv ID."""
                 try:
-                    paper = _call_in_fresh_thread(
+                    paper = _throttled_ss(
                         _sch.get_paper,
                         paper_id,
                         fields=[
@@ -417,7 +450,7 @@ class LiteratureReviewAgent(Agent):
             ) -> str:
                 """Get details for an author by their S2 author ID."""
                 try:
-                    author = _call_in_fresh_thread(
+                    author = _throttled_ss(
                         _sch.get_author,
                         author_id,
                         fields=[
@@ -448,7 +481,7 @@ class LiteratureReviewAgent(Agent):
             ) -> str:
                 """Get citing papers and references (≤20 each)."""
                 try:
-                    paper = _call_in_fresh_thread(
+                    paper = _throttled_ss(
                         _sch.get_paper,
                         paper_id,
                         fields=["citations", "references"],
@@ -499,6 +532,18 @@ class LiteratureReviewAgent(Agent):
                 " registered for literature_reviewer"
             )
 
+        # OpenAlex headers — polite pool always; Bearer key if available.
+        _oa_key = os.environ.get("OPENALEX_API_KEY")
+        if not _oa_key:
+            log.warning(
+                "OPENALEX_API_KEY not set — proceeding with polite-pool "
+                "access (lower rate limit). Set OPENALEX_API_KEY for "
+                "better throughput."
+            )
+        _oa_headers = {"User-Agent": "f3dasm-agent/1.0 (mailto:f3dasm@brown.edu)"}
+        if _oa_key:
+            _oa_headers["Authorization"] = f"Bearer {_oa_key}"
+
         def search_openalex(
             query: str, n_results: int = 10
         ) -> str:
@@ -522,12 +567,7 @@ class LiteratureReviewAgent(Agent):
                             ",abstract_inverted_index"
                         ),
                     },
-                    headers={
-                        "User-Agent": (
-                            "f3dasm-agent/1.0"
-                            " (mailto:f3dasm@brown.edu)"
-                        ),
-                    },
+                    headers=_oa_headers,
                     cache_dir=cache_dir,
                 )
                 works = resp.json().get("results", [])
@@ -742,12 +782,7 @@ class LiteratureReviewAgent(Agent):
                             ",open_access,primary_location"
                         ),
                     },
-                    headers={
-                        "User-Agent": (
-                            "f3dasm-agent/1.0"
-                            " (mailto:f3dasm@brown.edu)"
-                        ),
-                    },
+                    headers=_oa_headers,
                     cache_dir=cache_dir,
                 )
                 works = resp.json().get("results", [])
@@ -798,12 +833,7 @@ class LiteratureReviewAgent(Agent):
                     params={
                         "select": "id,referenced_works",
                     },
-                    headers={
-                        "User-Agent": (
-                            "f3dasm-agent/1.0"
-                            " (mailto:f3dasm@brown.edu)"
-                        ),
-                    },
+                    headers=_oa_headers,
                     cache_dir=cache_dir,
                 )
                 ref_ids = work_resp.json().get(
@@ -835,12 +865,7 @@ class LiteratureReviewAgent(Agent):
                             ",open_access,primary_location"
                         ),
                     },
-                    headers={
-                        "User-Agent": (
-                            "f3dasm-agent/1.0"
-                            " (mailto:f3dasm@brown.edu)"
-                        ),
-                    },
+                    headers=_oa_headers,
                     cache_dir=cache_dir,
                 )
                 works = hydrate_resp.json().get("results", [])
