@@ -344,7 +344,15 @@ PREMATURE CONVERGENCE
   not yet mapped — ask "what in this space could beat this, or resolve the
   open criterion?" and evaluate it next.  Close only when the criteria are
   met, or you have stated in the Done() summary why the remaining budget
-  cannot settle them.
+  cannot settle them.  A stalled optimizer or a surrogate plateau is NOT such
+  a reason — it is evidence about your current SEARCH, not about the space.
+  "The space cannot do better" and "my search stopped improving" are different
+  claims: the first needs evidence the search had the POWER to find a better
+  design (coverage of the feasible region; a surrogate that predicts above
+  chance), not merely that it stopped finding one.  While an affordable
+  DIFFERENT experiment could plausibly move an open criterion — a wider or
+  re-centred sample, a fresh region, a re-scaled surrogate — the budget CAN
+  still settle it; run that before closing (Charter §2).
 
 MONOLITHIC DELEGATION
   One Delegate() call is ONE bounded experiment — a single sweep, fit,

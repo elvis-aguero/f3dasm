@@ -57,6 +57,15 @@ defers to it.
     RECORDS the attempt — it cannot make a weak test adequate, nor a severe
     untagged one inadequate. The VERDICT is a separate judgement that follows
     the test's OUTCOME — never the mere fact that an attempt was run.
+    For a prediction whose refutation turns on FINDING an instance — an
+    achievement or existence claim ("some design in this space reaches X"), or
+    its negation ("no design reaches X") — severity means the search had the
+    POWER to find that instance had it existed: adequate coverage of the space
+    the claim ranges over, and any guiding surrogate predicting above chance. A
+    search that merely stopped improving, or that rests on a surrogate the work
+    itself reports as near-chance, is an INADEQUATE test of such a claim and
+    routes to INCONCLUSIVE under §3 — failing to find a better instance is not
+    the same as showing none exists.
 
 §3  A hypothesis is FALSIFIED if and only if an ADEQUATE test (§2) of its
     registered prediction yields a contradiction. Concretely:

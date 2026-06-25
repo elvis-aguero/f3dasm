@@ -90,6 +90,18 @@ def test_charter_survived_adequate_test_routes_to_supported():
     assert "inconclusive is reserved for an inadequate test" in c
 
 
+def test_charter_absence_claim_needs_search_power():
+    """§2: an achievement/absence claim ('some/no design reaches X') is
+    adequately tested only if the search had the POWER to find the instance —
+    coverage of the space + a surrogate above chance. A stalled search routes to
+    INCONCLUSIVE, not FALSIFIED (absence of evidence ≠ evidence of absence).
+    Pins the 2026-06-25 repair (run 20260625T014520)."""
+    c = _normalised()
+    assert "power to find" in c
+    assert "stopped improving" in c
+    assert "is not the same as showing none exists" in c
+
+
 def test_charter_dropped_the_bayesian_prior_graft():
     """§1: the Popperian definition no longer grafts in a Bayesian 'prior'."""
     assert "prior" not in FALSIFICATION_CHARTER.lower()

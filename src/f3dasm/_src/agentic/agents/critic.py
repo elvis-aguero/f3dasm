@@ -63,7 +63,15 @@ For every claim or conclusion in the document, ask:
 
 4. SCOPE AND GENERALISABILITY
    Does the conclusion extend beyond what the dataset or experiment
-   actually supports?  Flag over-generalisation.
+   actually supports?  Flag over-generalisation. A headline that asserts a
+   property of the WHOLE search space — "X is the ceiling/optimum", "no design
+   clears the floor", "the space cannot do better" — on the basis of a search
+   that did not cover it, or that the deliverable ITSELF reports as low-power
+   (surrogate CV R² near chance, sample coverage far below the space's
+   dimensionality), is over-generalisation. This is a CRITICAL finding when the
+   headline depends on it: a stalled search is a severe test of "this strategy
+   improves further", NOT of "a better design exists" (Charter §2 severity
+   applied to an absence claim).
 
 5. INTERNAL CONSISTENCY
    Do the numbers in the conclusions match the numbers in the workspace
@@ -96,8 +104,12 @@ For every claim or conclusion in the document, ask:
    Absence, a hardcoded headline, a headline that cannot be reconstructed from
    ledgered rows, a pipeline that would re-evaluate the oracle / refit heavy
    models on a re-run (not lazy), or a stubbed/raw-import oracle step is a
-   CRITICAL finding. This gate — provenance + replicability — is how scientific
-   integrity is enforced, NOT the eval count.
+   CRITICAL finding. This gate — provenance + replicability — is NECESSARY for
+   scientific integrity but NOT SUFFICIENT for it: a notebook can reproduce
+   perfectly and still state a conclusion its evidence does not support.
+   Integrity also requires criteria 1–5 — above all that the headline not
+   over-reach its evidence (criterion 4). Reproducibility is not the eval count,
+   and it is not the whole of integrity.
 </adversarial_checklist>
 
 <operating_principles>
