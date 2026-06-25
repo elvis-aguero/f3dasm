@@ -441,6 +441,13 @@ def test_wall_per_delegation_and_footer(tmp_path):
     assert "D001" in footer
     assert "per-eval wall-time" in footer
     assert "ledger total so far: 3" in footer  # 2 + 1 rows
+    # No wall budget passed → no budget line.
+    assert "wall budget remaining" not in footer
+
+    # With a wall budget, the remaining line appears (telemetry, not a stop).
+    footer_b = summary.delegation_footer(
+        "D001", wall_remaining_s=1800.0, wall_budget_s=3600.0)
+    assert "wall budget remaining" in footer_b
 
     # A delegation that wrote no rows gets no footer (not a fabricated zero).
     assert summary.delegation_footer("D999") is None

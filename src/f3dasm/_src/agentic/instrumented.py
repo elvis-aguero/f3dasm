@@ -708,14 +708,21 @@ class RunStateSummary:
 
     # ------------------------------------------------------------------
 
-    def delegation_footer(self, delegation_id: str) -> str | None:
+    def delegation_footer(
+        self,
+        delegation_id: str,
+        *,
+        wall_remaining_s: float | None = None,
+        wall_budget_s: float | None = None,
+    ) -> str | None:
         """Compact KPI footer for ONE delegation's ledgered rows, or None.
 
         Auto-appended to the delegation report the strategizer receives, so the
         measured per-eval sim cost travels with every result — no on-demand
-        lookup. Plain measurements only; the interpretation is the
-        strategizer's. Returns None when this delegation wrote no timed rows
-        (e.g. a lookup-direct or off-ledger delegation).
+        lookup. When the wall budget is known, also reports time remaining so the
+        median above is actionable (≈ remaining / median = sims still affordable).
+        Plain measurements only; the interpretation is the strategizer's. Returns
+        None when this delegation wrote no timed rows (lookup-direct/off-ledger).
         """
         kpi = self.wall_per_delegation.get(str(delegation_id))
         if not kpi or not kpi.get("n"):
@@ -729,16 +736,22 @@ class RunStateSummary:
                 return f"{s / 60:.1f}min"
             return f"{s / 3600:.2f}h"
 
-        return (
-            "\n\n---\n"
+        lines = [
+            "\n\n---",
             f"LEDGER KPIs ({delegation_id}, measured from the "
-            f"{kpi['n']} rows this delegation wrote):\n"
+            f"{kpi['n']} rows this delegation wrote):",
             f"  per-eval wall-time: median {_dur(kpi['median_ms'])} · "
-            f"max {_dur(kpi['max_ms'])}\n"
-            f"  total eval wall-time (this delegation): "
-            f"{_dur(kpi['total_ms'])}\n"
-            f"  ledger total so far: {self.n_rows} evaluations"
-        )
+            f"max {_dur(kpi['max_ms'])}",
+            f"  total eval wall-time (this delegation): {_dur(kpi['total_ms'])}",
+            f"  ledger total so far: {self.n_rows} evaluations",
+        ]
+        if wall_remaining_s is not None and wall_budget_s:
+            lines.append(
+                f"  wall budget remaining: "
+                f"{_dur(max(0.0, wall_remaining_s) * 1000)} of "
+                f"{_dur(wall_budget_s * 1000)}"
+            )
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------
 

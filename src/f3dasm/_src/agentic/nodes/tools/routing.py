@@ -830,7 +830,20 @@ def build_routing_tools(node) -> dict:
                         from ...instrumented import RunStateSummary
                         _summary = RunStateSummary.from_store(_store_dir)
                         if _summary is not None:
-                            _footer = _summary.delegation_footer(delegation_id)
+                            # Wall budget remaining (telemetry, not a hard stop):
+                            # makes the median above actionable. None when no
+                            # wall budget is set or the run hasn't started timing.
+                            _bs = getattr(node, "_budget_seconds", None)
+                            _rs = getattr(node, "_run_start", None)
+                            _rem = (
+                                _bs - (time.time() - _rs)
+                                if _bs and _rs else None
+                            )
+                            _footer = _summary.delegation_footer(
+                                delegation_id,
+                                wall_remaining_s=_rem,
+                                wall_budget_s=_bs,
+                            )
                             if _footer:
                                 text = text + _footer
                 except Exception:  # noqa: BLE001

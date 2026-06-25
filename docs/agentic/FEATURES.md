@@ -142,7 +142,9 @@ Format per feature: **what** (plain language) · **why** · **where** (files) ·
 ### Per-delegation ledger KPIs auto-appended to the report
 - **What:** when a delegation completes, a KPI footer is appended to the result
   the strategizer auto-receives (GetStatus/Confer/Done) — per-eval wall-time
-  (median, max), this delegation's total eval wall-time, and the ledger total.
+  (median, max), this delegation's total eval wall-time, the ledger total, and —
+  when a wall budget is set — the time remaining (telemetry, not a hard stop), so
+  the median is actionable (≈ remaining / median = sims still affordable).
   Measured from the rows the delegation actually wrote, so budget planning runs
   on observed sim cost instead of an a priori per-sim estimate. Auto-delivered,
   not on-demand. Plain measurements only — interpretation is the strategizer's.
