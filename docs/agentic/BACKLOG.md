@@ -591,3 +591,74 @@ constraint to the critic (it is the epistemic-contract owner's decision).
 the constraint or what counts as feasible generically without more config; the
 critic already reads the deliverable's stated objective, so it is the better
 place to judge feasibility-of-headline. See `6494489b` and `agents/critic.py`.
+
+## 19. Scientific adequacy is enforced as vibes while reproduction is enforced hard — §4
+
+**Status: partially addressed (`8ae9a402`, `93e6f0f2`); the load-bearing question
+is OPEN and empirical.** Diagnosis from run `20260625T014520` (supercompressible
+14D). Numbers (faithful): 257 evals, 47 coilable (~18% feasible), exactly **1**
+above the Bessa baseline (66.04 vs 65.3, a 1.1% edge), **0** above the +15% floor
+(75.1). Closed voluntarily at 3 h 36 m wall (not watchdog-killed). The deliverable
+declared "66.04 … represents the effective performance ceiling in this design
+space" (H6 cell) and H4 FALSIFIED.
+
+**The failure (established):** a synthesis-level over-generalisation. The run
+converted "my underpowered search did not clear the floor" into "the 14D space
+cannot." Its OWN deliverable documents the search as weak — ml cell: "CV R² ≈ 0.51
+on 27 coilable points"; doe cell cites Loeppky 2009 "≥10×d" (=140) then uses 50;
+D005 retrospective: GP length-scale pinned at bound 1000, "poorly tuned." The BO's
+feasible hit-rate (3/37 ≈ 8%) was *worse* than the LHS (18%). The whole campaign
+was pre-committed to a narrow box (`ratio_Ixx ∈ [5e-7,1.4e-6]`, `phase2_plan.md`)
+derived from a 1-D scaling formula **before** the first LHS returned — so 14D was
+never broadly explored; a physics-intuition ray was.
+
+**Mechanism (established by reading the code):**
+- The Charter's §2 severity rule IS present and IS applied — but only
+  **per-hypothesis**. H4's registered prediction was scoped to "this search finds
+  ≥75.1," so FALSIFIED is charter-legal. The over-reach lives in the **synthesised
+  prose**, which no registered hypothesis covers.
+- The live `verdict_validator.py` shares ONLY the Charter (not the critic's
+  checklist) and judges ONE hypothesis verdict at a time — it is **structurally
+  blind to the synthesis**.
+- Both critic calls (`call_001` REVISE, `call_002` PASS) spent 100% on
+  reproduction mechanics (composable BO, lazy guard, IN_PROGRESS jobs); neither
+  engaged criteria 2/3/4 against the headline. The critic prompt’s criterion 6 was
+  marked "binding" and its prose equated "scientific integrity" with "provenance +
+  replicability", steering attention there. The gate proved the notebook
+  *reproduces*, never that the science was *sound* (CLAUDE.md §4.5).
+- Budget cost-prior: planned ~72 sims for 14D on an unverified ~600 s/sim
+  assumption; measured median was 16.4 s (36.5x off), never recalibrated.
+
+**Done this session (general principles, not patches — each passes the parsimony
+test):**
+- `8ae9a402` — Charter §2 extended so an achievement/absence claim ("some/no
+  design reaches X") is adequately tested only if the search had the POWER to find
+  the instance (coverage + a surrogate above chance); a stalled search →
+  INCONCLUSIVE. Lives in the Charter, so the gate critic AND the live validator
+  inherit it (the validator can now flag a premature FALSIFIED **on the fly at
+  HypothesisUpdate**). Critic criterion 4 made CRITICAL-eligible for whole-space
+  headlines; criterion-6 "integrity = reproduction" sentence corrected to
+  "necessary but not sufficient." Strategizer PREMATURE CONVERGENCE: a stalled
+  optimizer/plateau is NOT a valid "budget can't settle it" reason.
+- `93e6f0f2` — per-delegation wall-time KPIs auto-appended to the report (attacks
+  the cost-prior; interpretation-free to avoid overfitting).
+
+**OPEN — the empirical question these edits do NOT answer.** Whether the failure
+is *scaffold* (the harness graded reproduction, so the model optimized it) or
+*model disposition* (commercial LLMs fine-tuned to terminate with a confident
+answer, antagonistic to staying INCONCLUSIVE) is **unresolved and untested**. The
+edits are an intervention, not a proven fix. Decisive test (one run): re-run this
+study with `8ae9a402`+`93e6f0f2` live — if the agent stays INCONCLUSIVE / keeps
+exploring, or the validator/critic flags the ceiling claim → scaffold; if it still
+manufactures a confident ceiling → disposition. Do NOT record these edits as
+"fixed" until that run exists. Note in favour of scaffold (not proof): the same
+agent marked H5 INCONCLUSIVE correctly, so the capability is present.
+
+**OPEN — structural gap (§4, user-owned).** The synthesis-level over-claim is
+reachable only by the critic (criterion 4); the validator cannot see it because it
+judges one hypothesis verdict at a time. Widening the validator's scope to the
+synthesised headline — so it can catch this on the fly rather than at Done() — is
+an architectural change the user owns. Related: #18 (critic blind to
+infeasible-extremum headlines) and #17 (budget-severity model) are the same class
+— the critic/validator scrutinise mechanics and atomic verdicts, not the headline
+as a communicated scientific claim.
