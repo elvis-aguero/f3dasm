@@ -139,6 +139,17 @@ Format per feature: **what** (plain language) · **why** · **where** (files) ·
 - **Where:** `nodes/tools/routing.py`, `watchdog_cleanup.py` `delegation_rss`.
 - **Status:** done.
 
+### Per-delegation ledger KPIs auto-appended to the report
+- **What:** when a delegation completes, a KPI footer is appended to the result
+  the strategizer auto-receives (GetStatus/Confer/Done) — per-eval wall-time
+  (median, max), this delegation's total eval wall-time, and the ledger total.
+  Measured from the rows the delegation actually wrote, so budget planning runs
+  on observed sim cost instead of an a priori per-sim estimate. Auto-delivered,
+  not on-demand. Plain measurements only — interpretation is the strategizer's.
+- **Where:** `instrumented.py` `RunStateSummary.{wall_per_delegation,
+  delegation_footer}`; appended in `nodes/tools/routing.py`.
+- **Status:** done.
+
 ## E. Runtime safety
 
 ### Wall-clock watchdog + recursive reap (#11/#14)

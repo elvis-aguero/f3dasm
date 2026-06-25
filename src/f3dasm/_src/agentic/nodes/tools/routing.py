@@ -820,6 +820,21 @@ def build_routing_tools(node) -> dict:
                         _enforce_ledger,
                     )
                 )
+                # Auto-append measured per-eval KPIs for THIS delegation's rows
+                # (median/max wall-time, ledger total) so the strategizer plans
+                # its budget on observed sim cost, not an a priori estimate.
+                # Best-effort: a KPI footer must never fail a delegation. Reuses
+                # the RunStateSummary the reconcile above already cached.
+                try:
+                    if _store_dir is not None:
+                        from ...instrumented import RunStateSummary
+                        _summary = RunStateSummary.from_store(_store_dir)
+                        if _summary is not None:
+                            _footer = _summary.delegation_footer(delegation_id)
+                            if _footer:
+                                text = text + _footer
+                except Exception:  # noqa: BLE001
+                    pass
                 with node._registry_lock:
                     _detached = (
                         node._registry[delegation_id].get("status")

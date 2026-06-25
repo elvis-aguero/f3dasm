@@ -692,6 +692,7 @@ class RunStateSummary:
         n_per_fidelity: dict | None,
         output_stats: dict,
         mean_eval_wall_ms: float | None = None,
+        wall_per_delegation: dict | None = None,
     ) -> None:
         self.n_rows = n_rows
         self.n_per_delegation = n_per_delegation
@@ -699,6 +700,45 @@ class RunStateSummary:
         self.n_per_fidelity = n_per_fidelity
         self.output_stats = output_stats
         self.mean_eval_wall_ms = mean_eval_wall_ms
+        # {delegation_id: {"n", "median_ms", "max_ms", "total_ms"}} — per-eval
+        # wall cost grouped by the delegation that wrote the rows. Lets a
+        # finished delegation report its OWN measured sim cost, so budget
+        # planning runs on observed reality, not an a priori per-sim estimate.
+        self.wall_per_delegation = wall_per_delegation or {}
+
+    # ------------------------------------------------------------------
+
+    def delegation_footer(self, delegation_id: str) -> str | None:
+        """Compact KPI footer for ONE delegation's ledgered rows, or None.
+
+        Auto-appended to the delegation report the strategizer receives, so the
+        measured per-eval sim cost travels with every result — no on-demand
+        lookup. Plain measurements only; the interpretation is the
+        strategizer's. Returns None when this delegation wrote no timed rows
+        (e.g. a lookup-direct or off-ledger delegation).
+        """
+        kpi = self.wall_per_delegation.get(str(delegation_id))
+        if not kpi or not kpi.get("n"):
+            return None
+
+        def _dur(ms: float) -> str:
+            s = ms / 1000.0
+            if s < 90:
+                return f"{s:.1f}s"
+            if s < 5400:
+                return f"{s / 60:.1f}min"
+            return f"{s / 3600:.2f}h"
+
+        return (
+            "\n\n---\n"
+            f"LEDGER KPIs ({delegation_id}, measured from the "
+            f"{kpi['n']} rows this delegation wrote):\n"
+            f"  per-eval wall-time: median {_dur(kpi['median_ms'])} · "
+            f"max {_dur(kpi['max_ms'])}\n"
+            f"  total eval wall-time (this delegation): "
+            f"{_dur(kpi['total_ms'])}\n"
+            f"  ledger total so far: {self.n_rows} evaluations"
+        )
 
     # ------------------------------------------------------------------
 
@@ -798,6 +838,7 @@ class RunStateSummary:
         # precomputed pool (not real evals). Any per-group breakdown is a
         # groupby on this same column downstream — none is computed here.
         mean_eval_wall_ms: float | None = None
+        wall_per_delegation: dict = {}
         if "_wall_ms" in df_out.columns:
             import pandas as _pd
             wall = _pd.to_numeric(df_out["_wall_ms"], errors="coerce")
@@ -806,6 +847,19 @@ class RunStateSummary:
             wall = wall.dropna()
             if not wall.empty:
                 mean_eval_wall_ms = float(wall.mean())
+            # Per-delegation wall breakdown — same column, grouped by the
+            # delegation that wrote each row (drops the precomputed pool above).
+            if "_delegation_id" in df_out.columns:
+                _gid = df_out["_delegation_id"].reindex(wall.index)
+                for _did, _grp in wall.groupby(_gid):
+                    if _grp.empty:
+                        continue
+                    wall_per_delegation[str(_did)] = {
+                        "n": int(_grp.size),
+                        "median_ms": float(_grp.median()),
+                        "max_ms": float(_grp.max()),
+                        "total_ms": float(_grp.sum()),
+                    }
 
         summary = cls(
             n_rows=n_rows,
@@ -814,6 +868,7 @@ class RunStateSummary:
             n_per_fidelity=n_per_fidelity,
             output_stats=output_stats,
             mean_eval_wall_ms=mean_eval_wall_ms,
+            wall_per_delegation=wall_per_delegation,
         )
         with _RSS_CACHE_LOCK:
             _RSS_CACHE[key] = (mtime, summary)

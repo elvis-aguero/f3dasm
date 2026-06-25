@@ -398,6 +398,54 @@ def test_store_rows_accumulate_across_generator_instances(tmp_path):
     assert summary.n_per_delegation.get("D001", 0) == 3
 
 
+def test_wall_per_delegation_and_footer(tmp_path):
+    """from_store groups _wall_ms by delegation; delegation_footer renders it.
+
+    Auto-appended to each delegation report so the strategizer plans its budget
+    on measured sim cost (the 36.5x cost-prior miss in run 20260625T014520).
+    """
+    from f3dasm._src.agentic.instrumented import (
+        InstrumentedDataGenerator,
+        RunStateSummary,
+    )
+
+    store_dir = tmp_path / "store"
+    store_dir.mkdir()
+
+    def make_gen(did):
+        @datagenerator(output_names=["f"])
+        def inner(**kw):
+            return float(sum(kw.values()))
+
+        return InstrumentedDataGenerator(
+            inner, store_dir, did, source="s", flush_every=1,
+        )
+
+    make_gen("D001").execute(_make_sample(0.1))
+    make_gen("D001").execute(_make_sample(0.2))
+    make_gen("D002").execute(_make_sample(0.3))
+
+    summary = RunStateSummary.from_store(store_dir)
+    assert summary is not None
+
+    wpd = summary.wall_per_delegation
+    assert wpd["D001"]["n"] == 2
+    assert wpd["D002"]["n"] == 1
+    # measured wall-times are real positive floats; max ≥ median; total ≈ sum
+    d1 = wpd["D001"]
+    assert d1["max_ms"] >= d1["median_ms"] > 0
+    assert d1["total_ms"] >= d1["max_ms"]
+
+    footer = summary.delegation_footer("D001")
+    assert footer is not None
+    assert "D001" in footer
+    assert "per-eval wall-time" in footer
+    assert "ledger total so far: 3" in footer  # 2 + 1 rows
+
+    # A delegation that wrote no rows gets no footer (not a fabricated zero).
+    assert summary.delegation_footer("D999") is None
+
+
 def test_flush_merges_into_typed_canonical_domain(tmp_path):
     """Regression (run 20260624T021359): flushing a batch into a canonical store
     whose domain has a TYPED (add_int) parameter must not raise. The batch domain
