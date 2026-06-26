@@ -2356,13 +2356,15 @@ def build_routing_tools(node) -> dict:
         return nb, nb_path
 
     def _emit_notebook(by_name: dict, nb, nb_path):
-        """Re-emit cells in canonical order (named cells first, then any extras
-        — e.g. a runtime provenance stamp — preserved at the end)."""
+        """Re-emit cells: canonical pillars first, then any CUSTOM named cells
+        (a confirmed non-pillar section, in insertion order), then any unnamed
+        extras (e.g. a runtime provenance stamp) preserved at the end."""
         import nbformat
         ordered = [by_name[k] for k in _NB_ORDER if k in by_name]
+        custom = [by_name[k] for k in by_name if k not in _NB_ORDER]
         extras = [c for c in nb.cells
                   if (c.get("metadata", {}) or {}).get("name") not in by_name]
-        nb.cells = ordered + extras
+        nb.cells = ordered + custom + extras
         nbformat.write(nb, str(nb_path))
 
     def _by_name(nb) -> dict:
@@ -2419,8 +2421,11 @@ def build_routing_tools(node) -> dict:
 
     def AddPipelineCell(phase: str, why: str, code: str) -> str:
         """CREATE one f3dasm-pillar cell in pipeline.ipynb, preceded by its
-        WHY-explainer. `phase` MUST be one of: doe, data_generation, ml,
-        optimization, analysis. `why` is the rationale markdown (cite the
+        WHY-explainer. `phase` is usually one of: doe, data_generation, ml,
+        optimization, analysis — these are the standard pillars. A non-standard
+        phase is allowed (a custom design/analysis section); you are asked to
+        confirm it once, then it is appended after the standard pillars. `why`
+        is the rationale markdown (cite the
         literature; if the pillar was not run, say 'NOT executed (budget)' and
         why). `code` is the cell's Python. Cells are kept in canonical pillar
         order regardless of call order. CREATE-ONLY: if the phase already exists
@@ -2434,9 +2439,25 @@ def build_routing_tools(node) -> dict:
         if node._study_dir is None:
             return "ERROR: study_dir not available."
         phase = (phase or "").strip()
+        if not phase:
+            return "ERROR: phase is required."
+        # The five pillars are the USUAL shape, not a fence. A custom design or
+        # analysis can warrant its own section, so a non-pillar phase is a two-
+        # shot nudge (confirm by re-calling), not a block — the deliverable's
+        # structure must not constrain what science can be expressed.
         if phase not in _PILLARS:
-            return (f"ERROR: phase must be one of {_PILLARS}, got {phase!r}. "
-                    "These are f3dasm's four pillars + analysis.")
+            if not hasattr(node, "_custom_phase_ack"):
+                node._custom_phase_ack = set()
+            if phase not in node._custom_phase_ack:
+                node._custom_phase_ack.add(phase)
+                return (prefix + f"[CONFIRM] '{phase}' is not one of the usual "
+                        f"f3dasm pillars {_PILLARS}. The deliverable usually "
+                        "follows them, but a different design or analysis can "
+                        f"warrant a custom section. If you intend a custom "
+                        f"'{phase}' cell, re-call AddPipelineCell with the same "
+                        "phase to confirm — it will be appended after the "
+                        "standard pillars.")
+            # confirmed → fall through and add the custom cell
         if not (why or "").strip():
             return ("ERROR: `why` is required — every pillar cell needs its "
                     "rationale (the WHY-explainer the writeup always lacked).")

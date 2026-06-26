@@ -99,11 +99,27 @@ def test_add_pillar_is_create_only_on_recall(tmp_path):
     assert len(does) == 1 and "v = 1" in does[0].source  # unchanged
 
 
-def test_add_pillar_rejects_unknown_phase(tmp_path):
+def test_unknown_phase_is_two_shot_nudge_then_custom_cell(tmp_path):
+    """A non-pillar phase is NUDGED once (not blocked), then accepted on a
+    re-call and appended after the standard pillars — the deliverable's shape
+    must not constrain what science can be expressed."""
     n = _node(tmp_path)
-    out = n.adapter.closure_tools["AddPipelineCell"]("surrogate", "why", "code")
-    assert out.startswith("ERROR:") and "phase must be one of" in out
+    tools = n.adapter.closure_tools
+    # First call → confirm nudge, NOT an ERROR, notebook not yet written.
+    out1 = tools["AddPipelineCell"]("ellipse_sweep", "explore ellipse phase",
+                                    "data = ...")
+    assert out1.startswith("[CONFIRM]") and not out1.startswith("ERROR:")
     assert not (tmp_path / "pipeline.ipynb").exists()
+    # A standard pillar, then the confirmed custom section.
+    tools["AddPipelineCell"]("doe", "LHS", "domain = ...")
+    out2 = tools["AddPipelineCell"]("ellipse_sweep", "explore ellipse phase",
+                                    "data = ...")
+    assert out2.startswith("ERROR:") is False
+    nb = _read(tmp_path)
+    names = [c.metadata.get("name") for c in nb.cells if c.metadata.get("name")]
+    # standard pillar first, custom section appended after (and it survived).
+    assert "doe" in names and "ellipse_sweep" in names
+    assert names.index("doe") < names.index("ellipse_sweep")
 
 
 def test_add_pillar_requires_why_and_code(tmp_path):
