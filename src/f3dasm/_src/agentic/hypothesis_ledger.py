@@ -130,6 +130,9 @@ class HypothesisLedger:
         self._notes_dir = Path(notes_dir)
         self._hypotheses_path = self._notes_dir / "hypotheses.json"
         self._lock = threading.Lock()
+        # Normalized statements that have been nudged once past the open-count
+        # ceiling (the two-shot confirm for MAX_OPEN). Transient run state.
+        self._overcap_ack: set[str] = set()
 
     # ------------------------------------------------------------------
     # Hypothesis operations
@@ -202,12 +205,23 @@ class HypothesisLedger:
                 if h["status_log"]
                 and h["status_log"][-1]["status"] == "OPEN"
             )
+            # Open-count ceiling: a NUDGE, not a hard block (the ceiling was
+            # closure discipline, not a safety invariant — and exploring several
+            # designs at once legitimately wants more than MAX_OPEN open). Two-
+            # shot confirm: nudge once, register on an unchanged re-submit.
             if open_count >= MAX_OPEN:
-                return (
-                    f"ERROR: {MAX_OPEN} OPEN hypotheses already "
-                    "exist. Close one (SUPPORTED, FALSIFIED, or "
-                    "INCONCLUSIVE) before proposing a new one."
-                )
+                if norm_new not in self._overcap_ack:
+                    self._overcap_ack.add(norm_new)
+                    return (
+                        f"[CONFIRM] You already have {open_count} OPEN "
+                        f"hypotheses (usual working ceiling {MAX_OPEN}). The "
+                        "usual practice is to close one (SUPPORTED / FALSIFIED "
+                        "/ INCONCLUSIVE) before opening another. But if you DO "
+                        "intend to track several at once — e.g. one per design "
+                        "you are exploring — re-submit this SAME proposal "
+                        "unchanged to confirm and it will be registered."
+                    )
+                self._overcap_ack.discard(norm_new)  # confirmed → proceed
             h_id = f"H{len(data) + 1}"
             ts = _now_iso()
             entry = HypothesisEntry(

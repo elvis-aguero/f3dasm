@@ -424,7 +424,9 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
             statement: ONE falsifiable claim (no compound claims).
             falsification_criterion: what observation would kill it.
             prediction: the measurable outcome you expect.
-            prior: plausibility in (0, 1). Max 3 OPEN at any time."""
+            prior: plausibility in (0, 1). Past 3 OPEN you are asked to
+            confirm (re-submit the same proposal) rather than blocked —
+            tracking several at once is fine, e.g. one per design."""
             if node._ledger is None:
                 return (
                     "ERROR: hypothesis ledger not available in this run."

@@ -104,15 +104,22 @@ def test_propose_nudges_numbered_subclaims(tmp_path):
     assert "[NUDGE]" in r
 
 
-def test_propose_max_three_open(tmp_path):
+def test_propose_max_open_is_two_shot_nudge_not_block(tmp_path):
+    """Past the open ceiling, a new proposal is NUDGED (not blocked): the agent
+    re-submits the SAME proposal to confirm and it registers. Exploring several
+    designs at once legitimately wants more than MAX_OPEN open."""
     ledger = fresh_ledger(tmp_path)
     for i in range(3):
         assert propose_ok(
             ledger, statement=f"Claim {i} below threshold 1.{i}"
         ).startswith("H")
-    assert propose_ok(
-        ledger, statement="Fourth claim below 9.9"
-    ).startswith("ERROR:")
+    # First over-cap attempt → confirm nudge, NOT an ERROR, NOT created.
+    r1 = propose_ok(ledger, statement="Fourth claim below 9.9")
+    assert r1.startswith("[CONFIRM]")
+    assert not r1.startswith("ERROR:")
+    # Re-submitting the SAME proposal confirms and registers it.
+    r2 = propose_ok(ledger, statement="Fourth claim below 9.9")
+    assert r2.startswith("H")
 
 
 # ------------------------- update -------------------------
@@ -275,5 +282,7 @@ def test_concurrent_propose_is_thread_safe(tmp_path):
     for t in threads:
         t.join()
 
-    open_count = sum(1 for r in results if not r.startswith("ERROR:"))
-    assert open_count <= 3
+    # At most MAX_OPEN are actually CREATED without an explicit confirm; the
+    # rest get a "[CONFIRM]" nudge (not a silent create). Count real creations.
+    created = sum(1 for r in results if r.startswith("H"))
+    assert created <= 3
