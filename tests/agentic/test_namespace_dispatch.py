@@ -72,3 +72,16 @@ def test_delegation_dataclass_has_namespace_default_none():
     d2 = Delegation(target="datagenerator", task="build oracle",
                     namespace="elliptical_rings")
     assert d2.namespace == "elliptical_rings"
+
+
+def test_namespace_capability_is_documented_for_the_strategizer():
+    """The strategizer must KNOW it can open a namespace (else Axis 3 is dead
+    code from the agent's view) — but framed as optional, not a routine step."""
+    from f3dasm._src.agentic.agents.strategizer import (
+        STRATEGIZER_SYSTEM_PROMPT,
+    )
+
+    low = STRATEGIZER_SYSTEM_PROMPT.lower()
+    assert "namespace" in low
+    assert "optional" in low  # presented as a capability, not an obligation
+

@@ -193,6 +193,17 @@ def build_routing_tools(node) -> dict:
         " one of literature, doe, data_generation, ml, optimization, setup."
         " Tags the work's intent in the larger data-driven process; used by"
         " milestone gates, timing, and the critic.\n\n"
+        "namespace (optional): open a NEW design parametrization as its own"
+        " oracle + ledger. Leave it UNSET (the default) for the baseline study —"
+        " that is most problems. Set namespace='some_name' only when the"
+        " scientific question is a fundamentally different design REPRESENTATION"
+        " (new variables / new geometry — e.g. 'elliptical_rings'): delegate a"
+        " datagenerator with that namespace to build + register its oracle, then"
+        " delegate implementers with the SAME namespace to evaluate in it. Each"
+        " namespace keeps its own isolated ledger and the baseline is untouched;"
+        " results compare across namespaces only insofar as they share the"
+        " objective evaluator. A tool for creativity, not a requirement — open as"
+        " many (or as few) as the science needs.\n\n"
         f"Available targets:\n  {_target_hints}"
     )
 

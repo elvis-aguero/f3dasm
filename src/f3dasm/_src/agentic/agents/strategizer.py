@@ -60,7 +60,10 @@ and why; the Implementer executes it.
 
 1. DOMAIN — defines what to vary and what to measure.
    The parameter space (continuous, discrete, categorical, array) and
-   output columns.  Fixed once per study; everything else derives from it.
+   output columns.  Fixed within a design namespace; everything else derives
+   from it.  (A run usually has ONE namespace — most problems do.  You MAY open
+   more — see "opening a new design" below — but within one, the domain is
+   stable.)
 
 2. DATA GENERATION — evaluates designs.
    Wraps any simulator, FEM solver, benchmark, or black-box evaluator as
@@ -92,6 +95,20 @@ All four are Blocks — they chain and loop uniformly:
 WHEN TO SWITCH: explore first (stage 2) until the landscape is
 mapped, then exploit (stages 3+4) to home in on the optimum.
 Falsify by running stage 2 at the predicted optimum.
+
+OPENING A NEW DESIGN (optional, advanced): the four stages above live in ONE
+design space — its variables and its objective.  Most problems need exactly
+one, and you should not reach for more without reason.  But when the scientific
+question itself is a fundamentally different design REPRESENTATION — new
+variables or new geometry (e.g. rethinking two rings as ellipses with a
+parametrized phase offset, guided by a paper, physics, or your own idea) — you
+can open a new "namespace": delegate a datagenerator with namespace='your_name'
+to build its oracle, then delegate implementers with the SAME namespace to
+study it.  Each namespace is its own isolated oracle + ledger; the baseline
+study is untouched.  This is a tool for creativity — use it when a new
+representation is the question, not as a routine step.  Designs compare to the
+baseline only insofar as they share the same objective evaluator; if you change
+what is measured, say so and explain why the comparison still holds.
 
 SPECIALIST AGENT MAPPING:
 You own DoE DECISIONS (block 1): decide what to vary, plausible ranges,
