@@ -94,6 +94,76 @@ def test_register_then_get_evaluator_resolves(tmp_path, monkeypatch):
     assert out._output_data["_delegation_id"] == "D002"  # metered to caller
 
 
+def test_register_namespace_writes_oracles_block_not_default(tmp_path):
+    """Registering for a namespace writes oracles[ns] and creates its own
+    isolated store + sentinel — the canonical default oracle is untouched."""
+    from f3dasm._src._io import PROTECTED_STORE_SENTINEL
+
+    study_dir = tmp_path / "study"
+    study_dir.mkdir()
+    store_dir = tmp_path / "store"
+    store_dir.mkdir()
+    debug_dir, _ = _make_delegation_dir(tmp_path)
+    _write_run_config(debug_dir, store_dir, study_dir)
+    cfg_path = debug_dir / "run_config.json"
+
+    gen_abs = study_dir / "ell_gen.py"
+    gen_abs.write_text("def g(**k):\n    return float(sum(k.values()))\n")
+
+    ep = register_evaluator_entrypoint(
+        cfg_path, gen_abs, "g", output_names=["f"], namespace="ell"
+    )
+
+    cfg = json.loads(cfg_path.read_text())
+    # canonical default untouched
+    assert cfg["evaluator_entrypoint"] is None
+    # namespace block written
+    block = cfg["oracles"]["ell"]
+    assert block["evaluator_entrypoint"] == ep
+    assert block["evaluator_output_names"] == ["f"]
+    assert block["evaluator_lookup"] is None
+    # isolated, protected store created for the namespace
+    ns_store = Path(block["store_dir"])
+    assert ns_store.exists()
+    assert (ns_store / PROTECTED_STORE_SENTINEL).exists()
+    assert ns_store != store_dir
+
+
+def test_register_namespace_then_get_evaluator_resolves(tmp_path, monkeypatch):
+    """register(namespace) → F3DASM_NAMESPACE worker → get_evaluator() resolves
+    the namespace oracle and writes its own ledger."""
+    from f3dasm._src.agentic.instrumented import get_evaluator
+    from f3dasm._src.experimentdata import ExperimentData
+    from f3dasm._src.experimentsample import ExperimentSample, JobStatus
+
+    study_dir = tmp_path / "study"
+    study_dir.mkdir()
+    store_dir = tmp_path / "store"
+    store_dir.mkdir()
+    debug_dir, delegation_dir = _make_delegation_dir(tmp_path, "D004")
+    _write_run_config(debug_dir, store_dir, study_dir)
+    cfg_path = debug_dir / "run_config.json"
+
+    (study_dir / "ell_gen.py").write_text(
+        "def g(**k):\n    return float(sum(k.values()))\n")
+    register_evaluator_entrypoint(
+        cfg_path, study_dir / "ell_gen.py", "g",
+        output_names=["f"], namespace="ell")
+
+    monkeypatch.chdir(delegation_dir)
+    monkeypatch.setenv("F3DASM_NAMESPACE", "ell")
+    gen = get_evaluator()  # namespace from env
+    out = gen.execute(ExperimentSample(
+        _input_data={"a": 2.0, "b": 5.0}, _output_data={},
+        job_status=JobStatus.OPEN))
+    assert out._output_data["f"] == 7.0
+
+    block = json.loads(cfg_path.read_text())["oracles"]["ell"]
+    assert len(ExperimentData.from_file(project_dir=Path(block["store_dir"]))) == 1
+    # canonical default store stayed empty
+    assert not (store_dir / "output.csv").exists()
+
+
 def test_register_relative_path_kept(tmp_path):
     study_dir = tmp_path / "study"
     study_dir.mkdir()

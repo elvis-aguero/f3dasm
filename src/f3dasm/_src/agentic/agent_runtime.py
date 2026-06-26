@@ -139,15 +139,16 @@ def register_evaluator_entrypoint(
     generator_file: Path | str,
     attr: str,
     output_names: list | None = None,
+    namespace: str | None = None,
 ) -> str:
-    """Register an agent-authored DataGenerator as the canonical oracle.
+    """Register an agent-authored DataGenerator as an oracle.
 
     Atomically updates ``run_config.json`` so the next ``get_evaluator()``
     call (which re-reads the config on every invocation) resolves the
     authored generator with no manual config edit.  This is the runtime
     side of the datagenerator → oracle handoff: the agent writes the
     generator file (+ a registration manifest); the runtime points the
-    canonical entrypoint at it.
+    entrypoint at it.
 
     Parameters
     ----------
@@ -162,6 +163,13 @@ def register_evaluator_entrypoint(
         Name of the callable or ``DataGenerator`` subclass inside that file.
     output_names : list or None, optional
         Output column names — required when ``attr`` is a bare callable.
+    namespace : str or None, optional
+        The design namespace this oracle serves (Axis 3a). ``None`` (the
+        default) registers the canonical single-study oracle as before. A
+        non-``None`` namespace writes a ``run_config["oracles"][namespace]``
+        block with its OWN isolated, protected store — leaving the canonical
+        default oracle untouched, so opening a new design never disturbs the
+        baseline study.
 
     Returns
     -------
@@ -182,9 +190,27 @@ def register_evaluator_entrypoint(
         file_part = str(gen_path)
 
     entrypoint = f"{file_part}:{attr}"
-    config["evaluator_entrypoint"] = entrypoint
-    config["evaluator_output_names"] = output_names
-    config["evaluator_lookup"] = None  # entrypoint takes precedence
+
+    if namespace:
+        # Per-namespace oracle: its own isolated, protected store; the canonical
+        # default oracle/store is left untouched.
+        from .._io import PROTECTED_STORE_SENTINEL
+        base_store = Path(config["store_dir"])
+        ns_store = base_store / namespace
+        ns_store.mkdir(parents=True, exist_ok=True)
+        (ns_store / PROTECTED_STORE_SENTINEL).touch()
+        oracles = config.setdefault("oracles", {})
+        oracles[namespace] = {
+            "store_dir": str(ns_store),
+            "lock_path": str(ns_store / "experiment_data" / ".lock"),
+            "evaluator_entrypoint": entrypoint,
+            "evaluator_output_names": output_names,
+            "evaluator_lookup": None,  # entrypoint takes precedence
+        }
+    else:
+        config["evaluator_entrypoint"] = entrypoint
+        config["evaluator_output_names"] = output_names
+        config["evaluator_lookup"] = None  # entrypoint takes precedence
 
     tmp = run_config_path.with_suffix(".json.tmp")
     tmp.write_text(_json.dumps(config, indent=2), encoding="utf-8")
@@ -194,7 +220,9 @@ def register_evaluator_entrypoint(
     # what was actually registered, so the human-facing config never goes stale
     # (a stale config.yaml is what let an agent build a pipeline around the wrong
     # objective column). Surgical line edit — preserves comments/formatting.
-    if output_names is not None and config.get("study_dir"):
+    # Only for the CANONICAL oracle: config.yaml describes the baseline study, so
+    # a namespace's (possibly different) objective must not overwrite it.
+    if namespace is None and output_names is not None and config.get("study_dir"):
         try:
             _sync_config_output_names(
                 Path(config["study_dir"]) / "config.yaml", output_names)

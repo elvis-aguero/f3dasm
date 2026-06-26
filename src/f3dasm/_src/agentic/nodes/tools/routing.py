@@ -975,15 +975,22 @@ def build_routing_tools(node) -> dict:
                                     if _cand.exists():
                                         _gf_path = _cand
                                         break
+                            # A datagenerator delegation scoped to a design
+                            # namespace registers that namespace's oracle (its
+                            # own isolated store); the manifest may also name one.
+                            # The delegation's namespace is authoritative.
+                            _ns = namespace or _m.get("namespace") or None
                             _ep = register_evaluator_entrypoint(
                                 _run_dir / "debug" / "run_config.json",
                                 _gf_path,
                                 _m["attr"],
                                 output_names=_m.get("output_names"),
+                                namespace=_ns,
                             )
                             with node._notifications_lock:
+                                _ns_tag = f" ns={_ns}" if _ns else ""
                                 node._notifications.append(
-                                    f"[Evaluator registered: {_ep}]"
+                                    f"[Evaluator registered: {_ep}{_ns_tag}]"
                                 )
                 except Exception:  # noqa: BLE001
                     pass

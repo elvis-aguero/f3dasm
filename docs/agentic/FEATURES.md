@@ -98,6 +98,23 @@ Format per feature: **what** (plain language) · **why** · **where** (files) ·
 - **Where:** `instrumented.py`. **Tools (worker scratch):** `RunScratch`, `ReportEvals`.
 - **Status:** core.
 
+### Design namespaces — multiple oracles + ledgers per run (#20, Axis 3)
+- **What:** a run may carry more than one oracle, one per design parametrization the
+  agent invents (open design-space discovery). `get_evaluator(namespace=None)` resolves
+  `run_config["oracles"][namespace]` — its own oracle + its own isolated, protected
+  store; `Delegate(..., namespace="…")` scopes a worker to a namespace (injected as
+  `F3DASM_NAMESPACE`, so the agent's call site stays `get_evaluator()`); the
+  datagenerator registers a namespace oracle without disturbing the canonical default.
+  ADDITIVE: `namespace=None` is byte-for-byte the single-study path. Comparable-by-
+  construction (a new design reuses the fixed objective evaluator; see
+  `OPEN_DESIGN_SPACE_FRAMEWORK.md`).
+- **Where:** `instrumented.py` (`get_evaluator`, `_effective_oracle_config`),
+  `agent_runtime.py` (`register_evaluator_entrypoint(namespace=…)`), `backends/base.py`
+  + `backends/claude.py` (`set_namespace`/`F3DASM_NAMESPACE`), `graph_state.py`
+  (`Delegation.namespace`), `routing.py` (`Delegate` + registration handoff).
+- **Status:** plumbing complete (branch `exp/open-design-space`); gated on the 2D
+  experiment before the baseline study adopts it.
+
 ### Literature reviewer
 - **What:** a specialist agent that searches papers (arXiv / Semantic Scholar) and
   returns findings; degrades to lexical search without the heavy extras.
