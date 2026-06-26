@@ -93,6 +93,51 @@ def test_openalex_missing_key_warns(monkeypatch, caplog):
     )
 
 
+def test_arxiv_read_download_use_direct_url(monkeypatch, tmp_path):
+    """arxiv read/download must fetch the PDF by direct URL — not via the
+    removed Result.download_pdf() (the 'no attribute download_pdf' failure that
+    made the agent re-call DownloadPdf). No network: urlopen is stubbed."""
+    from f3dasm._src.agentic.backends.openai_compatible import (
+        _build_arxiv_closures,
+    )
+    tools = _build_arxiv_closures()
+    if not tools:
+        import pytest as _pt
+        _pt.skip("arxiv package not installed")
+
+    import urllib.request
+
+    captured = {}
+
+    class _Resp:
+        def __init__(self, d):
+            self._d = d
+
+        def read(self):
+            return self._d
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        return _Resp(b"%PDF-1.5 fake body")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+
+    # versioned id and an abs-URL form both normalise to the bare id
+    out = tools["arxiv_download_paper"]("2301.12345v2", str(tmp_path))
+    assert "Downloaded" in out
+    assert captured["url"] == "https://arxiv.org/pdf/2301.12345v2"
+    assert (tmp_path / "2301.12345v2.pdf").read_bytes() == b"%PDF-1.5 fake body"
+
+    tools["arxiv_download_paper"]("http://arxiv.org/abs/1706.03762", str(tmp_path))
+    assert captured["url"] == "https://arxiv.org/pdf/1706.03762"
+
+
 def test_arxiv_client_self_throttles():
     """arxiv.Client default delay is 3 s — no extra throttle needed."""
     import arxiv

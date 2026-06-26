@@ -210,20 +210,39 @@ def _build_arxiv_closures() -> dict:
         results = list(client.results(_arxiv.Search(query=f"cat:{category}", max_results=max_results)))
         return "\n".join(f"[{r.entry_id}] {r.title}" for r in results) or "(no results)"
 
+    def _fetch_pdf(paper_id: str, dest: str) -> None:
+        """Fetch an arXiv PDF straight from its canonical URL into ``dest``.
+
+        Direct-by-URL on purpose: the arxiv library's Result.download_pdf was
+        removed in recent versions ('Result' object has no attribute
+        'download_pdf'), and resolving the id through client.results() costs a
+        rate-limited round-trip we don't need — the id alone determines the PDF
+        URL. So there is no library call to fail and no reason for the agent to
+        re-try a different tool for the same result.
+        """
+        import urllib.request
+        pid = paper_id.strip().rstrip("/").split("/")[-1]  # tolerate abs URLs
+        url = f"https://arxiv.org/pdf/{pid}"
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "f3dasm-agent/1.0 (mailto:f3dasm@brown.edu)"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            data = r.read()
+        with open(dest, "wb") as f:
+            f.write(data)
+
     def download_paper(paper_id: str, output_dir: str = ".") -> str:
-        """Download a paper PDF from arxiv by its ID."""
-        client = _arxiv.Client()
-        paper = next(client.results(_arxiv.Search(id_list=[paper_id])))
-        path = paper.download_pdf(dirpath=output_dir)
-        return f"Downloaded: {path}"
+        """Download a paper PDF from arxiv by its ID (direct URL)."""
+        pid = paper_id.strip().rstrip("/").split("/")[-1]
+        dest = str(Path(output_dir) / f"{pid}.pdf")
+        _fetch_pdf(paper_id, dest)
+        return f"Downloaded: {dest}"
 
     def read_paper(paper_id: str) -> str:
-        """Download and extract text from an arxiv paper."""
+        """Download (direct URL) and extract text from an arxiv paper."""
         import tempfile
-        client = _arxiv.Client()
-        paper = next(client.results(_arxiv.Search(id_list=[paper_id])))
         with tempfile.TemporaryDirectory() as tmp:
-            path = paper.download_pdf(dirpath=tmp)
+            path = str(Path(tmp) / "paper.pdf")
+            _fetch_pdf(paper_id, path)
             try:
                 import fitz
                 doc = fitz.open(path)
