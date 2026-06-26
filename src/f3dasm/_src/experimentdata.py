@@ -913,8 +913,15 @@ class ExperimentData:
                 subdirectory / OUTPUT_DATA_FILENAME).with_suffix(".csv")
             if existing_out.exists():
                 try:
-                    with open(existing_out) as _f:
-                        existing_rows = max(sum(1 for _ in _f) - 1, 0)  # -header
+                    # Count LOGICAL csv records, not physical lines: output
+                    # values can contain embedded newlines (e.g. a numpy array
+                    # repr stored as one quoted field spans several physical
+                    # lines). A raw line count over-counts those and makes the
+                    # shrink-guard below falsely reject valid superset writes.
+                    import csv as _csv
+                    with open(existing_out, newline="") as _f:
+                        existing_rows = max(
+                            sum(1 for _ in _csv.reader(_f)) - 1, 0)  # -header
                 except OSError:
                     existing_rows = 0
                 if len(self) < existing_rows:
@@ -926,6 +933,41 @@ class ExperimentData:
                         "canonical store is written ONLY via get_evaluator(); "
                         "store your own ExperimentData to a different project_dir."
                     )
+
+            # Completion is MONOTONIC on the protected ledger: refuse a write
+            # that would reset a row the oracle already marked FINISHED back to a
+            # non-finished status. This is the documented hazard of a worker
+            # calling data.store() on the canonical dir after gen.call() (it
+            # resets FINISHED→IN_PROGRESS, silently corrupting job statuses). The
+            # legitimate instrumented writer stores canon+batch — a superset that
+            # preserves every FINISHED row — so it passes. Fail-open: a read or
+            # parse hiccup must never block a real write.
+            existing_jobs = (
+                subdirectory / JOBS_FILENAME).with_suffix(".csv")
+            if existing_jobs.exists():
+                try:
+                    disk = pd.read_csv(
+                        existing_jobs, index_col=0).iloc[:, 0].astype(str)
+                    mine = self.jobs.astype(str)
+                    regressed = [
+                        i for i, s in disk.items()
+                        if s.upper() == "FINISHED"
+                        and str(mine.get(i, "")).upper() != "FINISHED"
+                    ]
+                    if regressed:
+                        raise RuntimeError(
+                            "Refusing to overwrite the PROTECTED canonical store "
+                            f"at {self._project_dir}: this store() would reset "
+                            f"{len(regressed)} FINISHED evaluation(s) to a "
+                            "non-finished status (typically a worker calling "
+                            "data.store() after gen.call()). The canonical store "
+                            "is written ONLY via get_evaluator(); store your own "
+                            "ExperimentData to a different project_dir."
+                        )
+                except RuntimeError:
+                    raise
+                except Exception:  # noqa: BLE001
+                    pass  # fail-open — never block a real write on a read error
 
         # # Store all objects to keep references
         # self.store_objects()
