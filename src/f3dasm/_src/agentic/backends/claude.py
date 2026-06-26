@@ -228,11 +228,20 @@ def _build_session_env() -> dict:
       defaults to the wrong namespace and can overwrite another delegation's
       scratch data (audit run 20260624T021359, D005→D006 sim-dir clobber).
     """
-    from .base import get_delegation_id, get_run_config_path
+    from .base import (
+        get_delegation_id,
+        get_namespace,
+        get_run_config_path,
+    )
     env: dict = {}
     did = get_delegation_id()
     if did:
         env["F3DASM_DELEGATION_ID"] = did
+    ns = get_namespace()
+    if ns:
+        # Scope this worker to a design namespace so get_evaluator() resolves
+        # that namespace's oracle + ledger (Axis 3a). Absent → single-study path.
+        env["F3DASM_NAMESPACE"] = ns
     rc = get_run_config_path()
     if rc:
         env["F3DASM_RUN_CONFIG"] = rc

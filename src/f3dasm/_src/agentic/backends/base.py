@@ -79,6 +79,23 @@ def get_run_config_path() -> str | None:
     return getattr(_transcript_tls, "run_config_path", None)
 
 
+def set_namespace(namespace: str | None) -> None:
+    """Bind this thread's design namespace (None clears it).
+
+    Thread-local, mirroring ``set_delegation_id``. When a delegation is scoped to
+    a design namespace, the Claude backend injects it as a per-session
+    ``F3DASM_NAMESPACE`` env var so the worker's plain ``get_evaluator()`` resolves
+    that namespace's oracle + ledger (Axis 3a) — the agent's call site stays
+    ``get_evaluator()`` with no argument. None (the default) → no env var → the
+    single-study canonical oracle, exactly as before.
+    """
+    _transcript_tls.namespace = namespace
+
+
+def get_namespace() -> str | None:
+    return getattr(_transcript_tls, "namespace", None)
+
+
 def set_oracle_registered(registered: bool) -> None:
     """Bind whether a canonical oracle is registered for this thread's worker.
 

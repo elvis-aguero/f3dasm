@@ -67,6 +67,10 @@ class Delegation:
     target: str
     task: str
     expected_report: str = ""
+    # Optional design namespace this delegation operates in (Axis 3a). None →
+    # the canonical single-study oracle + ledger (today's behavior). A non-None
+    # value scopes the worker to that namespace's oracle via F3DASM_NAMESPACE.
+    namespace: str | None = None
 
 
 @dataclass

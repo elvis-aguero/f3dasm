@@ -282,6 +282,7 @@ def build_routing_tools(node) -> dict:
         wait: bool = False,
         is_falsification_attempt: bool = False,
         phase: str | None = None,
+        namespace: str | None = None,
     ) -> str:
         _resolved = resolve_target(
             target, outgoing,
@@ -434,6 +435,7 @@ def build_routing_tools(node) -> dict:
                 "phase": _phase,
                 "started_at": started_at,
                 "target": target,
+                "namespace": (namespace or None),
                 "followup_question": None,
                 "followup_answer": None,
                 "followup_event": _followup_event,
@@ -630,6 +632,9 @@ def build_routing_tools(node) -> dict:
                     set_delegation_id as _set_did,
                 )
                 from ...backends.base import (
+                    set_namespace as _set_ns,
+                )
+                from ...backends.base import (
                     set_oracle_registered as _set_oracle_reg,
                 )
                 from ...backends.base import (
@@ -644,6 +649,11 @@ def build_routing_tools(node) -> dict:
                 # env → get_evaluator() resolves without a mandatory cd
                 # into D### (audit Finding 2).
                 _set_did(delegation_id)
+
+                # Scope this worker to its design namespace (Axis 3a/3b) so the
+                # backend injects F3DASM_NAMESPACE → get_evaluator() resolves the
+                # namespace's oracle + ledger. None → single-study canonical path.
+                _set_ns(namespace or None)
 
                 # Bind the run_config.json path too, so the backend injects
                 # F3DASM_RUN_CONFIG → get_evaluator() resolves by explicit path
