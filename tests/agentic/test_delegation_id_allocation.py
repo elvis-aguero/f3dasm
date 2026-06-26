@@ -50,10 +50,12 @@ def test_milestone_blocked_delegation_does_not_consume_an_id(tmp_path):
     n._milestones.propose("resolve the process backlog first")
     assert n._milestones.pending(), "precondition: a milestone should be pending"
 
-    # First implementer attempt is BLOCKED (must not record or allocate an ID).
+    # First implementer attempt is NUDGED (two-shot confirm) — must not record
+    # or allocate an ID (the nudge returns before ID allocation, as the hard
+    # block used to).
     blocked = n.adapter.closure_tools["Delegate"](
         "implementer", "run a sweep", "a report", wait=True)
-    assert blocked.lstrip().startswith("BLOCKED"), blocked
+    assert blocked.lstrip().startswith("[CONFIRM]"), blocked
 
     # The shared ID counter must NOT have advanced: the next allocation is still
     # the first ID. (With the bug — allocation before the gate — the blocked

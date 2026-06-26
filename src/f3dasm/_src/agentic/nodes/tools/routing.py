@@ -383,12 +383,15 @@ def build_routing_tools(node) -> dict:
         _phase_obj = resolve_phase(phase)
         _phase = _phase_obj.value if _phase_obj is not None else None
 
-        # Milestone gate: the process backlog blocks ONLY delegations to the
+        # Milestone gate: the process backlog applies ONLY to delegations to the
         # f3dasm implementer (the agent that runs experiments) — never the
         # literature_reviewer/datagenerator that satisfy a milestone. Keyed on
         # the resolved TARGET ROLE (reliable), not the agent's self-declared
-        # phase. Escape is always available (MilestoneSkip), so it forces
-        # engagement without deadlock; the delegation does not fire.
+        # phase. This is a NUDGE, not a hard block: the milestones (assess-
+        # literature, oracle-ready, …) are good prompts, not a safety invariant,
+        # and a new design legitimately needs its own setup. Two-shot confirm,
+        # RECURRING PER NAMESPACE — nudge once per namespace, proceed on a
+        # re-delegate. MilestoneComplete/MilestoneSkip remain the clean path.
         _ms = getattr(node, "_milestones", None)
         _target_role = getattr(
             node._spec.nodes.get(target), "role", "") if node._spec else ""
@@ -396,18 +399,27 @@ def build_routing_tools(node) -> dict:
             from ...milestones import implementer_block
             _pend = implementer_block(_ms, node)
             if _pend:
-                _ids = ", ".join(f"{m['id']} ({m['description'][:50]}…)"
-                                 for m in _pend)
-                node._record_intervention(
-                    "MILESTONE_BLOCK", target,
-                    f"{len(_pend)} backlog item(s) block the implementer")
-                return (
-                    "BLOCKED: cannot delegate to the f3dasm implementer yet — "
-                    f"resolve the process backlog first: {_ids}. Do each "
-                    "(MilestoneComplete(id, brief)) or MilestoneSkip(id, "
-                    "reason) if your study doesn't need it, then re-delegate. "
-                    "(Not a tool error; a process gate.)"
-                )
+                _ns_key = namespace or "__default__"
+                if not hasattr(node, "_milestone_ack"):
+                    node._milestone_ack = set()
+                if _ns_key not in node._milestone_ack:
+                    node._milestone_ack.add(_ns_key)
+                    _ids = ", ".join(f"{m['id']} ({m['description'][:50]}…)"
+                                     for m in _pend)
+                    node._record_intervention(
+                        "MILESTONE_BLOCK", target,
+                        f"{len(_pend)} backlog item(s) precede the implementer")
+                    _scope = (f"design '{namespace}'" if namespace
+                              else "this study")
+                    return (
+                        f"[CONFIRM] process backlog still open for {_scope}: "
+                        f"{_ids}. The usual path is to resolve each first — "
+                        "MilestoneComplete(id, brief), or MilestoneSkip(id, "
+                        "reason) if it doesn't apply. If you mean to run the "
+                        "implementer anyway, re-delegate (same target) to "
+                        "confirm. (Not a tool error; a process nudge.)"
+                    )
+                # confirmed (and re-nudges for each new namespace) → fall through
 
         # Delegation ID — allocated AFTER the milestone gate so a blocked attempt
         # does not BURN an ID (next_id() advances a monotonic counter on every

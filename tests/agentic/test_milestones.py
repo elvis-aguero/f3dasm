@@ -117,28 +117,49 @@ def test_craft_pipeline_auto_satisfies_when_pipeline_exists(tmp_path):
     assert "assess_literature_need" in pend_keys   # manual, still pending
 
 
-def test_delegate_to_implementer_is_blocked_then_skip_unblocks(tmp_path):
+def test_delegate_to_implementer_milestone_is_two_shot_nudge(tmp_path):
+    """The milestone backlog NUDGES the implementer delegation once (not a hard
+    block): the agent re-delegates to confirm and it fires. MilestoneComplete/
+    Skip remain the clean path; literature_reviewer is never gated."""
     n = _node(tmp_path)
     hid = n.adapter.closure_tools["HypothesisPropose"](
         "stmt", "crit", "pred", 0.5)
     before = len(n._registry)
+    # First attempt → confirm nudge, NOT a hard block, nothing fired.
     out = n.adapter.closure_tools["Delegate"](
         "implementer", "run experiments", "report", hypothesis_ids=[hid],
         wait=True)
-    assert out.startswith("BLOCKED") and "implementer" in out
-    assert len(n._registry) == before  # nothing fired
-    # delegating to the literature_reviewer is NEVER blocked (satisfies a gate)
+    assert out.startswith("[CONFIRM]") and "backlog" in out
+    assert len(n._registry) == before  # nothing fired yet
+    # delegating to the literature_reviewer is NEVER gated (satisfies a gate)
     out_lit = n.adapter.closure_tools["Delegate"](
         "literature_reviewer", "survey", "report", hypothesis_ids=[hid],
         wait=True)
-    assert not out_lit.startswith("BLOCKED")
-    # resolve the backlog → implementer unblocks
-    for m in n._milestones.list_all():
-        n.adapter.closure_tools["MilestoneSkip"](m["id"], "n/a for test")
+    assert not out_lit.startswith("[CONFIRM]")
+    # Re-delegate to the implementer → proceeds past the soft gate (fires).
     out2 = n.adapter.closure_tools["Delegate"](
         "implementer", "run experiments", "report", hypothesis_ids=[hid],
         wait=True)
-    assert not out2.startswith("BLOCKED")
+    assert not out2.startswith("[CONFIRM]")
+    assert len(n._registry) > before  # it fired
+
+
+def test_milestone_nudge_recurs_per_namespace(tmp_path):
+    """The nudge fires once PER namespace — opening a new design re-prompts the
+    setup milestones for that design rather than silently inheriting the ack."""
+    n = _node(tmp_path)
+    hid = n.adapter.closure_tools["HypothesisPropose"](
+        "stmt", "crit", "pred", 0.5)
+    # Confirm the default namespace.
+    n.adapter.closure_tools["Delegate"](
+        "implementer", "run", "report", hypothesis_ids=[hid], wait=True)
+    n.adapter.closure_tools["Delegate"](
+        "implementer", "run", "report", hypothesis_ids=[hid], wait=True)
+    # A NEW namespace nudges again (its own setup).
+    out_ns = n.adapter.closure_tools["Delegate"](
+        "implementer", "run", "report", hypothesis_ids=[hid],
+        namespace="elliptical_rings", wait=True)
+    assert out_ns.startswith("[CONFIRM]")
 
 
 def test_milestone_complete_requires_a_brief(tmp_path):
