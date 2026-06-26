@@ -2250,26 +2250,31 @@ def build_routing_tools(node) -> dict:
             # A no-op (nothing to check) does NOT consume the budget.
             return (prefix + f"No {_dname} yet — write it first via "
                     f"WriteDeliverable('{_dname}', …), then CheckDeliverable().")
-        # Fail fast if the canonical store has no FINISHED rows — the notebook
-        # cannot reproduce a result that was never computed.
+        # Fail fast if the canonical store holds no computed evaluations — the
+        # notebook cannot reproduce a result that was never computed. Key on
+        # POPULATED output.csv rows, NOT jobs.csv 'FINISHED' status: reproduction
+        # loads via ExperimentData.from_file() (output.csv), which carries values
+        # regardless of job status, and a stray worker `data.store()` can reset
+        # FINISHED→IN_PROGRESS without dropping any data. Checking jobs.csv here
+        # made this guard misfire on a store that is fully present but whose
+        # statuses were clobbered (the "no FINISHED rows" false positive).
         _notes = getattr(node, "_current_notes_dir", None)
         if _notes is not None:
             import csv as _csv
             _run_dir = Path(_notes).parent.parent
-            _jobs_csv = _run_dir / "experiment_data" / "experiment_data" / "jobs.csv"
-            if _jobs_csv.exists():
+            _out_csv = _run_dir / "experiment_data" / "experiment_data" / "output.csv"
+            if _out_csv.exists():
                 try:
-                    with _jobs_csv.open() as _f:
-                        _finished = sum(
-                            1 for r in _csv.DictReader(_f)
-                            if r.get("status", "") == "FINISHED"
-                        )
-                    if _finished == 0:
+                    with _out_csv.open(newline="") as _f:
+                        # Logical CSV rows minus header (output values may span
+                        # several physical lines, e.g. numpy-array reprs).
+                        _rows = max(sum(1 for _ in _csv.reader(_f)) - 1, 0)
+                    if _rows == 0:
                         return (prefix +
-                            "CheckDeliverable: canonical store has no FINISHED rows yet. "
+                            "CheckDeliverable: canonical store has no evaluations yet. "
                             "Run at least one evaluation campaign before calling CheckDeliverable.")
                 except Exception:
-                    pass  # if we can't read jobs.csv, let the gate decide
+                    pass  # if we can't read output.csv, let the gate decide
         _BUDGET = 10
         prior = getattr(node, "_check_deliverable_calls", 0)
         if prior >= _BUDGET:
