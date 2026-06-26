@@ -529,19 +529,70 @@ def _apply_process_governor(run_config: dict, store_dir: Path,
         pass
 
 
-def get_evaluator() -> InstrumentedDataGenerator:
-    """The ONE door to the registered ground-truth oracle.
+def _effective_oracle_config(run_config: dict, namespace: str | None) -> dict:
+    """Resolve the effective oracle config for a design ``namespace``.
+
+    A namespace is a sub-config under ``run_config["oracles"][namespace]`` of the
+    same shape as the flat keys. With ``namespace is None`` this returns the
+    run_config unchanged — the single-study path is byte-for-byte today's. With a
+    namespace, the namespace block's oracle + store keys are taken WHOLESALE
+    (defaulting to ``None`` if absent, so a base ``evaluator_lookup`` cannot leak
+    past a namespace that declares an entrypoint), while everything else
+    (``study_dir``, budgets, governor knobs) is inherited from the base config.
+
+    Raises ``ValueError`` naming the available namespaces if ``namespace`` is not
+    registered.
+    """
+    if namespace is None:
+        return run_config
+
+    oracles = run_config.get("oracles") or {}
+    if namespace not in oracles:
+        available = ", ".join(sorted(oracles)) or "(none registered)"
+        raise ValueError(
+            f"Unknown design namespace {namespace!r}. Registered namespaces: "
+            f"{available}. A namespace's oracle is authored and registered by "
+            f"the datagenerator agent before it can be evaluated."
+        )
+    block = oracles[namespace] or {}
+    eff = dict(run_config)
+    # Oracle + store keys come wholesale from the namespace block (None if absent).
+    for key in (
+        "store_dir", "lock_path", "evaluator_entrypoint",
+        "evaluator_output_names", "evaluator_lookup", "source",
+        "fidelity_column", "provenance",
+    ):
+        if key in block:
+            eff[key] = block[key]
+        elif key in ("evaluator_entrypoint", "evaluator_output_names",
+                     "evaluator_lookup"):
+            eff[key] = None  # don't let a base oracle leak into the namespace
+    return eff
+
+
+def get_evaluator(namespace: str | None = None) -> InstrumentedDataGenerator:
+    """The ONE door to a registered ground-truth oracle.
 
     Locates ``run_config.json`` by walking up from ``Path.cwd()``, reads
     all configuration from it, and derives the delegation ID from the
     current working directory name (expected pattern ``D###``).
 
-    Takes NO arguments by design: the oracle is always the source registered
-    for this run, and its evaluations are always written to the one canonical
-    store at ``run_config["store_dir"]`` with provenance. There is no way to
-    substitute a different inner generator or redirect the store — that is what
-    makes ground-truth metering airtight. (Surrogates, stubs, and analysis are
-    the agent's own DataGenerators, run freely off-ledger — never through here.)
+    The oracle is the source registered for this run, and its evaluations are
+    written to the canonical store with provenance. There is no way to substitute
+    an arbitrary inner generator or redirect the store — that is what makes
+    ground-truth metering airtight. (Surrogates, stubs, and analysis are the
+    agent's own DataGenerators, run freely off-ledger — never through here.)
+
+    Parameters
+    ----------
+    namespace : str or None, optional
+        The design namespace whose oracle + ledger to resolve. ``None`` (the
+        default) uses the flat single-study config and the canonical store — the
+        behavior every existing study relies on. A non-``None`` namespace resolves
+        ``run_config["oracles"][namespace]`` (its own oracle + its own isolated
+        store). When omitted, the namespace falls back to the ``F3DASM_NAMESPACE``
+        environment variable, so a delegation scoped to a namespace keeps the
+        agent's call site a plain ``get_evaluator()``.
 
     Returns
     -------
@@ -551,37 +602,43 @@ def get_evaluator() -> InstrumentedDataGenerator:
     ------
     ValueError
         If the cwd is not a ``D###`` directory and ``F3DASM_DELEGATION_ID`` is
-        not set, or if no evaluator source is registered for this run.
+        not set, if no evaluator source is registered, or if ``namespace`` is not
+        a registered namespace.
     FileNotFoundError
         If ``run_config.json`` cannot be found by walking up from cwd.
     """
     delegation_id = _resolve_delegation_id()
     run_config = _load_run_config()
 
-    store_dir = Path(run_config["store_dir"])
-    lock_path_str = run_config.get("lock_path")
+    if namespace is None:
+        env_ns = os.environ.get("F3DASM_NAMESPACE", "")
+        namespace = env_ns or None
+    cfg = _effective_oracle_config(run_config, namespace)
+
+    store_dir = Path(cfg["store_dir"])
+    lock_path_str = cfg.get("lock_path")
     lock_path = (
         Path(lock_path_str)
         if lock_path_str
         else store_dir / "experiment_data" / ".lock"
     )
-    source = run_config.get(
+    source = cfg.get(
         "source",
-        run_config.get("evaluator_name", ""),
+        cfg.get("evaluator_name", ""),
     )
-    fidelity_column = run_config.get("fidelity_column")
+    fidelity_column = cfg.get("fidelity_column")
     # Extensible provenance declared for this run (open schema; stamped on
     # every row by the wrapper, never by the agent). Tolerate a non-dict.
-    _prov = run_config.get("provenance")
+    _prov = cfg.get("provenance")
     extra_provenance = _prov if isinstance(_prov, dict) else {}
 
-    study_dir_str = run_config.get("study_dir")
+    study_dir_str = cfg.get("study_dir")
     if study_dir_str is None:
         raise ValueError(
             "run_config.json is missing 'study_dir' key; "
             "re-run your study to regenerate it."
         )
-    inner = load_inner_evaluator(run_config, Path(study_dir_str))
+    inner = load_inner_evaluator(cfg, Path(study_dir_str))
     if inner is None:
         raise ValueError(
             "No ground-truth oracle is registered for this run. A source "
@@ -595,7 +652,7 @@ def get_evaluator() -> InstrumentedDataGenerator:
     # Hard memory cap + PID registration for THIS campaign process (the one
     # hard resource boundary). Done here because every campaign reaches the
     # oracle through get_evaluator, regardless of how it was launched.
-    _apply_process_governor(run_config, store_dir, delegation_id)
+    _apply_process_governor(cfg, store_dir, delegation_id)
 
     return InstrumentedDataGenerator(
         inner=inner,
@@ -605,7 +662,7 @@ def get_evaluator() -> InstrumentedDataGenerator:
         fidelity_column=fidelity_column,
         lock_path=lock_path,
         extra_provenance=extra_provenance,
-        eval_budget=run_config.get("eval_budget"),
+        eval_budget=cfg.get("eval_budget"),
     )
 
 
