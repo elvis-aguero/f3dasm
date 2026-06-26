@@ -1,0 +1,17 @@
+model: claude-haiku-4-5-20251001
+backend: claude
+budget: "00:20:00"
+eval_budget: 300
+# Hard per-delegation memory cap, in BYTES (host safety; the one hard boundary).
+# 4 GiB.
+mem_cap: 4294967296
+
+runtime:
+  debug: true
+
+# The baseline 'cartesian' oracle. A new design namespace (e.g. 'polar') is
+# authored + registered by the datagenerator at run time and gets its OWN ledger;
+# both call the same objective.score, so results compare on one ruler.
+evaluator:
+  entrypoint: "baseline.py:evaluate_kw"
+  output_names: [score]
