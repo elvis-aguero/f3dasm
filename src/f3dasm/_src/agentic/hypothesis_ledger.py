@@ -156,6 +156,12 @@ class HypothesisLedger:
                 "ERROR: prior must be strictly between 0 and 1 — a "
                 "hypothesis you are certain about is not a hypothesis."
             )
+        # Structural guards stay HARD (empty fields break the schema). The two
+        # FORMATTING guards below — over-length and compound-claim — are now
+        # NUDGES: the hypothesis is still registered, with advice appended, so a
+        # slightly-long or compound phrasing never costs the agent a round-trip.
+        # (Quality is caught at the gate; a blocked propose only burns turns.)
+        nudges: list[str] = []
         for name, value in (
             ("statement", statement),
             ("falsification_criterion", falsification_criterion),
@@ -164,15 +170,16 @@ class HypothesisLedger:
             if not value or not str(value).strip():
                 return f"ERROR: {name} must be non-empty."
             if len(str(value)) > MAX_FIELD_LEN:
-                return (
-                    f"ERROR: {name} exceeds {MAX_FIELD_LEN} chars. "
-                    "State a single concise claim."
+                nudges.append(
+                    f"[NUDGE] {name} is {len(str(value))} chars "
+                    f"(over the {MAX_FIELD_LEN}-char guideline) — a hypothesis "
+                    "reads best as one concise claim; consider tightening it."
                 )
         if _is_compound(statement):
-            return (
-                "ERROR: statement looks like a compound claim "
-                "(multiple quantified sub-claims). Split it into "
-                "separate hypotheses, one falsifiable claim each."
+            nudges.append(
+                "[NUDGE] statement looks like a compound claim (multiple "
+                "quantified sub-claims). One falsifiable claim per hypothesis "
+                "tests more cleanly — consider splitting it next time."
             )
 
         def _normalize(s: str) -> str:
@@ -222,7 +229,8 @@ class HypothesisLedger:
             )
             data[h_id] = entry.to_dict()
             self._save(data)
-            return h_id
+            # ID first (callers parse it out), nudges appended as advice.
+            return h_id if not nudges else h_id + "\n" + "\n".join(nudges)
 
     def update(
         self,

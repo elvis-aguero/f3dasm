@@ -56,7 +56,9 @@ def test_propose_rejects_prior_zero_one_and_nonfloat(tmp_path):
     assert propose_ok(ledger, prior=1.3).startswith("ERROR:")
 
 
-def test_propose_rejects_empty_or_oversized_fields(tmp_path):
+def test_propose_rejects_empty_but_nudges_oversized(tmp_path):
+    """Empty is a hard error (breaks the schema); over-length is now a NUDGE —
+    the hypothesis is created with advice appended, never refused."""
     ledger = fresh_ledger(tmp_path)
     r = ledger.propose(statement="", falsification_criterion="c",
                        prediction="p", prior=0.5,
@@ -65,16 +67,20 @@ def test_propose_rejects_empty_or_oversized_fields(tmp_path):
     r = ledger.propose(statement="x" * 501, falsification_criterion="c",
                        prediction="p", prior=0.5,
                        proposed_by="strategizer")
-    assert r.startswith("ERROR:")
+    assert r.startswith("H")          # created, not refused
+    assert "[NUDGE]" in r             # with the tighten-it advice
 
 
-def test_propose_rejects_compound_statement(tmp_path):
+def test_propose_nudges_compound_statement(tmp_path):
+    """A compound statement is now a NUDGE, not a rejection: the hypothesis is
+    registered and advised to split — a blocked propose only burns a turn."""
     ledger = fresh_ledger(tmp_path)
     r = propose_ok(ledger, statement=(
         "Optimum is near t/L=0.08 and the surrogate search will "
         "find a design exceeding 95 kPa"
     ))
-    assert r.startswith("ERROR:")
+    assert r.startswith("H")
+    assert "[NUDGE]" in r
     assert "split" in r.lower()
 
 
@@ -88,13 +94,14 @@ def test_propose_allows_borderline_non_compound(tmp_path):
     assert r == "H1"
 
 
-def test_propose_rejects_numbered_subclaims(tmp_path):
+def test_propose_nudges_numbered_subclaims(tmp_path):
     ledger = fresh_ledger(tmp_path)
     r = propose_ok(ledger, statement=(
         "(1) the optimum is at high ratio_d (2) the search will "
         "exceed 95 kPa"
     ))
-    assert r.startswith("ERROR:")
+    assert r.startswith("H")
+    assert "[NUDGE]" in r
 
 
 def test_propose_max_three_open(tmp_path):
