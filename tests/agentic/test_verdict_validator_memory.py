@@ -41,6 +41,19 @@ def test_prior_rulings_inject_history_and_consistency_guard():
     assert "must not flip the verdict between calls" in prompt
 
 
+def test_adequacy_downgrade_is_not_flagged_as_oscillation():
+    """Bug 9 (run 20260626T012318): the consistency guard must NOT treat a
+    charter-mandated downgrade (SUPPORTED/FALSIFIED → INCONCLUSIVE because the
+    registered test is now seen as inadequate, §2/§3) as a flip-flop. That
+    correction is always legitimate even on identical evidence; only oscillating
+    between two ADEQUATE readings stays forbidden."""
+    digest = "- ruled SUPPORTED: gammaW appears in top coilable\n    [your ruling then: §3 ok]"
+    prompt = build_judge_prompt(**_base_kwargs(
+        status="INCONCLUSIVE", prior_rulings=digest))
+    assert "NOT flag it as a consistency violation" in prompt
+    assert "oscillating between two ADEQUATE readings" in prompt
+
+
 def test_digest_excludes_current_entry_and_formats_prior():
     # status_log: the LAST entry is the verdict under judgement now; earlier ones are prior.
     h = {"status_log": [

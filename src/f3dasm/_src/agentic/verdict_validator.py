@@ -62,7 +62,13 @@ def build_judge_prompt(
             "has not materially changed since a prior ruling, your verdict must\n"
             "not change. You may reverse a prior ruling ONLY by explicitly naming\n"
             "the NEW evidence or reasoning that justifies it — a borderline result\n"
-            "must not flip the verdict between calls on identical evidence.\n"
+            "must not flip the verdict between calls on identical evidence. ONE\n"
+            "reversal is ALWAYS legitimate even on identical evidence: downgrading\n"
+            "a prior SUPPORTED or FALSIFIED to INCONCLUSIVE because the registered\n"
+            "TEST is now recognised as inadequate (§2/§3) corrects a premature\n"
+            "close — that is the charter working, NOT a flip-flop, and you must\n"
+            "NOT flag it as a consistency violation. What stays forbidden is\n"
+            "oscillating between two ADEQUATE readings of the same result.\n"
         )
     return f"""\
 You are an independent referee applying the SCIENTIFIC-METHOD CHARTER to ONE
