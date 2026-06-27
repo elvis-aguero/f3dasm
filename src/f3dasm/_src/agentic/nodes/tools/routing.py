@@ -18,6 +18,7 @@ from ..parsing import (
     _parse_verdict,
     _reconcile_delegation_evals,
     _stamped_eval_count,
+    delegation_eval_store,
 )
 
 
@@ -745,10 +746,16 @@ def build_routing_tools(node) -> dict:
                 # reviewer never reaches get_evaluator, so bouncing it is
                 # pointless — see _enforce_ledger above).
                 # Soft: after 3 tries, accept anyway.
-                _bounce_store = (
-                    node._current_notes_dir.parent.parent
-                    / "experiment_data"
-                    if node._current_notes_dir is not None else None
+                # Check the store the worker ACTUALLY wrote to: a namespaced
+                # delegation writes to its own <experiment_data>/<namespace>, not
+                # the canonical store. Reading the canonical store here was the
+                # root of the false off-ledger bounce → re-run thrash → duplicate
+                # rows (run 20260626T231202 D003: 600 polar rows for a 100-pt
+                # sweep). namespace is the Delegate() arg, in scope in _run.
+                _bounce_store = delegation_eval_store(
+                    node._current_notes_dir.parent.parent / "experiment_data"
+                    if node._current_notes_dir is not None else None,
+                    namespace or None,
                 )
                 if _enforce_ledger:
                     from ...agent_prompts import (

@@ -990,9 +990,46 @@ class RunStateSummary:
 
 # ==========================================================================
 
+
+def total_ledgered_evals(store_dir: Path | str) -> int:
+    """Total ledgered evaluations across the canonical store AND every design
+    namespace (Axis 3a).
+
+    The run's true eval count is the sum over the canonical store and each
+    namespace store. Namespace stores live as sibling subdirs of the canonical
+    store (``<store_dir>/<namespace>``, written by get_evaluator(namespace)); the
+    canonical store's OWN data lives under ``<store_dir>/experiment_data`` (the
+    one subdir that is NOT a namespace). Without this, `evals_used` and the soft
+    eval budget see only the canonical store and miss every namespace eval
+    (observed: run 20260626T231202 reported 180 while 780 real evals ran).
+
+    Falls back to the canonical count if anything goes wrong — never raises.
+    """
+    store_dir = Path(store_dir)
+    total = 0
+    canon = RunStateSummary.from_store(store_dir)
+    if canon is not None:
+        total += int(canon.n_rows)
+    try:
+        for sub in store_dir.iterdir():
+            # Namespace stores are sibling subdirs that themselves hold an
+            # experiment_data/ project; skip the canonical's own data subdir.
+            if not sub.is_dir() or sub.name == "experiment_data":
+                continue
+            if not (sub / "experiment_data" / "output.csv").exists():
+                continue
+            ns = RunStateSummary.from_store(sub)
+            if ns is not None:
+                total += int(ns.n_rows)
+    except (FileNotFoundError, OSError):
+        pass
+    return total
+
+
 __all__ = [
     "InstrumentedDataGenerator",
     "RunStateSummary",
     "get_evaluator",
     "load_inner_evaluator",
+    "total_ledgered_evals",
 ]

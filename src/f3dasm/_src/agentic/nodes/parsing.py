@@ -63,6 +63,25 @@ def _resolve_delegation_evals(
     return reported
 
 
+def delegation_eval_store(
+    run_exp_dir: Path | None, namespace: str | None
+) -> Path | None:
+    """Resolve the ExperimentData store a delegation actually writes to.
+
+    A namespaced delegation (design-namespace, Axis 3a) writes to its OWN store
+    at ``<run_exp_dir>/<namespace>``, NOT the canonical ``<run_exp_dir>``. The
+    unledgered-evals guard and stamped-row counts MUST look there — otherwise a
+    namespaced worker that correctly used get_evaluator() reads as 0 rows in the
+    canonical store and is falsely bounced as having bypassed the oracle
+    (observed: run 20260626T231202 D003 re-ran 6x chasing a check it could never
+    satisfy, inflating the polar ledger to 600 rows). ``namespace=None`` → the
+    canonical store, unchanged.
+    """
+    if run_exp_dir is None:
+        return None
+    return (run_exp_dir / namespace) if namespace else run_exp_dir
+
+
 def _stamped_eval_count(store_dir: Path | None, delegation_id: str) -> int:
     """Rows in the canonical store stamped with this delegation_id (0 if none).
 

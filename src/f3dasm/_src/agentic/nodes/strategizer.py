@@ -1003,13 +1003,13 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         # ledger count (max() keeps the accumulator for lookup-direct studies
         # with no instrumented store).
         try:
-            from ..instrumented import RunStateSummary
+            from ..instrumented import total_ledgered_evals
             _nd = getattr(self, "_current_notes_dir", None)
             if _nd is not None:
-                _sm = RunStateSummary.from_store(
-                    _nd.parent.parent / "experiment_data")
-                if _sm is not None:
-                    evals_used = max(evals_used, int(_sm.n_rows))
+                # Sum across the canonical store AND every design namespace —
+                # namespace evals were invisible to the run total + soft budget.
+                _total = total_ledgered_evals(_nd.parent.parent / "experiment_data")
+                evals_used = max(evals_used, int(_total))
         except Exception:  # noqa: BLE001
             pass
         if eval_budget is not None and evals_used >= eval_budget:
@@ -1282,6 +1282,21 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                     phase=_entry.get("phase"),
                 )
 
+        # The persisted (reported) eval total prefers the ledger aggregate over
+        # the accumulator: the accumulator can drop evals a namespace-blind guard
+        # mis-flagged as off-ledger, and never saw namespace stores at all. The
+        # ledger across all namespaces is the authoritative count → run_status.
+        _evals_persist = state.get("evals_used", 0) + evals_new
+        try:
+            from ..instrumented import total_ledgered_evals
+            _nd = getattr(self, "_current_notes_dir", None)
+            if _nd is not None:
+                _evals_persist = max(
+                    _evals_persist,
+                    int(total_ledgered_evals(_nd.parent.parent / "experiment_data")),
+                )
+        except Exception:  # noqa: BLE001
+            pass
         return Command(
             goto=END,
             update={
@@ -1289,7 +1304,7 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                 "done": True,
                 "last_report": summary,
                 "total_delegations": state["total_delegations"] + total_new,
-                "evals_used": state.get("evals_used", 0) + evals_new,
+                "evals_used": _evals_persist,
                 "token_totals": dict(self._token_totals),
                 "error_counts": dict(self._error_counts),
             },
