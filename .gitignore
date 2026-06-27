@@ -163,3 +163,6 @@ studies/*/pipeline.ipynb
 # Persistent cross-run retrospective archive (high-signal forensic record kept
 # on disk across runs; not source).
 studies/*/retrospectives/
+
+# stray arxiv PDFs the literature reviewer downloads into the study cwd
+studies/*/*.pdf
