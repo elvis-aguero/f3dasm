@@ -29,6 +29,7 @@ Resolved items keep their write-up below for the record; `(commit)` is what fixe
 - [ ] **#17** Closure + budget-severity model (Memory>Time>Eval; dynamic constraints) — *open, §4 user-owned* — Done() prompt iterated (`0400a653`); runtime nudge + severity model deferred
 - [ ] **#18** Critic should flag an infeasible-extremum headline on a constrained study — *open, §4 user-owned* — grounding moved to the critic (`6494489b`) but it only checks the value is real, not feasible
 - [ ] **#20** Open design-space discovery (agent invents new low-D parametrizations) — *spec approved, §4 user-owned, awaiting 2D experiment* — see [`OPEN_DESIGN_SPACE_FRAMEWORK.md`](OPEN_DESIGN_SPACE_FRAMEWORK.md); branch `exp/open-design-space`
+- [ ] **#21** RecallStore is namespace-blind — *open, low* (branch `exp/open-design-space`). The strategizer's `RecallStore()` ledger SUMMARY (`routing.py` `_derive_store_dir`/`RecallStore`) reports only the canonical store, so a multi-namespace run's namespace evals don't appear in that view. Eval COUNTING is namespace-aware everywhere (commits cea08d8b→d27a33ae); this is the remaining SUMMARY surface. Aggregating a full `RunStateSummary` (per-delegation/per-source dicts + output stats) across stores is a larger change than the count helper — deferred. The strategizer still sees namespace progress via per-delegation reports, so this is informational, not a metering gap.
 
 ---
 
