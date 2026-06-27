@@ -734,64 +734,17 @@ def build_routing_tools(node) -> dict:
                     ]
                     text = worker.invoke(retry_messages)
 
-                # ── Unledgered-evals bounce (soft, ≤3×) ──────────────
-                # The worker reported evaluations but wrote no
-                # provenance-stamped rows to the canonical store — it
-                # bypassed get_evaluator(), so its numbers can't anchor a
-                # headline. Bounce it back to re-run through get_evaluator,
-                # in-place, instead of making the strategizer spend a whole
-                # new delegation re-ledgering. ONLY for evaluator roles with a
-                # registered source (a non-evaluator like the literature
-                # reviewer never reaches get_evaluator, so bouncing it is
-                # pointless — see _enforce_ledger above).
-                # Soft: after 3 tries, accept anyway.
-                # Count the delegation's stamped rows across EVERY experiment
-                # store (provenance-based): a worker that reached the oracle via
-                # get_evaluator(namespace=...) at the call site wrote to its
-                # experiment's store, not the default one. Reading one store was
-                # the root of the false off-ledger bounce → re-run thrash →
-                # duplicate rows (runs 20260626T231202, 20260627T045747). Pass the
-                # run's experiment_data root; the count finds the rows wherever.
-                _run_exp_root = (
-                    node._current_notes_dir.parent.parent / "experiment_data"
-                    if node._current_notes_dir is not None else None
-                )
-                if _enforce_ledger:
-                    from ...agent_prompts import (
-                        UNLEDGERED_EVALS_RETRY_PROMPT,
-                    )
-                    _bounces = 0
-                    _stamped_before = _stamped_eval_count(
-                        _run_exp_root, delegation_id)
-                    while (
-                        _bounces < 3
-                        and evals_box["count"] > 0
-                        and _stamped_eval_count(
-                            _run_exp_root, delegation_id) == 0
-                    ):
-                        _bounces += 1
-                        text = worker.invoke(messages + [
-                            {"role": "ai", "content": text},
-                            {"role": "user", "content": (
-                                UNLEDGERED_EVALS_RETRY_PROMPT
-                                + f"\n\n(notice {_bounces}/3)"
-                            )},
-                        ])
-                    if _bounces > 0:
-                        # Direct evidence of whether the bounce worked:
-                        # stamped rows before vs after the re-runs.
-                        _stamped_after = _stamped_eval_count(
-                            _run_exp_root, delegation_id)
-                        node._record_intervention(
-                            "UNLEDGERED_BOUNCE", target,
-                            f"{delegation_id} reported "
-                            f"{evals_box['count']} evals off-ledger; "
-                            f"bounced to re-run via get_evaluator().",
-                            bounces=_bounces,
-                            stamped_before=_stamped_before,
-                            stamped_after=_stamped_after,
-                            corrected=bool(_stamped_after > 0),
-                        )
+                # Unledgered evals are a CORRECTIVE flag, not a re-run. The
+                # reconciliation below counts this delegation's stamped rows
+                # across every experiment store (provenance-based); if a source
+                # is registered and it claimed evals but stamped none anywhere,
+                # it is flagged OFF_LEDGER_EVALS (a corrective tip the strategizer
+                # reads) and counted as 0. We do NOT bounce it to re-run: re-
+                # running a whole campaign to re-ledger is wasted wall-time (it
+                # helped blow the watchdog in run 20260627T045747), and the
+                # critic's headline-provenance check at the gate is the real
+                # floor. Cooperative agents rarely bypass get_evaluator() on
+                # purpose; when they do, the tip says so — once.
 
                 # Direct evidence: log any raw-oracle nudge firings from
                 # this delegation (drained from the adapter's budget).
@@ -934,14 +887,18 @@ def build_routing_tools(node) -> dict:
                 if _off_ledger:
                     node._record_intervention(
                         "OFF_LEDGER_EVALS", target,
-                        f"{delegation_id} claimed {_claimed_evals} evals but 0 "
-                        "are provenance-stamped in the canonical store — "
-                        "counted as 0"
+                        f"{delegation_id} claimed {_claimed_evals} evals but none "
+                        "are provenance-stamped in any experiment store — counted "
+                        "as 0"
                         + (" (delegation was cancelled/detached)"
                            if _detached else "")
-                        + ". The ground-truth evaluations did not go through "
-                        "get_evaluator(); re-run them so the headline is "
-                        "reproducible from the store.",
+                        + ". These didn't go through get_evaluator(), so they "
+                        "cannot anchor a reproducible headline — that wasn't the "
+                        "right way to evaluate. If this delegation's numbers feed "
+                        "your conclusion, re-run it through get_evaluator(); and "
+                        "route evaluations through get_evaluator() from the start "
+                        "next time. (Not re-run for you: re-running a whole "
+                        "campaign to re-ledger wastes wall-time.)",
                         claimed=_claimed_evals,
                         stamped=_stamped_evals,
                         detached=_detached,

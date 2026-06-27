@@ -174,14 +174,6 @@ class TestCorrectPathApiIsReal:
         assert "get_evaluator()" in _ORACLE_NUDGE_MESSAGE
         assert "evaluate-through-get-evaluator" in _ORACLE_NUDGE_MESSAGE
 
-    def test_unledgered_retry_prompt_uses_real_api(self):
-        from f3dasm._src.agentic.agent_prompts import (
-            UNLEDGERED_EVALS_RETRY_PROMPT,
-        )
-        assert "data.run(" not in UNLEDGERED_EVALS_RETRY_PROMPT
-        assert "get_evaluator()" in UNLEDGERED_EVALS_RETRY_PROMPT
-        assert "evaluate-through-get-evaluator" in UNLEDGERED_EVALS_RETRY_PROMPT
-
     def test_implementer_prompt_uses_real_api(self):
         from f3dasm._src.agentic.agents.implementer import (
             IMPLEMENTER_SYSTEM_PROMPT,

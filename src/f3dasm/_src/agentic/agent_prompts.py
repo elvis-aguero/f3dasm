@@ -75,7 +75,6 @@ __all__ = [
     "RUN_PATHS_PREAMBLE_TEMPLATE",
     "WORKSPACE_PREAMBLE_TEMPLATE",
     "IMPLEMENTER_REPORT_RETRY_PROMPT",
-    "UNLEDGERED_EVALS_RETRY_PROMPT",
     "REFLECT_DIAGNOSIS_SHORT",
     "REFLECT_DIAGNOSIS_CAPABILITY_LIMIT",
     "REFLECT_DIAGNOSIS_MISSING_SUBSECTIONS_TEMPLATE",
@@ -257,21 +256,6 @@ misread it.  No placeholders; pure static text.
 
 # =============================================================================
 
-UNLEDGERED_EVALS_RETRY_PROMPT = (
-    "Your evaluations did not reach the canonical ExperimentData store — they "
-    "bypassed get_evaluator(), so they have no provenance and cannot anchor a "
-    "headline. Re-run the true-oracle calls through get_evaluator() (the "
-    "oracle-door block in your system prompt has the API; full contract: "
-    "handbook evaluate-through-get-evaluator). Surrogates/samplers/analysis you "
-    "build yourself stay off-ledger and that is fine. Then re-issue your report."
-)
-"""Correction sent to a worker whose delegation reported evaluations but
-wrote no provenance-stamped rows to the canonical store (it bypassed
-get_evaluator()).  Soft: the runtime re-issues it at most three times, then
-accepts the delegation anyway.  A terse pointer, not a restatement — the
-canonical contract lives in the implementer prompt's oracle-door block and
-KB 0001 (BF-11).
-"""
 
 # =============================================================================
 
