@@ -239,21 +239,23 @@ def test_done_gate_warns_on_dangling_falsification(tmp_path):
 # 5. science_monitor self-heals once a post-hoc link is made
 # --------------------------------------------------------------------------
 
-def test_supported_blocked_without_attack_then_allowed_after_link(tmp_path):
-    """SUPPORTED_WITHOUT_ATTACK is now a hard block at the HypothesisUpdate
-    data boundary (not a science monitor nag). Verify:
-    1. HypothesisUpdate returns ERROR for SUPPORTED with no falsification attack.
-    2. After marking D001 as a falsification attempt, the update succeeds.
+def test_supported_confirm_without_attack_then_allowed_after_link(tmp_path):
+    """SUPPORTED_WITHOUT_ATTACK is a TWO-SHOT CONFIRM at the HypothesisUpdate
+    data boundary (§4), not a hard block. Verify:
+    1. HypothesisUpdate returns [CONFIRM] for SUPPORTED with no falsification
+       attack (the clean path is to run/link an attempt).
+    2. After marking D001 as a falsification attempt, the update succeeds
+       directly (the confirm is skipped — there IS an attempt now).
     """
     n = _node(tmp_path)
     hid = _propose(n)
     _done_record(n)
-    # 1. No falsification attempt yet → blocked
+    # 1. No falsification attempt yet → two-shot confirm
     out = n.adapter.closure_tools["HypothesisUpdate"](
         hid, "SUPPORTED", "survived", 0.8,
         {"delegation": "D001", "numbers": {"best f": 1.5}})
-    assert out.startswith("ERROR:"), (
-        f"Expected block before falsification attempt, got: {out!r}")
+    assert out.startswith("[CONFIRM]"), (
+        f"Expected a two-shot confirm before a falsification attempt, got: {out!r}")
     # 2. Mark D001 as a falsification attempt → now allowed
     n._delegation_log.mark_attempt("D001", hid)
     out2 = n.adapter.closure_tools["HypothesisUpdate"](

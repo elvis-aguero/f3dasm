@@ -1749,23 +1749,24 @@ def build_routing_tools(node) -> dict:
                 node._final_summary = summary
                 return prefix + _EXIT_INTERVIEW
 
-            # Non-PASS: reset the two-shot and count the revision. After
-            # 3 unsatisfiable verdicts, close GRACEFULLY UNGATED rather
-            # than looping to recursion-limit — record the objections so
-            # the run terminates honestly. (Bounded escape, N=3.) This is
-            # a SILENT internal failsafe — it is deliberately NOT disclosed
-            # to the strategizer (advertising "call Done() 3x to close"
-            # teaches it to exhaust the critic instead of earning a PASS).
+            # Non-PASS: reset the two-shot and count the revision internally.
+            # After a bounded number of unsatisfiable verdicts, close GRACEFULLY
+            # UNGATED rather than looping to recursion-limit. Policy (user, this
+            # session): disclose the SUBSTANCE — the critic's standing objections
+            # and that leaving them unresolved closes the run UNGATED — but NOT
+            # the numeric attempt count (advertising "call Done() N times to
+            # close" teaches the agent to exhaust the critic instead of earning a
+            # PASS). So the agent is never blindsided by an unexplained ending,
+            # and the limit stays un-gameable.
             node._done_warned = False
             node._revise_count = getattr(node, "_revise_count", 0) + 1
             if node._revise_count >= 3:
                 banner = (
                     "## ⚠ UNGATED RUN\n\n"
-                    "This run is NOT validated: the conclusion did not "
-                    f"earn a critic PASS after {node._revise_count} "
-                    "revision attempts. Closing honestly with the critic's "
-                    "outstanding objections recorded below rather than "
-                    "looping.\n\n### Last critic findings\n"
+                    "This run is NOT validated: the conclusion did not earn a "
+                    "critic PASS — its objections (below) remained unresolved. "
+                    "Closing honestly with them on record rather than looping.\n\n"
+                    "### Outstanding critic findings\n"
                     + critique_text.strip() + "\n\n---\n\n"
                 )
                 node._revise_count = 0
@@ -1778,9 +1779,11 @@ def build_routing_tools(node) -> dict:
                 return prefix + _FAILED_RETROSPECTIVE
             return (
                 prefix +
-                f"Critic verdict: {verdict}. Address the findings below "
-                "and revise your conclusion, then call Done() again — a "
-                "run closes only on a critic PASS.\n\n" + critique_text
+                f"Critic verdict: {verdict}. Address the findings below and "
+                "revise your conclusion, then call Done() again — a run closes "
+                "only on a critic PASS. If these objections stay unresolved, the "
+                "run will close UNGATED with them on record, so resolve the "
+                "substance rather than re-submitting unchanged.\n\n" + critique_text
             )
 
         # No critic — no review stage, so no exit interview; close

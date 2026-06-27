@@ -2614,12 +2614,14 @@ _GOOD_WORKER_REPORT = (
 )
 
 
-def test_supported_without_attack_blocked_at_boundary(tmp_path):
-    """SUPPORTED_WITHOUT_ATTACK is now a hard block at HypothesisUpdate.
+def test_supported_without_attack_is_two_shot_confirm_at_boundary(tmp_path):
+    """SUPPORTED_WITHOUT_ATTACK is a TWO-SHOT CONFIRM at HypothesisUpdate (§4).
 
     Flow: propose H1, delegate with wait=True (not a falsification attempt),
-    attempt to update H1 to SUPPORTED — HypothesisUpdate must return an
-    ERROR string directly (not a science monitor drain message).
+    attempt to update H1 to SUPPORTED — HypothesisUpdate must return a
+    "[CONFIRM]" string directly (not a silent accept, not a science monitor
+    drain message). The short comment here is not a justification, so it stays
+    a confirm.
     """
     from f3dasm._src.agentic.nodes import StrategizerNode
     from f3dasm._src.agentic.delegation_log import DelegationLog
@@ -2671,9 +2673,9 @@ def test_supported_without_attack_blocked_at_boundary(tmp_path):
     node(make_state(study_dir=str(tmp_path)))
 
     assert update_results, "HypothesisUpdate was never called"
-    assert any(r.startswith("ERROR:") for r in update_results), (
-        f"Expected HypothesisUpdate to return ERROR when no falsification "
-        f"attempt exists, got: {update_results!r}"
+    assert any(r.startswith("[CONFIRM]") for r in update_results), (
+        f"Expected HypothesisUpdate to return [CONFIRM] (two-shot) when no "
+        f"falsification attempt exists, got: {update_results!r}"
     )
 
 
