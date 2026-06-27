@@ -4,7 +4,6 @@ strategizer (uses its instance attrs + RecordingMixin methods via MRO)."""
 from __future__ import annotations
 
 import os
-import traceback
 from pathlib import Path
 
 # Bound on how many earlier reviews are echoed back to the critic, and the
@@ -203,10 +202,16 @@ class CriticGateMixin:
             critique = worker.invoke(
                 [{"role": "user", "content": task_msg}]
             )
-        except Exception:  # noqa: BLE001
+        except Exception as _exc:  # noqa: BLE001
+            # An infrastructure failure invoking the critic — NOT a problem with
+            # your deliverable. Give a one-line cause, not a raw traceback, and a
+            # constructive next step.
             critique = (
-                "ERROR: critic invocation failed:\n"
-                f"{traceback.format_exc()}"
+                "ERROR: the critic could not be invoked due to an "
+                f"infrastructure error ({type(_exc).__name__}: "
+                f"{str(_exc)[:200]}). This is not a defect in your deliverable. "
+                "Re-call Done() to retry the gate; if it persists, the run will "
+                "close without a critic PASS (the failure is on record)."
             )
         finally:
             # Restore the strategizer's own sink (same thread-local).

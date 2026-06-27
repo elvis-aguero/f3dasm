@@ -2439,10 +2439,15 @@ def build_routing_tools(node) -> dict:
         import nbformat
         prefix = node._drain_notifications()
         if node._study_dir is None:
-            return "ERROR: study_dir not available."
+            return ("ERROR: no study directory is set for this run — an "
+                    "infrastructure condition, not something you did. The "
+                    "notebook can't be written; report it if unexpected.")
         phase = (phase or "").strip()
         if not phase:
-            return "ERROR: phase is required."
+            return ("ERROR: `phase` is required — the section this cell belongs "
+                    "to. Use a standard pillar (doe, data_generation, ml, "
+                    "optimization, analysis) or a custom name for a bespoke "
+                    "design/analysis section.")
         # The five pillars are the USUAL shape, not a fence. A custom design or
         # analysis can warrant its own section. Adding a cell is fully reversible
         # (edit/delete it), so a non-pillar phase just PROCEEDS with a tip — never

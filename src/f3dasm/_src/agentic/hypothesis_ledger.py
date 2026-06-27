@@ -148,13 +148,16 @@ class HypothesisLedger:
             prior_f = float(prior)
         except (TypeError, ValueError):
             return (
-                f"ERROR: prior must be a float in (0, 1), "
-                f"got {prior!r}."
+                f"ERROR: prior must be a number in (0, 1), got {prior!r}. It is "
+                "your honest plausibility for the claim BEFORE testing — e.g. "
+                "0.6 if you lean toward it, 0.3 if you doubt it. Pass a float."
             )
         if not 0.0 < prior_f < 1.0:
             return (
-                "ERROR: prior must be strictly between 0 and 1 — a "
-                "hypothesis you are certain about is not a hypothesis."
+                f"ERROR: prior must be strictly between 0 and 1, got {prior_f}. "
+                "0 or 1 means certainty, and a claim you're certain of isn't a "
+                "hypothesis to test — pick a value like 0.4-0.7 reflecting how "
+                "plausible it is before evidence."
             )
         # Structural guards stay HARD (empty fields break the schema). The two
         # FORMATTING guards below — over-length and compound-claim — are now
@@ -252,18 +255,26 @@ class HypothesisLedger:
         """
         if status not in VALID_STATUSES:
             return (
-                f"ERROR: invalid status {status!r}. "
-                f"Must be one of: {sorted(VALID_STATUSES)}"
+                f"ERROR: invalid status {status!r}. Use one of: OPEN (still "
+                "testing), SUPPORTED (survived an adequate refutation attempt), "
+                "FALSIFIED (an adequate test contradicted the prediction), "
+                "INCONCLUSIVE (the test was too weak to decide)."
             )
         try:
             post_f = float(posterior)
         except (TypeError, ValueError):
             return (
-                f"ERROR: posterior must be a float in [0, 1], "
-                f"got {posterior!r}."
+                f"ERROR: posterior must be a number in [0, 1], got {posterior!r}. "
+                "It is your updated belief in the claim AFTER this evidence — "
+                "higher than the prior if the evidence supported it, lower if it "
+                "pushed against. Pass a float."
             )
         if not 0.0 <= post_f <= 1.0:
-            return f"ERROR: posterior {post_f} outside [0, 1]."
+            return (
+                f"ERROR: posterior must be in [0, 1], got {post_f}. It is a "
+                "probability (your updated belief in the claim), not a score or "
+                "an objective value."
+            )
         has_delegation = (
             isinstance(evidence, dict) and "delegation" in evidence
         )
