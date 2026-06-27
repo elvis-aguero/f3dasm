@@ -97,10 +97,24 @@ def extract(run_dir: Path) -> dict:
                 if line.strip()]
         row["delegations"] = len(recs)
 
-    # ledger rows + mean wall_ms (store is nested: <run>/experiment_data/experiment_data)
-    out_csv = run_dir / "experiment_data" / "experiment_data" / "output.csv"
-    if out_csv.exists():
-        rows = list(csv.DictReader(out_csv.open()))
+    # ledger rows + mean wall_ms across the canonical store AND every design
+    # namespace (Axis 3a). The canonical data dir is <run>/experiment_data/
+    # experiment_data; each namespace store is a sibling <run>/experiment_data/
+    # <ns> with its OWN /experiment_data data dir (different depths, so mirror
+    # total_ledgered_evals's dir walk rather than a single glob).
+    store_root = run_dir / "experiment_data"
+    out_csvs = []
+    _canon = store_root / "experiment_data" / "output.csv"
+    if _canon.exists():
+        out_csvs.append(_canon)
+    if store_root.is_dir():
+        for _sub in sorted(store_root.iterdir()):
+            if _sub.is_dir() and _sub.name != "experiment_data":
+                _f = _sub / "experiment_data" / "output.csv"
+                if _f.exists():
+                    out_csvs.append(_f)
+    if out_csvs:
+        rows = [r for f in out_csvs for r in csv.DictReader(f.open())]
         row["ledger_rows"] = len(rows)
         wm = [float(r["_wall_ms"]) for r in rows
               if r.get("_wall_ms") not in (None, "", "nan")

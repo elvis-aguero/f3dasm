@@ -709,11 +709,13 @@ class AgenticRun:
         # delegations whose evals are real.
         evals = result.get("evals_used", 0)
         try:
-            from .instrumented import RunStateSummary
-            _summary = RunStateSummary.from_store(
-                debug_dir.parent / "experiment_data")
-            if _summary is not None:
-                evals = sum(_summary.n_per_delegation.values())
+            # Sum across the canonical store AND every design namespace (Axis 3a):
+            # namespace evals live in sibling stores the canonical-only count
+            # missed (run 20260627T013812 reported 100 while 200 real evals ran).
+            from .instrumented import total_ledgered_evals
+            _total = total_ledgered_evals(debug_dir.parent / "experiment_data")
+            if _total:
+                evals = _total
         except Exception:  # noqa: BLE001
             log.warning("ledger eval-count failed; using state counter",
                         exc_info=True)

@@ -68,3 +68,23 @@ def test_delegation_eval_store_resolves_namespace(tmp_path):
     # None → the canonical store; a namespace → its subdir.
     assert delegation_eval_store(exp, None) == exp
     assert delegation_eval_store(exp, "polar") == exp / "polar"
+
+
+def test_run_ledger_counts_rows_across_namespaces(tmp_path):
+    """The KPI ledger's ledger_rows must sum the canonical store AND every
+    namespace store — they sit at DIFFERENT depths under <run>/experiment_data
+    (canonical: experiment_data/experiment_data; namespace: <ns>/experiment_data),
+    so a single glob misses one (regression: the first fix attempt did)."""
+    import sys
+    sys.path.insert(0, "studies")
+    import run_ledger
+
+    run_dir = tmp_path / "runs" / "T"
+    (run_dir / "debug").mkdir(parents=True)
+    # canonical store at <run>/experiment_data (its data → experiment_data/...)
+    _seed_store(run_dir / "experiment_data", 100, "D001")
+    # namespace 'polar' store at <run>/experiment_data/polar
+    _seed_store(run_dir / "experiment_data" / "polar", 100, "D002")
+
+    row = run_ledger.extract(run_dir)
+    assert row["ledger_rows"] == 200
