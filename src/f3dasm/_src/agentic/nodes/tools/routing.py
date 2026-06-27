@@ -1184,9 +1184,13 @@ def build_routing_tools(node) -> dict:
         # can tell "progressing" from "stuck" instead of inferring it from
         # wall-time (the blindness that drove over-cancelling). Also folds in
         # backlog #6: zero stamped after a long wall-time IS the stuck signal.
-        _store = (
+        # Read the delegation's OWN store (its namespace, or canonical) — else a
+        # namespaced campaign polls as 0 progress and the stuck-signal above would
+        # over-cancel a healthy worker (the very blindness this block fights).
+        _store = delegation_eval_store(
             node._current_notes_dir.parent.parent / "experiment_data"
-            if node._current_notes_dir is not None else None
+            if node._current_notes_dir is not None else None,
+            entry.get("namespace"),
         )
         cur_stamped = _stamped_eval_count(_store, delegation_id) if _store else 0
         delta = cur_stamped - prev_stamped
@@ -1350,10 +1354,13 @@ def build_routing_tools(node) -> dict:
                 )
             # Harden against impatience: a delegation already writing ledgered
             # evals is progressing, not stuck. Require a deliberate second call
-            # so a slow-but-healthy campaign can't be discarded on a whim.
-            _store = (
+            # so a slow-but-healthy campaign can't be discarded on a whim. Read
+            # the delegation's OWN store (its namespace, or canonical) — else a
+            # namespaced campaign reads 0 stamped and loses this two-shot guard.
+            _store = delegation_eval_store(
                 node._current_notes_dir.parent.parent / "experiment_data"
-                if node._current_notes_dir is not None else None
+                if node._current_notes_dir is not None else None,
+                entry.get("namespace"),
             )
             _stamped = _stamped_eval_count(_store, delegation_id) if _store else 0
             if _stamped > 0 and not entry.get("cancel_pending"):
@@ -1711,11 +1718,13 @@ def build_routing_tools(node) -> dict:
             _notes_sp = getattr(node, "_current_notes_dir", None)
             if _notes_sp is not None:
                 try:
-                    from ...instrumented import RunStateSummary
-                    _sm = RunStateSummary.from_store(
-                        _notes_sp.parent.parent / "experiment_data")
-                    if _sm is not None:
-                        _spent = int(_sm.n_rows)
+                    # Sum across the canonical store AND every design namespace,
+                    # so the critic's budget framing reflects ALL real evals (a
+                    # canonical-only count under-reports a multi-namespace run and
+                    # would have the critic demand work the budget can't afford).
+                    from ...instrumented import total_ledgered_evals
+                    _spent = int(total_ledgered_evals(
+                        _notes_sp.parent.parent / "experiment_data"))
                 except Exception:  # noqa: BLE001
                     _spent = 0
             if _spent == 0 and node._delegation_log is not None:
