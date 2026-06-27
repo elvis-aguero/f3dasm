@@ -158,3 +158,62 @@ holds do we implement Axis 3 (and the Axis 2 nudges). Axis 1 needs no code beyon
    regression tests first, e2e last (per the headless-smoke-before-e2e rule).
 4. **§4 record** — Axes 1 and 2 are epistemic-contract decisions the user made in this
    session; logged in this doc and the BACKLOG.
+
+---
+
+## Axis 3 eval-accounting — brittleness post-mortem + the bulletproof redesign (2026-06-27)
+
+**What happened.** The first namespace design gave each namespace its OWN physical
+store (`experiment_data/<ns>/`). Then every place that counts evals had to remember to
+aggregate across stores. It didn't, in *seven* places, discovered one validation run at
+a time (commits cea08d8b→d27a33ae): run total, KPI ledger, the unledgered-evals bounce,
+per-delegation reconciliation, GetStatus poll, cancel two-shot, critic budget. Then n=5
+datapoints exposed an *eighth* failure: the namespace can be chosen at the worker call
+site (`get_evaluator(namespace='ring')`) independently of `Delegate(namespace=…)`, so the
+registry-keyed fix is blind whenever the two diverge (run 20260627T045747, D004).
+
+**Root cause (not the symptoms).** The DATA MODEL (N physical stores) did not match the
+question the whole codebase asks ("how many evals in this run / by this delegation?").
+The single-store invariant the code was built on was silently violated. Every aggregation
+helper is a band-aid: it makes the *right* read AVAILABLE but leaves the *wrong* read
+(`from_store(canonical)`) still present and still LOOKING correct — so the next consumer
+is born blind. **A mechanism is bulletproof only when the wrong usage is impossible or
+loud, not when the right usage is merely available.**
+
+**The bulletproof redesign: namespace is a COLUMN, not a directory.** Collapse the N
+stores back to ONE canonical store; stamp every eval with a `_namespace` provenance
+column, exactly as the instrumented layer already stamps `_delegation_id`/`_source`/`_ts`.
+Then:
+- Run total = `len(store)` — every existing canonical-store reader is correct with ZERO
+  changes. The naive read becomes the RIGHT read (the brittleness is inverted, not
+  patched).
+- Per-delegation count = rows where `_delegation_id==D`; per-namespace view = filter
+  `_namespace==X`. Off-ledger guard, repro gate, budget: all read the one store, all
+  namespace-aware for free. No subdir iteration, no `oracles[*].store_dir` redirection, no
+  registry dependency, no "remember to aggregate."
+- Selection path no longer matters: whether the namespace came from `Delegate(namespace=)`
+  or `get_evaluator(namespace=)`, the eval lands in the one store stamped `_namespace`.
+
+**Why THIS is not automatically bulletproof either (the adversarial half of the spec):**
+- **Heterogeneous input schema.** Different namespaces have different design variables
+  (cartesian x,y vs polar r,θ). One store ⇒ either a UNION input schema (sparse/NaN rows,
+  Domain grows as namespaces appear — against f3dasm's "Domain fixed once") or a serialized
+  `_design` blob column (stable schema, but inputs aren't first-class for the ledger).
+  **Decisive test before committing:** does `ExperimentData(canon) + ExperimentData(batch)`
+  with DISJOINT input columns union cleanly, or raise? If it unions → sparse columns are
+  fine (counting is schema-agnostic; surrogate fitting uses the implementer's own local
+  typed working data, not the ledger). If it raises → use the `_design` blob (stable
+  schema). Either way the failure is LOUD (merge error) and contained in ONE place, not a
+  silent undercount spread across consumers.
+- **Backward-compat.** Single-namespace runs = one store, `_namespace="default"`. Existing
+  studies unaffected (`_namespace` is additive provenance like `_delegation_id`). Verify no
+  reader assumes the column's absence.
+- **No f3dasm core change.** `_namespace` is stamped by the agentic InstrumentedDataGenerator
+  via the existing `extra_provenance` mechanism — core `ExperimentData` is untouched (modulo
+  the union-vs-blob test above).
+
+**Decision rule going forward (the lesson):** prefer designs where the invariant the code
+already assumes stays TRUE, over designs that add a parallel structure every consumer must
+learn about. When a parallel structure is unavoidable, the spec must enumerate the blind
+paths it creates and make them loud — before writing code, not after the third validation
+run.
