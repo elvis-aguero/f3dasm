@@ -104,22 +104,21 @@ def test_propose_nudges_numbered_subclaims(tmp_path):
     assert "[NUDGE]" in r
 
 
-def test_propose_max_open_is_two_shot_nudge_not_block(tmp_path):
-    """Past the open ceiling, a new proposal is NUDGED (not blocked): the agent
-    re-submits the SAME proposal to confirm and it registers. Exploring several
-    designs at once legitimately wants more than MAX_OPEN open."""
+def test_propose_max_open_is_proceed_with_tip_not_block(tmp_path):
+    """Past the open ceiling, a new proposal is REGISTERED with a tip — not
+    refused, not two-shot. Opening a hypothesis is fully reversible (close it),
+    and exploring several designs at once legitimately wants more than MAX_OPEN
+    open. The tip advises closing settled ones."""
     ledger = fresh_ledger(tmp_path)
     for i in range(3):
         assert propose_ok(
             ledger, statement=f"Claim {i} below threshold 1.{i}"
         ).startswith("H")
-    # First over-cap attempt → confirm nudge, NOT an ERROR, NOT created.
-    r1 = propose_ok(ledger, statement="Fourth claim below 9.9")
-    assert r1.startswith("[CONFIRM]")
-    assert not r1.startswith("ERROR:")
-    # Re-submitting the SAME proposal confirms and registers it.
-    r2 = propose_ok(ledger, statement="Fourth claim below 9.9")
-    assert r2.startswith("H")
+    # Over-cap → created (starts with "H") with a [NUDGE] tip; never refused.
+    r = propose_ok(ledger, statement="Fourth claim below 9.9")
+    assert r.startswith("H")
+    assert "[NUDGE]" in r and not r.startswith("ERROR:")
+    assert ledger.get(r.splitlines()[0])["status_log"][-1]["status"] == "OPEN"
 
 
 # ------------------------- update -------------------------
@@ -258,7 +257,9 @@ def test_load_raises_on_old_schema_file(tmp_path):
 # ------------------------- thread safety -------------------------
 
 def test_concurrent_propose_is_thread_safe(tmp_path):
-    """Two threads propose concurrently; max 3 OPEN must be respected."""
+    """Concurrent proposes don't corrupt the ledger: every distinct claim is
+    registered exactly once with a unique id (the open ceiling is a tip, not a
+    cap, so all register; thread-safety is about no lost/duplicated ids)."""
     ledger = fresh_ledger(tmp_path)
     results = []
     lock = threading.Lock()
@@ -282,7 +283,9 @@ def test_concurrent_propose_is_thread_safe(tmp_path):
     for t in threads:
         t.join()
 
-    # At most MAX_OPEN are actually CREATED without an explicit confirm; the
-    # rest get a "[CONFIRM]" nudge (not a silent create). Count real creations.
-    created = sum(1 for r in results if r.startswith("H"))
-    assert created <= 3
+    # All 6 distinct claims register (the ceiling is a tip); ids are unique and
+    # contiguous — no lost or duplicated registrations under concurrency.
+    created = [r.splitlines()[0] for r in results if r.startswith("H")]
+    assert len(created) == 6
+    assert len(set(created)) == 6
+    assert len(ledger.list_all()) == 6

@@ -1184,9 +1184,11 @@ def test_max_three_open_hypothesis_guard(tmp_path):
         notes_dir=tmp_path,
     )
     node(make_state())
-    # Past the open ceiling the 4th proposal is NUDGED (two-shot confirm), not
-    # hard-blocked — tracking several at once (e.g. one per design) is allowed.
-    assert error_seen and error_seen[0].startswith("[CONFIRM]")
+    # Past the open ceiling the 4th proposal is REGISTERED with a tip, not
+    # blocked or two-shot — tracking several at once (e.g. one per design) is
+    # allowed; the tip just advises closing settled ones.
+    assert error_seen and error_seen[0].startswith("H")
+    assert "[NUDGE]" in error_seen[0]
 
 
 def test_worker_write_rejected_outside_delegation_subfolder(tmp_path):

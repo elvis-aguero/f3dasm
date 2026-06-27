@@ -2441,22 +2441,11 @@ def build_routing_tools(node) -> dict:
         if not phase:
             return "ERROR: phase is required."
         # The five pillars are the USUAL shape, not a fence. A custom design or
-        # analysis can warrant its own section, so a non-pillar phase is a two-
-        # shot nudge (confirm by re-calling), not a block — the deliverable's
-        # structure must not constrain what science can be expressed.
-        if phase not in _PILLARS:
-            if not hasattr(node, "_custom_phase_ack"):
-                node._custom_phase_ack = set()
-            if phase not in node._custom_phase_ack:
-                node._custom_phase_ack.add(phase)
-                return (prefix + f"[CONFIRM] '{phase}' is not one of the usual "
-                        f"f3dasm pillars {_PILLARS}. The deliverable usually "
-                        "follows them, but a different design or analysis can "
-                        f"warrant a custom section. If you intend a custom "
-                        f"'{phase}' cell, re-call AddPipelineCell with the same "
-                        "phase to confirm — it will be appended after the "
-                        "standard pillars.")
-            # confirmed → fall through and add the custom cell
+        # analysis can warrant its own section. Adding a cell is fully reversible
+        # (edit/delete it), so a non-pillar phase just PROCEEDS with a tip — never
+        # a refusal or a confirm. The deliverable's structure must not constrain
+        # what science can be expressed.
+        _custom_phase = phase not in _PILLARS
         if not (why or "").strip():
             return ("ERROR: `why` is required — every pillar cell needs its "
                     "rationale (the WHY-explainer the writeup always lacked).")
@@ -2477,6 +2466,12 @@ def build_routing_tools(node) -> dict:
         cc.metadata["tags"] = [phase]
         by[f"{phase}__why"], by[phase] = wc, cc
         _emit_notebook(by, nb, nb_path)
+        if _custom_phase:
+            return (prefix + f"Added custom '{phase}' cell (rev {_rev(code)}) to "
+                    f"pipeline.ipynb, after the standard pillars. '{phase}' isn't "
+                    f"one of the usual pillars {_PILLARS} — fine for a custom "
+                    "design/analysis section; edit or remove it any time with "
+                    "EditPipelineCell / DeletePipelineCell.")
         present = [p for p in _PILLARS if p in by]
         missing = [p for p in _PILLARS if p not in by]
         return (prefix + f"Added {phase} cell (rev {_rev(code)}) to "
