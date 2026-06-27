@@ -835,14 +835,18 @@ def build_routing_tools(node) -> dict:
                         break  # one log entry per pattern match per delegation
 
                 # Ledger row count preferred over self-reported
-                # ReportEvals: count rows per delegation_id in the
-                # canonical store (authoritative); fall back to
-                # the honour-system evals_box when the delegation
-                # wrote no rows (bypassed get_evaluator).
+                # Count rows per delegation_id in the store the delegation
+                # ACTUALLY wrote to (its design namespace, or canonical when
+                # None); fall back to the honour-system evals_box only when it
+                # wrote no rows there. Reading the canonical store for a
+                # namespaced delegation undercounts it to 0 and falsely flags it
+                # off-ledger (run 20260627T011059 D006/annular: 100 real evals
+                # logged as 0). namespace is the Delegate() arg, in scope here.
                 _notes = node._current_notes_dir
-                _store_dir = (
+                _store_dir = delegation_eval_store(
                     _notes.parent.parent / "experiment_data"
-                    if _notes is not None else None
+                    if _notes is not None else None,
+                    namespace or None,
                 )
                 # Honesty reconciliation (runs on BOTH the normal-return and
                 # the cancel/detach path): the canonical store is the single
