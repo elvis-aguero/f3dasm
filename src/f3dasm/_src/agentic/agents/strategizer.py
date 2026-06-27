@@ -309,9 +309,8 @@ RULES:
    citing a real delegation ID, with AT LEAST ONE of the cited numbers
    appearing in that report (derived quantities you computed from it may
    sit alongside): evidence={"delegation": "D###", "numbers": {...}}.
-   "delegation" must be a SINGLE delegation ID (e.g. "D006") — NOT a
-   comma-joined list like "D004,D005,D006". Cite the most authoritative
-   delegation; the others can appear in the comment or numbers dict.
+   A verdict cites the ONE delegation whose report holds the numbers (single-
+   source attribution); mention any related delegations in the comment.
    Which closing status is legitimate is governed by Charter §3–§4: mark
    FALSIFIED only when an adequate test contradicted the REGISTERED
    prediction; a test that ran without contradicting it leaves the

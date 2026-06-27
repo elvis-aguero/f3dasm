@@ -217,3 +217,46 @@ already assumes stays TRUE, over designs that add a parallel structure every con
 learn about. When a parallel structure is unavoidable, the spec must enumerate the blind
 paths it creates and make them loud — before writing code, not after the third validation
 run.
+
+---
+
+## Resolution — the experiment primitive + interaction philosophy (2026-06-27, implemented)
+
+The "bulletproof redesign" section above proposed collapsing to a SINGLE store
+with a `_namespace` column. **That was rejected as muddy** (hoping heterogeneous
+`ExperimentData` merge gracefully, or a `_design` blob, is not a clean
+abstraction — a philosopher frowns). The landed model is cleaner:
+
+**The experiment primitive.** An experiment = its own clean `ExperimentData` + a
+registered oracle + a provenance name. The run is the *collection* of experiments.
+Honesty is intrinsic per-experiment (claims trace to that experiment's own clean
+store); no merge, no blob, no global store. The few genuinely-global totals
+(the cost/budget sum) iterate the registered collection.
+
+**Accounting is provenance-based, not experiment-guessing.** A delegation's evals
+are counted by its `_delegation_id` stamp across every store, so the count is
+correct no matter HOW the experiment was selected (`Delegate(namespace=)` or
+`get_evaluator(namespace=)` at the call site). This deleted the brittle namespace
+threading and fixed the off-ledger false-positive at its root (commit 02f227f5).
+
+**Comparison stays the agents' judgment, not our machinery.** We provide the
+substrate; the comparable path (reuse the registered objective) is made the
+low-friction default, not an enforced invariant.
+
+**Interaction philosophy (the guard taxonomy).** Three modes, chosen by
+reversibility-first: PROCEED+TIP (easily reversible) · CONFIRM/two-shot
+(reversible-but-weighty, or catch-before for not-easily-reversible) ·
+PRECONDITION-BLOCK (impossible until the input/world changes). Every message
+states what + why + the next step — a helpful collaborator's tip, never a
+bureaucratic refusal. §4 decisions implemented this session: SUPPORTED-without-
+falsification → two-shot CONFIRM (with written justification); off-ledger →
+corrective PROCEED+TIP (no rerun dance; gate is the floor); UNGATED close →
+discloses the objections, not the attempt count; max-open & custom-phase →
+PROCEED+TIP. Commits 02f227f5 → 25bf2014.
+
+**Still open (the real viability question):** multi-experiment fan-out vs.
+wall-clock — how the strategizer budgets/decomposes across experiments so a
+3-experiment run doesn't blow the watchdog. The n=5 batch showed 2 GATED / 1
+UNGATED / 2 watchdog-killed (one a literature-reviewer hang, one overwork). This
+is the design fork that decides whether the direction scales; it is the user's
+call and is NOT addressed by the accounting/interaction work above.

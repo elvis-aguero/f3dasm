@@ -123,6 +123,21 @@ def test_supported_allowed_when_falsification_attempt_completed(tmp_path):
         f"Expected success but got error: {result!r}")
 
 
+def test_evidence_delegation_must_be_single_source(tmp_path):
+    """Single-source attribution is enforced in CODE (not a prompt format-rule):
+    a comma-joined or list delegation is rejected with the principle stated."""
+    n = _node(tmp_path)
+    for m in list(n._milestones.pending()):
+        n._milestones.skip(m["id"], "test")
+    h = _propose(n)
+    _record_done(n, "D001", falsify=True, h_ids=[h])
+    _record_done(n, "D002", falsify=True, h_ids=[h])
+    out = n.adapter.closure_tools["HypothesisUpdate"](
+        h, "SUPPORTED", "x", 0.8,
+        evidence={"delegation": "D001,D002", "numbers": {"best_f": 1.47}})
+    assert out.startswith("ERROR:") and "single source" in out.lower()
+
+
 def test_supported_confirm_names_missing_criterion(tmp_path):
     """The CONFIRM message for SUPPORTED-without-attack cites the falsification
     criterion so the agent knows what to test."""

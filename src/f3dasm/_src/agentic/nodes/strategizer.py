@@ -521,9 +521,23 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                             f"confirms. Falsification criterion: {crit!r}"
                         )
                     node._supported_confirm_pending.discard(hypothesis_id)
-            # Hard gate: cited delegation must be completed (not phantom).
+            # Single-source attribution (the principle behind what used to be a
+            # prompt format-rule): a closing verdict cites the ONE delegation whose
+            # report contains the cited numbers. A list / comma-joined value can't
+            # be attributed to a single source, so reject it here (the tool is the
+            # right place for this, not the prompt — CLAUDE.md §2).
             ev = evidence or {}
             d_cited = ev.get("delegation")
+            if isinstance(d_cited, (list, tuple)) or (
+                isinstance(d_cited, str) and "," in d_cited
+            ):
+                return (
+                    f"ERROR: evidence['delegation'] for {hypothesis_id} must name "
+                    "ONE delegation — the one whose report contains the cited "
+                    f"numbers — not several ({d_cited!r}). A verdict has to be "
+                    "attributable to a single source; cite the authoritative one "
+                    "and mention the others in `comment` or the numbers dict."
+                )
             if (
                 d_cited is not None
                 and d_cited != "D000"
