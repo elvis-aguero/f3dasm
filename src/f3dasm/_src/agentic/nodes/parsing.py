@@ -26,94 +26,74 @@ _VALID_VERDICTS = {"PASS", "REVISE", "REJECT"}
 
 
 def _resolve_delegation_evals(
-    store_dir: Path | None,
+    run_exp_dir: Path | None,
     delegation_id: str,
     reported: int,
 ) -> int:
     """Return the eval count for a delegation.
 
-    Prefers the row count from the canonical evaluation ledger
-    (authoritative) over the honour-system ReportEvals self-report.
-    Falls back to *reported* for delegations that bypassed the ledger
-    (wrote no rows) — e.g. delegations using lookup tables directly.
+    Prefers the row count from the canonical ledger (authoritative, summed across
+    every experiment store) over the honour-system ReportEvals self-report. Falls
+    back to *reported* for delegations that wrote no rows (e.g. lookup-direct
+    studies).
 
     Parameters
     ----------
-    store_dir:
-        The run-level directory that contains ``experiment_data/``
-        (i.e. ``run_config["store_dir"]``).  ``None`` disables ledger
-        counting and always returns *reported*.
+    run_exp_dir:
+        The run-level ``experiment_data/`` root (``run_config["store_dir"]``).
+        Counting aggregates across the default store and every design experiment
+        store beneath it.  ``None`` disables ledger counting and returns *reported*.
     delegation_id:
         E.g. ``"D003"``.
     reported:
         The value from ``ReportEvals`` (honour-system fallback).
     """
-    if store_dir is None:
+    if run_exp_dir is None:
         return reported
     try:
-        from ..instrumented import RunStateSummary
-        summary = RunStateSummary.from_store(store_dir)
-        if (
-            summary is not None
-            and summary.n_per_delegation.get(delegation_id, 0) > 0
-        ):
-            return summary.n_per_delegation[delegation_id]
+        from ..instrumented import delegation_evals
+        ledgered = delegation_evals(run_exp_dir, delegation_id)
+        if ledgered > 0:
+            return ledgered
     except Exception:  # noqa: BLE001
         pass
     return reported
 
 
-def delegation_eval_store(
-    run_exp_dir: Path | None, namespace: str | None
-) -> Path | None:
-    """Resolve the ExperimentData store a delegation actually writes to.
+def _stamped_eval_count(run_exp_dir: Path | None, delegation_id: str) -> int:
+    """Rows stamped with this delegation_id across EVERY experiment store under
+    the run's ``experiment_data/`` root (0 if none).
 
-    A namespaced delegation (design-namespace, Axis 3a) writes to its OWN store
-    at ``<run_exp_dir>/<namespace>``, NOT the canonical ``<run_exp_dir>``. The
-    unledgered-evals guard and stamped-row counts MUST look there — otherwise a
-    namespaced worker that correctly used get_evaluator() reads as 0 rows in the
-    canonical store and is falsely bounced as having bypassed the oracle
-    (observed: run 20260626T231202 D003 re-ran 6x chasing a check it could never
-    satisfy, inflating the polar ledger to 600 rows). ``namespace=None`` → the
-    canonical store, unchanged.
+    Provenance-based and experiment-selection-agnostic: a delegation's rows are
+    found by its stamp wherever they landed, so a worker that reached the oracle
+    via ``get_evaluator(namespace=...)`` at the call site is counted correctly,
+    not falsely flagged off-ledger. Unlike _resolve_delegation_evals there is no
+    honour-system fallback — this reports ONLY provenance-stamped rows.
     """
     if run_exp_dir is None:
-        return None
-    return (run_exp_dir / namespace) if namespace else run_exp_dir
-
-
-def _stamped_eval_count(store_dir: Path | None, delegation_id: str) -> int:
-    """Rows in the canonical store stamped with this delegation_id (0 if none).
-
-    Unlike _resolve_delegation_evals (which falls back to the honour-system
-    count), this reports ONLY provenance-stamped rows — so a caller can detect
-    a delegation that evaluated but bypassed get_evaluator().
-    """
-    if store_dir is None:
         return 0
     try:
-        from ..instrumented import RunStateSummary
-        summary = RunStateSummary.from_store(store_dir)
-        if summary is not None:
-            return int(summary.n_per_delegation.get(delegation_id, 0))
+        from ..instrumented import delegation_evals
+        return delegation_evals(run_exp_dir, delegation_id)
     except Exception:  # noqa: BLE001
-        pass
-    return 0
+        return 0
 
 
 def _reconcile_delegation_evals(
-    store_dir: Path | None,
+    run_exp_dir: Path | None,
     delegation_id: str,
     claimed: int,
     source_registered: bool,
 ) -> tuple[int, bool, int]:
-    """Reconcile a worker's claimed eval count against the canonical store.
+    """Reconcile a worker's claimed eval count against the ledger.
 
-    The canonical store is the single source of truth. When a ground-truth
-    source is registered and the worker CLAIMED evaluations but NONE are
-    provenance-stamped in the store, the delegation evaluated off-ledger: the
-    truthful count is 0. Otherwise fall back to the usual resolution (ledger
-    rows if any, else the honour-system claim — e.g. lookup-direct studies).
+    The ledger (summed across every experiment store) is the single source of
+    truth. When a ground-truth source is registered and the worker CLAIMED
+    evaluations but NONE are provenance-stamped in ANY store, the delegation
+    evaluated off-ledger: the truthful count is 0. Otherwise fall back to the
+    usual resolution (ledger rows if any, else the honour-system claim — e.g.
+    lookup-direct studies). Provenance-based, so a worker that selected its
+    experiment at the call site is reconciled correctly (run 20260627T045747).
 
     Used on BOTH the normal-return and the cancel/detach path so an off-ledger
     delegation cannot silently keep a claimed-but-unledgered eval count.
@@ -125,11 +105,11 @@ def _reconcile_delegation_evals(
         claim could not be backed by stamped rows; ``stamped`` — stamped row
         count (for diagnostics).
     """
-    stamped = _stamped_eval_count(store_dir, delegation_id)
+    stamped = _stamped_eval_count(run_exp_dir, delegation_id)
     if source_registered and claimed > 0 and stamped == 0:
         return 0, True, stamped
     return (
-        _resolve_delegation_evals(store_dir, delegation_id, claimed),
+        _resolve_delegation_evals(run_exp_dir, delegation_id, claimed),
         False,
         stamped,
     )

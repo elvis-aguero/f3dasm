@@ -192,8 +192,16 @@ def register_evaluator_entrypoint(
     entrypoint = f"{file_part}:{attr}"
 
     if namespace:
-        # Per-namespace oracle: its own isolated, protected store; the canonical
-        # default oracle/store is left untouched.
+        # Per-experiment oracle: its own isolated, protected store; the default
+        # oracle/store is left untouched. The experiment store is a sibling subdir
+        # of the default store, so its name must not collide with the default's
+        # own data dir ("experiment_data") — that name is how every accounting
+        # helper distinguishes the default store from an experiment store.
+        if namespace == "experiment_data":
+            raise ValueError(
+                "'experiment_data' is reserved (it is the default store's own "
+                "data dir) — choose a different experiment/namespace name."
+            )
         from .._io import PROTECTED_STORE_SENTINEL
         base_store = Path(config["store_dir"])
         ns_store = base_store / namespace

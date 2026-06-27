@@ -991,38 +991,60 @@ class RunStateSummary:
 # ==========================================================================
 
 
-def total_ledgered_evals(store_dir: Path | str) -> int:
-    """Total ledgered evaluations across the canonical store AND every design
-    namespace (Axis 3a).
+def experiment_stores(store_root: Path | str) -> list[Path]:
+    """Every ExperimentData store in a run: the canonical/default store plus one
+    per design experiment.
 
-    The run's true eval count is the sum over the canonical store and each
-    namespace store. Namespace stores live as sibling subdirs of the canonical
-    store (``<store_dir>/<namespace>``, written by get_evaluator(namespace)); the
-    canonical store's OWN data lives under ``<store_dir>/experiment_data`` (the
-    one subdir that is NOT a namespace). Without this, `evals_used` and the soft
-    eval budget see only the canonical store and miss every namespace eval
-    (observed: run 20260626T231202 reported 180 while 780 real evals ran).
-
-    Falls back to the canonical count if anything goes wrong — never raises.
+    A run holds one clean ``ExperimentData`` per experiment. The default store is
+    ``<store_root>`` itself (its data under ``<store_root>/experiment_data``);
+    each additional experiment is a sibling subdir ``<store_root>/<name>`` with
+    its own ``experiment_data/``. ``experiment_data`` is the default store's own
+    data dir, never an experiment name (registration forbids that name), so it is
+    skipped. The default store is always included.
     """
-    store_dir = Path(store_dir)
-    total = 0
-    canon = RunStateSummary.from_store(store_dir)
-    if canon is not None:
-        total += int(canon.n_rows)
+    store_root = Path(store_root)
+    stores = [store_root]
     try:
-        for sub in store_dir.iterdir():
-            # Namespace stores are sibling subdirs that themselves hold an
-            # experiment_data/ project; skip the canonical's own data subdir.
-            if not sub.is_dir() or sub.name == "experiment_data":
-                continue
-            if not (sub / "experiment_data" / "output.csv").exists():
-                continue
-            ns = RunStateSummary.from_store(sub)
-            if ns is not None:
-                total += int(ns.n_rows)
+        for sub in sorted(store_root.iterdir()):
+            if (sub.is_dir() and sub.name != "experiment_data"
+                    and (sub / "experiment_data" / "output.csv").exists()):
+                stores.append(sub)
     except (FileNotFoundError, OSError):
         pass
+    return stores
+
+
+def total_ledgered_evals(store_root: Path | str) -> int:
+    """Total ledgered evaluations across every experiment store in the run.
+
+    The run's true eval count is the sum over all experiment stores (default +
+    each design experiment) — a single store would miss the others (observed:
+    run 20260626T231202 reported 180 while 780 real evals ran). Never raises.
+    """
+    total = 0
+    for store in experiment_stores(store_root):
+        s = RunStateSummary.from_store(store)
+        if s is not None:
+            total += int(s.n_rows)
+    return total
+
+
+def delegation_evals(store_root: Path | str, delegation_id: str) -> int:
+    """Rows stamped with this delegation_id across EVERY experiment store.
+
+    Provenance-based: a delegation's evaluations are found by its stamp wherever
+    they landed, so the count is correct no matter HOW the experiment was selected
+    — ``Delegate(namespace=...)`` OR ``get_evaluator(namespace=...)`` at the call
+    site. This is what makes the unledgered-evals guard immune to the selection
+    path (run 20260627T045747: a delegation that wrote to the 'ring' store via the
+    call site was falsely flagged off-ledger because the guard only knew the
+    Delegate-arg experiment). Never raises.
+    """
+    total = 0
+    for store in experiment_stores(store_root):
+        s = RunStateSummary.from_store(store)
+        if s is not None:
+            total += int(s.n_per_delegation.get(delegation_id, 0))
     return total
 
 
@@ -1032,4 +1054,6 @@ __all__ = [
     "get_evaluator",
     "load_inner_evaluator",
     "total_ledgered_evals",
+    "delegation_evals",
+    "experiment_stores",
 ]

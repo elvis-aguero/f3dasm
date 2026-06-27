@@ -6,10 +6,11 @@ single canonical store.
 
 1. `total_ledgered_evals` must sum rows across the canonical store AND every
    namespace store (so `evals_used` / the soft budget see all real evals).
-2. `delegation_eval_store` must resolve a namespaced delegation's store, so the
-   unledgered-evals guard checks the store the worker actually wrote to (not the
-   canonical store, which falsely reads 0 → false off-ledger bounce → re-run
-   thrash → duplicate rows).
+2. `delegation_evals` must count a delegation's rows across EVERY store by its
+   stamp, so the unledgered-evals guard finds the rows wherever the worker wrote
+   them (not just the canonical store, which falsely reads 0 → false off-ledger
+   bounce → re-run thrash → duplicate rows). Provenance-based, so it is immune to
+   how the experiment was selected (Delegate arg or get_evaluator call site).
 """
 from __future__ import annotations
 
@@ -61,13 +62,33 @@ def test_total_ledgered_evals_canonical_only_is_unchanged(tmp_path):
     assert total_ledgered_evals(store) == 42
 
 
-def test_delegation_eval_store_resolves_namespace(tmp_path):
-    from f3dasm._src.agentic.nodes.parsing import delegation_eval_store
+def test_delegation_evals_counts_a_delegation_across_stores(tmp_path):
+    """Provenance-based: a delegation's rows are counted by its stamp wherever
+    they landed — canonical OR any experiment store — never by guessing which."""
+    from f3dasm._src.agentic.instrumented import delegation_evals
 
-    exp = tmp_path / "experiment_data"
-    # None → the canonical store; a namespace → its subdir.
-    assert delegation_eval_store(exp, None) == exp
-    assert delegation_eval_store(exp, "polar") == exp / "polar"
+    store = tmp_path / "experiment_data"
+    _seed_store(store, 100, "D001")                 # canonical: D001
+    _seed_store(store / "ring", 80, "D002")         # experiment 'ring': D002
+    assert delegation_evals(store, "D001") == 100
+    assert delegation_evals(store, "D002") == 80    # found in the 'ring' store
+    assert delegation_evals(store, "D999") == 0
+
+
+def test_reconcile_not_fooled_by_call_site_experiment(tmp_path):
+    """Run 20260627T045747 regression. A delegation that evaluated correctly via
+    get_evaluator(namespace='ring') at the CALL SITE wrote its rows to the 'ring'
+    store, not canonical. The reconciliation must find them by provenance and NOT
+    falsely flag it off-ledger (which forced the wasteful re-run that blew the
+    watchdog). The run root is passed — no namespace is guessed."""
+    from f3dasm._src.agentic.nodes.parsing import _reconcile_delegation_evals
+
+    store = tmp_path / "experiment_data"
+    _seed_store(store, 100, "D001")                 # someone else, canonical
+    _seed_store(store / "ring", 80, "D004")         # D004 wrote to 'ring'
+    evals, off_ledger, stamped = _reconcile_delegation_evals(
+        store, "D004", claimed=80, source_registered=True)
+    assert evals == 80 and off_ledger is False and stamped == 80
 
 
 def test_run_ledger_counts_rows_across_namespaces(tmp_path):

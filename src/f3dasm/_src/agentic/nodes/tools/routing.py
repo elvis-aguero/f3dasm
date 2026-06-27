@@ -18,7 +18,6 @@ from ..parsing import (
     _parse_verdict,
     _reconcile_delegation_evals,
     _stamped_eval_count,
-    delegation_eval_store,
 )
 
 
@@ -746,16 +745,16 @@ def build_routing_tools(node) -> dict:
                 # reviewer never reaches get_evaluator, so bouncing it is
                 # pointless — see _enforce_ledger above).
                 # Soft: after 3 tries, accept anyway.
-                # Check the store the worker ACTUALLY wrote to: a namespaced
-                # delegation writes to its own <experiment_data>/<namespace>, not
-                # the canonical store. Reading the canonical store here was the
-                # root of the false off-ledger bounce → re-run thrash → duplicate
-                # rows (run 20260626T231202 D003: 600 polar rows for a 100-pt
-                # sweep). namespace is the Delegate() arg, in scope in _run.
-                _bounce_store = delegation_eval_store(
+                # Count the delegation's stamped rows across EVERY experiment
+                # store (provenance-based): a worker that reached the oracle via
+                # get_evaluator(namespace=...) at the call site wrote to its
+                # experiment's store, not the default one. Reading one store was
+                # the root of the false off-ledger bounce → re-run thrash →
+                # duplicate rows (runs 20260626T231202, 20260627T045747). Pass the
+                # run's experiment_data root; the count finds the rows wherever.
+                _run_exp_root = (
                     node._current_notes_dir.parent.parent / "experiment_data"
-                    if node._current_notes_dir is not None else None,
-                    namespace or None,
+                    if node._current_notes_dir is not None else None
                 )
                 if _enforce_ledger:
                     from ...agent_prompts import (
@@ -763,12 +762,12 @@ def build_routing_tools(node) -> dict:
                     )
                     _bounces = 0
                     _stamped_before = _stamped_eval_count(
-                        _bounce_store, delegation_id)
+                        _run_exp_root, delegation_id)
                     while (
                         _bounces < 3
                         and evals_box["count"] > 0
                         and _stamped_eval_count(
-                            _bounce_store, delegation_id) == 0
+                            _run_exp_root, delegation_id) == 0
                     ):
                         _bounces += 1
                         text = worker.invoke(messages + [
@@ -782,7 +781,7 @@ def build_routing_tools(node) -> dict:
                         # Direct evidence of whether the bounce worked:
                         # stamped rows before vs after the re-runs.
                         _stamped_after = _stamped_eval_count(
-                            _bounce_store, delegation_id)
+                            _run_exp_root, delegation_id)
                         node._record_intervention(
                             "UNLEDGERED_BOUNCE", target,
                             f"{delegation_id} reported "
@@ -843,22 +842,21 @@ def build_routing_tools(node) -> dict:
                 # off-ledger (run 20260627T011059 D006/annular: 100 real evals
                 # logged as 0). namespace is the Delegate() arg, in scope here.
                 _notes = node._current_notes_dir
-                _store_dir = delegation_eval_store(
+                _run_exp = (
                     _notes.parent.parent / "experiment_data"
-                    if _notes is not None else None,
-                    namespace or None,
+                    if _notes is not None else None
                 )
-                # Honesty reconciliation (runs on BOTH the normal-return and
-                # the cancel/detach path): the canonical store is the single
-                # source of truth for the eval count. If a source is registered
-                # and the worker CLAIMED evals but NONE are provenance-stamped
-                # in the store, trust the store (count 0), not the claim — and
-                # flag it loudly below so the strategizer re-runs through
-                # get_evaluator() instead of re-wording the conclusion.
+                # Honesty reconciliation (runs on BOTH the normal-return and the
+                # cancel/detach path): the ledger — summed across EVERY experiment
+                # store — is the source of truth. If a source is registered and the
+                # worker CLAIMED evals but NONE are provenance-stamped in ANY store,
+                # trust the ledger (count 0) and flag it; otherwise the count is
+                # found wherever the delegation wrote (provenance-based, so a
+                # call-site experiment selection is reconciled correctly).
                 _claimed_evals = evals_box["count"]
                 _evals, _off_ledger, _stamped_evals = (
                     _reconcile_delegation_evals(
-                        _store_dir,
+                        _run_exp,
                         delegation_id,
                         _claimed_evals,
                         _enforce_ledger,
@@ -866,14 +864,24 @@ def build_routing_tools(node) -> dict:
                 )
                 # Auto-append measured per-eval KPIs for THIS delegation's rows
                 # (median/max wall-time, ledger total) so the strategizer plans
-                # its budget on observed sim cost, not an a priori estimate.
-                # Best-effort: a KPI footer must never fail a delegation. Reuses
-                # the RunStateSummary the reconcile above already cached.
+                # its budget on observed sim cost. Read the summary of the store
+                # that actually holds this delegation's rows (its experiment),
+                # found by provenance — not assumed to be the default store.
+                # Best-effort: a KPI footer must never fail a delegation.
                 try:
-                    if _store_dir is not None:
-                        from ...instrumented import RunStateSummary
-                        _summary = RunStateSummary.from_store(_store_dir)
-                        if _summary is not None:
+                    from ...instrumented import (
+                        RunStateSummary,
+                        experiment_stores,
+                    )
+                    _summary = None
+                    for _st in (experiment_stores(_run_exp)
+                                if _run_exp is not None else []):
+                        _s = RunStateSummary.from_store(_st)
+                        if _s is not None and _s.n_per_delegation.get(
+                                delegation_id, 0) > 0:
+                            _summary = _s
+                            break
+                    if _summary is not None:
                             # Wall budget remaining (telemetry, not a hard stop):
                             # makes the median above actionable. None when no
                             # wall budget is set or the run hasn't started timing.
@@ -1184,15 +1192,16 @@ def build_routing_tools(node) -> dict:
         # can tell "progressing" from "stuck" instead of inferring it from
         # wall-time (the blindness that drove over-cancelling). Also folds in
         # backlog #6: zero stamped after a long wall-time IS the stuck signal.
-        # Read the delegation's OWN store (its namespace, or canonical) — else a
-        # namespaced campaign polls as 0 progress and the stuck-signal above would
-        # over-cancel a healthy worker (the very blindness this block fights).
-        _store = delegation_eval_store(
+        # Count the delegation's rows across EVERY experiment store (provenance-
+        # based) — else a campaign that wrote to its experiment's store polls as
+        # 0 progress and the stuck-signal above would over-cancel a healthy worker.
+        _run_exp = (
             node._current_notes_dir.parent.parent / "experiment_data"
-            if node._current_notes_dir is not None else None,
-            entry.get("namespace"),
+            if node._current_notes_dir is not None else None
         )
-        cur_stamped = _stamped_eval_count(_store, delegation_id) if _store else 0
+        cur_stamped = (
+            _stamped_eval_count(_run_exp, delegation_id) if _run_exp else 0
+        )
         delta = cur_stamped - prev_stamped
         if cur_stamped > prev_stamped:
             last_progress = now_mono
@@ -1214,10 +1223,10 @@ def build_routing_tools(node) -> dict:
         # Per-delegation memory telemetry (resource-governance L3): surface this
         # delegation's process-tree RSS so the strategizer can SEE a fat campaign
         # and Confer the implementer. Best-effort; appended only if known.
-        if _store is not None:
+        if _run_exp is not None:
             try:
                 from ...watchdog_cleanup import delegation_rss
-                _rss = delegation_rss(_store.parent, delegation_id)
+                _rss = delegation_rss(_run_exp.parent, delegation_id)
                 if _rss > 0:
                     progress_desc += f"; ~{_rss / 1024 ** 2:.0f} MB RSS"
             except Exception:  # noqa: BLE001
@@ -1354,15 +1363,16 @@ def build_routing_tools(node) -> dict:
                 )
             # Harden against impatience: a delegation already writing ledgered
             # evals is progressing, not stuck. Require a deliberate second call
-            # so a slow-but-healthy campaign can't be discarded on a whim. Read
-            # the delegation's OWN store (its namespace, or canonical) — else a
-            # namespaced campaign reads 0 stamped and loses this two-shot guard.
-            _store = delegation_eval_store(
+            # so a slow-but-healthy campaign can't be discarded on a whim. Count
+            # across EVERY experiment store (provenance-based) — else a campaign
+            # that wrote to its experiment's store reads 0 and loses this guard.
+            _run_exp = (
                 node._current_notes_dir.parent.parent / "experiment_data"
-                if node._current_notes_dir is not None else None,
-                entry.get("namespace"),
+                if node._current_notes_dir is not None else None
             )
-            _stamped = _stamped_eval_count(_store, delegation_id) if _store else 0
+            _stamped = (
+                _stamped_eval_count(_run_exp, delegation_id) if _run_exp else 0
+            )
             if _stamped > 0 and not entry.get("cancel_pending"):
                 entry["cancel_pending"] = True
                 return (
