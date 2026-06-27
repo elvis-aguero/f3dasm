@@ -56,6 +56,38 @@ def test_unledgered_does_not_fire_when_store_has_rows(tmp_path):
     assert "UNLEDGERED_EVALS" not in {v.rule for v in violations}
 
 
+def test_unledgered_silent_when_rows_in_an_experiment_store(tmp_path):
+    """Provenance-based: a delegation that wrote to an EXPERIMENT (namespace)
+    store, not the default one, is NOT false-flagged (run 20260627T203327 D003
+    wrote to 'polar' and the old canonical-only check wrongly warned)."""
+    from f3dasm._src.design.domain import Domain
+    from f3dasm._src.experimentdata import ExperimentData
+    from f3dasm._src.experimentsample import ExperimentSample, JobStatus
+
+    ledger, dlog, mon, _ = make_world(tmp_path)
+    ledger.propose("claim", "criterion", "pred", 0.5, proposed_by="s")
+    dlog.record(
+        id="D003", from_node="strategizer", to_node="implementer",
+        task="t", deliverable=REPORT, hypothesis_ids=[],
+        started_at="x", completed_at="y", status="DONE", evals=100)
+    store_dir = tmp_path / "experiment_data"
+    # D003 wrote to the 'polar' experiment store, NOT the default store.
+    dom = Domain()
+    dom.add_float("r", 0.0, 1.0)
+    dom.add_output("score", exist_ok=True)
+    dom.add_output("_delegation_id", exist_ok=True)
+    ExperimentData.from_data(
+        data={0: ExperimentSample(
+            _input_data={"r": 0.75},
+            _output_data={"score": 1.0, "_delegation_id": "D003"},
+            job_status=JobStatus.FINISHED)},
+        domain=dom,
+    ).store(project_dir=store_dir / "polar")
+    mon.store_dir = str(store_dir)
+    violations = mon.evaluate()  # real stores, no patch
+    assert "UNLEDGERED_EVALS" not in {v.rule for v in violations}
+
+
 def test_unledgered_fires_when_store_has_no_rows(tmp_path):
     """UNLEDGERED_EVALS fires when delegation reported evals but wrote nothing."""
     ledger, dlog, mon, _ = make_world(tmp_path)

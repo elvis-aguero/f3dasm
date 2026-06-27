@@ -71,21 +71,23 @@ class ScienceMonitor:
         return self._check_unledgered(records)
 
     def _check_unledgered(self, all_records: list[dict]) -> list[Violation]:
-        """UNLEDGERED_EVALS: DONE delegations that reported evals but wrote
-        no rows to the canonical store. No-ops when store_dir is None."""
+        """UNLEDGERED_EVALS: DONE delegations that reported evals but wrote no
+        rows to ANY experiment store. No-ops when store_dir is None.
+
+        Counts a delegation's stamped rows by provenance across every experiment
+        store (not just the default one) — so a worker that reached the oracle
+        via get_evaluator(namespace=...) at the call site is NOT false-flagged as
+        having bypassed it (run 20260627T203327 D003 wrote to the 'polar' store
+        and was wrongly warned by the old canonical-only check).
+        """
         if self.store_dir is None:
             return []
         from pathlib import Path as _Path
         sd = _Path(self.store_dir)
-        # Lazy summary via mtime cache — cheap on repeated calls.
         try:
-            from .instrumented import RunStateSummary
-            summary = RunStateSummary.from_store(sd)
+            from .instrumented import delegation_evals as _devals
         except Exception:  # noqa: BLE001
-            summary = None
-        rows_per_delegation: dict = {}
-        if summary is not None:
-            rows_per_delegation = summary.n_per_delegation
+            return []
 
         out: list[Violation] = []
         for r in all_records:
@@ -95,7 +97,7 @@ class ScienceMonitor:
             if evals <= 0:
                 continue
             d_id = r.get("id", "")
-            if rows_per_delegation.get(d_id, 0) > 0:
+            if _devals(sd, d_id) > 0:
                 continue
             # Key on the delegation id (not None) so multiple
             # simultaneously-unledgered delegations each get their own
