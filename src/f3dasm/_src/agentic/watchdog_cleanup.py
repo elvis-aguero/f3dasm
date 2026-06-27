@@ -127,6 +127,39 @@ def reap_governor_pids(run_dir, backend=None) -> int:
         return 0
 
 
+def seconds_since_last_activity(run_dir) -> float:
+    """Wall-seconds since the run last wrote ANYTHING under ``run_dir`` — the
+    run's liveness signal.
+
+    A live run constantly writes: a strategizer turn streams transcripts, the
+    canonical ledger flushes evaluations, the delegation log and diagnostics
+    advance. A genuinely hung run (a frozen LLM/CLI call, a zombie subprocess)
+    writes nothing. So "no file has changed for a long window" is a true STALL,
+    whereas a slow-but-busy or heavily-parallel run keeps this number small —
+    which is why a stall watchdog never penalises parallelism the way a flat
+    wall-clock deadline does.
+
+    Returns ``float('inf')`` if the run dir is empty/absent (nothing written
+    yet). Best-effort — never raises.
+    """
+    run_dir = Path(run_dir)
+    latest = 0.0
+    try:
+        for p in run_dir.rglob("*"):
+            try:
+                m = p.stat().st_mtime
+                if m > latest:
+                    latest = m
+            except OSError:
+                continue
+    except OSError:
+        pass
+    if latest == 0.0:
+        return float("inf")
+    import time as _t
+    return max(0.0, _t.time() - latest)
+
+
 def delegation_rss(run_dir, delegation_id: str, backend=None) -> int:
     """Total process-tree RSS (bytes) of one delegation's OWNED campaign(s), for
     GetStatus telemetry so the strategizer can SEE a fat delegation. 0 if none /

@@ -14,8 +14,27 @@ from f3dasm._src.agentic.watchdog_cleanup import (
     read_governor_pids,
     reap_governor_pids,
     reap_process_group,
+    seconds_since_last_activity,
     write_watchdog_retrospective,
 )
+
+
+# ── stall detection: the watchdog kills a HANG, never a slow/parallel run ──────
+
+def test_seconds_since_last_activity_tracks_writes(tmp_path):
+    run_dir = tmp_path / "runs" / "T"
+    (run_dir / "debug").mkdir(parents=True)
+    # Empty/absent run → inf (nothing written yet, not a stall).
+    assert seconds_since_last_activity(tmp_path / "nope") == float("inf")
+    # A just-written file → ~0s idle (the run is live).
+    (run_dir / "debug" / "diagnostics.jsonl").write_text("{}\n")
+    assert seconds_since_last_activity(run_dir) < 5
+    # Backdate every file → looks idle (a stall the watchdog would catch).
+    old = time.time() - 9999
+    import os as _os
+    for p in run_dir.rglob("*"):
+        _os.utime(p, (old, old))
+    assert seconds_since_last_activity(run_dir) > 9000
 
 
 # ── L2b/#14: memory watch + recursive reap over self-registered campaign PIDs ──

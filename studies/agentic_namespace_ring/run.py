@@ -118,41 +118,52 @@ graph = Graph(
     entry="strategizer",
 )
 
-# ── process-level watchdog ────────────────────────────────────────────────────
-# The runtime's time backstop is only checked BETWEEN strategizer turns, so a
-# stall OUTSIDE that loop — startup, inside an LLM/CLI call, inside a tool —
-# zombies forever (observed: a claude-CLI startup stall ran 80 min, idle CPU).
-# This hard wall-clock watchdog force-exits a stalled run so it can never zombie.
-# Set to 2x the in-run time budget: the 2026-06-23 audit showed runs were
-# watchdog-killed on TIME (lit review + campaign + multi-attempt gate) before the
-# deliverable could close, not on a true stall — so give the work room while still
-# bounding a genuine zombie.
-WATCHDOG_SECONDS = 2 * BUDGET_SECONDS
+# ── process-level watchdog: STALL DETECTOR, not a wall-clock deadline ─────────
+# A run is force-exited ONLY when it makes NO progress at all for STALL_SECONDS —
+# a genuine hang (a frozen LLM/CLI call or a zombie subprocess writes nothing).
+# A run that keeps working is NEVER killed, however long it takes or however many
+# experiments it runs in parallel: we must never penalise the agent for
+# parallelising or for a slow-but-live campaign (the old flat 2x-budget deadline
+# did exactly that). "Progress" = any file written under the run dir (a turn
+# streams transcripts, the ledger flushes evals, the logs advance). Memory is
+# bounded separately by the memory watcher (the one hard host-safety cap).
+STALL_SECONDS = max(15 * 60, BUDGET_SECONDS)  # longer than any single legit LLM
+#                                               call / sim; far short of a hang.
 
 
 def _watchdog() -> None:
-    time.sleep(WATCHDOG_SECONDS)
-    print(
-        f"\nWATCHDOG: run exceeded {WATCHDOG_SECONDS}s wall-clock — force-exiting "
-        "(a call stalled outside the turn loop). No clean close.",
-        flush=True,
-    )
-    # Write run_status + ledger row before the hard kill so the run is traceable.
-    try:
-        import csv as _csv
-        import json as _json
-        import sys as _sys
-        runs_dir = STUDY_DIR / "runs"
-        run_dirs = sorted(d for d in runs_dir.iterdir() if d.is_dir()) if runs_dir.exists() else []
-        if run_dirs:
-            _rd = run_dirs[-1]
+    from f3dasm._src.agentic.watchdog_cleanup import seconds_since_last_activity
+    runs_dir = STUDY_DIR / "runs"
+    # Poll for a stall; only a genuinely idle run (no writes for the whole window)
+    # is killed. A progressing run loops here forever, untouched.
+    while True:
+        time.sleep(60)
+        _live = sorted(d for d in runs_dir.iterdir() if d.is_dir()) \
+            if runs_dir.exists() else []
+        if not _live:
+            continue
+        _idle = seconds_since_last_activity(_live[-1])
+        if _idle < STALL_SECONDS:
+            continue  # still making progress — never penalise a live/parallel run
+        print(
+            f"\nWATCHDOG: run STALLED — no file activity for {int(_idle)}s "
+            f"(threshold {STALL_SECONDS}s). Force-exiting a hung run "
+            "(not a deadline; a true stall). No clean close.",
+            flush=True,
+        )
+        # Write run_status + ledger row before the hard kill so the run is traceable.
+        try:
+            import csv as _csv
+            import json as _json
+            import sys as _sys
+            _rd = _live[-1]
             (_rd / "debug").mkdir(parents=True, exist_ok=True)
             (_rd / "debug" / "run_status.json").write_text(
                 _json.dumps({"status": "watchdog_killed"})
             )
             # Leave a synthetic post-mortem so §1 Step 1 isn't blind (the
             # strategizer never wrote its own — the kill is abrupt).
-            write_watchdog_retrospective(_rd, WATCHDOG_SECONDS)
+            write_watchdog_retrospective(_rd, int(_idle))
             _sys.path.insert(0, str(STUDY_DIR.parent))
             import run_ledger as _rl
             _row = _rl.extract(_rd)
@@ -164,29 +175,26 @@ def _watchdog() -> None:
                     _w.writeheader()
                 _w.writerow(_row)
             print(f"WATCHDOG: ledger row appended for {_rd.name}", flush=True)
-    except Exception as _e:
-        print(f"WATCHDOG: cleanup failed: {_e}", flush=True)
-    # Reap leftover background jobs the run spawned (e.g. a detached implementer
-    # campaign) so they don't outlive the watchdog. run.py made itself a group
-    # leader at startup; ignore SIGTERM in ourselves so we still reach os._exit(2).
-    try:
-        import signal as _signal
-        _signal.signal(_signal.SIGTERM, _signal.SIG_IGN)
-        reap_process_group(os.getpgid(0))
-        # Catch detached/new-session campaigns the group-kill misses (#14): the
-        # recursive backend kill over the self-registered campaign PIDs.
+        except Exception as _e:
+            print(f"WATCHDOG: cleanup failed: {_e}", flush=True)
+        # Reap leftover background jobs the run spawned (e.g. a detached
+        # implementer campaign) so they don't outlive the watchdog. run.py made
+        # itself a group leader at startup; ignore SIGTERM in ourselves so we
+        # still reach os._exit(2).
         try:
-            runs_dir = STUDY_DIR / "runs"
-            _rds = sorted(d for d in runs_dir.iterdir() if d.is_dir()) \
-                if runs_dir.exists() else []
-            if _rds:
-                reap_governor_pids(_rds[-1])
-        except Exception:
-            pass
-        time.sleep(0.5)
-    except Exception as _e:
-        print(f"WATCHDOG: child reap failed: {_e}", flush=True)
-    os._exit(2)
+            import signal as _signal
+            _signal.signal(_signal.SIGTERM, _signal.SIG_IGN)
+            reap_process_group(os.getpgid(0))
+            # Catch detached/new-session campaigns the group-kill misses (#14):
+            # the recursive backend kill over the self-registered campaign PIDs.
+            try:
+                reap_governor_pids(_live[-1])
+            except Exception:
+                pass
+            time.sleep(0.5)
+        except Exception as _e:
+            print(f"WATCHDOG: child reap failed: {_e}", flush=True)
+        os._exit(2)
 
 
 def _memory_watcher() -> None:
