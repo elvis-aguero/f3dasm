@@ -73,23 +73,36 @@ def _record_done(n, did, falsify=False, h_ids=None):
 # SUPPORTED_WITHOUT_ATTACK — hard block at update time
 # ---------------------------------------------------------------------------
 
-def test_supported_blocked_without_falsification_attempt(tmp_path):
-    """HypothesisUpdate must reject SUPPORTED if no completed falsification
-    attempt exists for this hypothesis."""
+def test_supported_without_falsification_is_two_shot_confirm(tmp_path):
+    """SUPPORTED without a completed falsification attempt is a TWO-SHOT CONFIRM
+    (§4): the first call is refused with charter guidance; a re-call carrying a
+    written justification in `comment` confirms (a verdict is reversible when
+    justified — the validator + critic remain the downstream floor)."""
     n = _node(tmp_path)
-    # Clear milestones so HypothesisPropose is available
     for m in list(n._milestones.pending()):
         n._milestones.skip(m["id"], "test")
     h = _propose(n)
     _record_done(n, "D001", falsify=False, h_ids=[h])
+    update = n.adapter.closure_tools["HypothesisUpdate"]
 
-    result = n.adapter.closure_tools["HypothesisUpdate"](
-        h, "SUPPORTED", "sweep passed", 0.85,
-        evidence={"delegation": "D001", "numbers": {"best_f": 1.47}},
-    )
-    assert result.startswith("ERROR:"), (
-        f"Expected error blocking SUPPORTED without falsification, got: {result!r}")
-    assert "falsification" in result.lower()
+    # First call: refused (CONFIRM), not silently accepted, not a hard ERROR.
+    r1 = update(h, "SUPPORTED", "sweep passed", 0.85,
+                evidence={"delegation": "D001", "numbers": {"best_f": 1.47}})
+    assert r1.startswith("[CONFIRM]") and "falsification" in r1.lower()
+
+    # Re-call WITHOUT a real justification: still refused (justification required).
+    r2 = update(h, "SUPPORTED", "ok", 0.85,
+                evidence={"delegation": "D001", "numbers": {"best_f": 1.47}})
+    assert r2.startswith("[CONFIRM]")
+
+    # Re-call WITH a written justification: confirms (proceeds).
+    r3 = update(
+        h, "SUPPORTED",
+        "Accepting without a fresh attack: D001's dense in-range sweep already "
+        "probed the refutation region and found nothing better; a further attack "
+        "could still refute it via a denser grid.",
+        0.85, evidence={"delegation": "D001", "numbers": {"best_f": 1.47}})
+    assert not r3.startswith("[CONFIRM]") and not r3.startswith("ERROR:")
 
 
 def test_supported_allowed_when_falsification_attempt_completed(tmp_path):
@@ -110,9 +123,9 @@ def test_supported_allowed_when_falsification_attempt_completed(tmp_path):
         f"Expected success but got error: {result!r}")
 
 
-def test_supported_error_names_missing_criterion(tmp_path):
-    """Error message for SUPPORTED without attack should cite the
-    falsification criterion so the agent knows what to test."""
+def test_supported_confirm_names_missing_criterion(tmp_path):
+    """The CONFIRM message for SUPPORTED-without-attack cites the falsification
+    criterion so the agent knows what to test."""
     n = _node(tmp_path)
     for m in list(n._milestones.pending()):
         n._milestones.skip(m["id"], "test")
@@ -123,7 +136,7 @@ def test_supported_error_names_missing_criterion(tmp_path):
         h, "SUPPORTED", "eager close", 0.8,
         evidence={"delegation": "D001", "numbers": {"best_f": 1.47}},
     )
-    assert result.startswith("ERROR:")
+    assert result.startswith("[CONFIRM]")
     # Should contain the criterion from the hypothesis
     assert "dense sweep" in result or "falsification_criterion" in result or "Falsification criterion" in result
 

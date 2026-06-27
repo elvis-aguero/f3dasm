@@ -483,7 +483,12 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                         "ERROR: evidence must be a JSON object like "
                         '{"delegation": "D004", "numbers": {...}}.'
                     )
-            # Hard gate: SUPPORTED requires a prior completed falsification attempt.
+            # SUPPORTED without a completed falsification attempt: a TWO-SHOT
+            # CONFIRM, not a hard block (§4, user-approved this session). A verdict
+            # is reversible when justified in writing, so this is a deliberate
+            # pause — not an impossible action. First call nudges; a re-call with
+            # a written justification in `comment` confirms. The verdict validator
+            # and the gate critic remain the downstream falsification floor.
             if status == "SUPPORTED" and node._delegation_log is not None:
                 completed = [
                     r for r in node._delegation_log.query_all()
@@ -492,20 +497,30 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                     and hypothesis_id in (r.get("hypothesis_ids") or [])
                 ]
                 if not completed:
+                    if not hasattr(node, "_supported_confirm_pending"):
+                        node._supported_confirm_pending = set()
                     h = node._ledger.get(hypothesis_id) if node._ledger else {}
                     crit = (h or {}).get("falsification_criterion", "(none set)")
-                    return (
-                        f"ERROR: cannot mark {hypothesis_id} as SUPPORTED without "
-                        "a completed falsification attempt. The Popperian charter "
-                        "requires that a hypothesis be challenged before it is "
-                        "accepted. Steps: (1) Delegate a test designed to refute "
-                        "it — pass is_falsification_attempt=True and "
-                        f"hypothesis_ids=['{hypothesis_id}']. "
-                        f"(2) Wait for it to complete. (3) Call HypothesisUpdate "
-                        "with the result. If the attempt was already run but not "
-                        "flagged, call LinkFalsificationAttempt first, then retry. "
-                        f"Falsification criterion: {crit!r}"
-                    )
+                    _justified = len((comment or "").strip()) >= 30
+                    if (hypothesis_id not in node._supported_confirm_pending
+                            or not _justified):
+                        node._supported_confirm_pending.add(hypothesis_id)
+                        return (
+                            f"[CONFIRM] You are marking {hypothesis_id} SUPPORTED "
+                            "without a completed falsification attempt on record. "
+                            "The Popperian charter asks that a hypothesis be "
+                            "challenged before it is accepted — the clean path is "
+                            "to delegate a refutation test "
+                            "(is_falsification_attempt=True, "
+                            f"hypothesis_ids=['{hypothesis_id}']), or "
+                            "LinkFalsificationAttempt if one already ran. If you "
+                            "have genuine grounds to accept it WITHOUT that, re-call "
+                            "HypothesisUpdate with the same status and a written "
+                            "justification in `comment` (a sentence on why SUPPORTED "
+                            "holds and how it could still be refuted) — that "
+                            f"confirms. Falsification criterion: {crit!r}"
+                        )
+                    node._supported_confirm_pending.discard(hypothesis_id)
             # Hard gate: cited delegation must be completed (not phantom).
             ev = evidence or {}
             d_cited = ev.get("delegation")
