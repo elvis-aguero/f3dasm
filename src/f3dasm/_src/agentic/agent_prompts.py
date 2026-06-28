@@ -174,6 +174,9 @@ canonical_store       = {experiment_data_dir}
   (returns {{name: ExperimentData}}; {{'default': ...}} for a single-experiment run).
 workspace_dir         = {debug_dir}/delegations
 Use these absolute paths when calling Read() and WriteNote().
+Read() reads FILES, not directories — calling it on a folder fails with EISDIR.
+To see what is INSIDE a directory (e.g. the store layout), use Glob('<dir>/*')
+(or `ls <dir>` via Bash if you have it), not Read.
 WriteNote also accepts a bare filename such as 'meta_errors.md',
 which is anchored under strategizer_notes_dir automatically.
 Workers write exclusively inside workspace_dir/D###/.
