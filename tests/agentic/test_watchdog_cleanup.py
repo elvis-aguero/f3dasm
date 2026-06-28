@@ -217,3 +217,52 @@ def test_write_watchdog_retrospective_never_raises_on_missing_dir(tmp_path):
     write_watchdog_retrospective(tmp_path, 3600)
     rec = json.loads((tmp_path / "debug" / "retrospectives.jsonl").read_text().splitlines()[0])
     assert rec["role"] == "watchdog" and "(none)" in rec["text"]
+
+
+# ── resource AWARENESS (telemetry): peak RSS high-water + static envelope ─────
+
+def test_peak_rss_high_water_rides_the_existing_poll(tmp_path):
+    """check_memory_and_kill records each delegation's peak tree-RSS as a free
+    byproduct of its enforcement read — max across ticks, never decreasing."""
+    from f3dasm._src.agentic import watchdog_cleanup as wc
+    wc._PEAK_RSS.clear()
+    _write_pids(tmp_path, {"D001": [10]})
+    cap = 8 * 1024 ** 3  # 8 GB cap — under it, so nothing is killed
+    # tick 1: 100 MB
+    wc.check_memory_and_kill(tmp_path, cap, backend=_StubBackend({10: 100 * 1024**2}))
+    assert wc.delegation_peak_rss("D001") == 100 * 1024**2
+    # tick 2: 300 MB → peak rises
+    wc.check_memory_and_kill(tmp_path, cap, backend=_StubBackend({10: 300 * 1024**2}))
+    assert wc.delegation_peak_rss("D001") == 300 * 1024**2
+    # tick 3: 50 MB → peak HOLDS (high-water, not current)
+    wc.check_memory_and_kill(tmp_path, cap, backend=_StubBackend({10: 50 * 1024**2}))
+    assert wc.delegation_peak_rss("D001") == 300 * 1024**2
+    assert wc.delegation_peak_rss("D999") == 0  # unknown delegation
+
+
+def test_resource_envelope_is_O1_no_directory_walk(tmp_path, monkeypatch):
+    """resource_envelope must be a single statvfs (shutil.disk_usage) + cpu_count,
+    NEVER a recursive walk — this is the explicit footprint requirement."""
+    import shutil as _sh
+    from f3dasm._src.agentic import watchdog_cleanup as wc
+
+    calls = {"disk_usage": 0}
+    real = _sh.disk_usage
+
+    def _spy(path):
+        calls["disk_usage"] += 1
+        return real(path)
+    monkeypatch.setattr(wc.shutil, "disk_usage", _spy)
+
+    env = wc.resource_envelope(tmp_path, 4 * 1024 ** 3)
+    assert calls["disk_usage"] == 1, "disk must be ONE statvfs, not a walk"
+    assert env["cores"] and env["cores"] > 0
+    assert env["ram_cap_bytes"] == 4 * 1024 ** 3
+    assert env["disk_free_bytes"] is not None and env["disk_free_bytes"] > 0
+
+
+def test_resource_envelope_never_raises_on_bad_path():
+    from f3dasm._src.agentic.watchdog_cleanup import resource_envelope
+    env = resource_envelope("/nonexistent/path/xyz", None)
+    assert env["ram_cap_bytes"] is None  # cap unset → None, no crash
+    assert "cores" in env

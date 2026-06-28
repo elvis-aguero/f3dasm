@@ -15,9 +15,21 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
+
+# ── resource AWARENESS (telemetry, not enforcement) ──────────────────────────
+# Per-delegation peak process-tree RSS, recorded as a free byproduct of the
+# memory watcher's existing 5s poll (check_memory_and_kill already computes each
+# delegation's tree RSS to enforce the cap). A high-water max() per tick — no new
+# poll, no I/O, no thread. The watcher and the readers (delegation footer,
+# GetStatus) live in the SAME process, so this in-memory dict bridges them
+# without a file. Keyed by delegation_id (one run per process).
+_PEAK_RSS: dict[str, int] = {}
+_PEAK_LOCK = threading.Lock()
 
 
 def reap_process_group(pgid: int) -> None:
@@ -98,7 +110,14 @@ def check_memory_and_kill(run_dir, cap_bytes: int, backend=None) -> list[str]:
         for did, entries in read_governor_pids(run_dir).items():
             try:
                 owned = _owned_pids(entries, be)
-                if owned and be.read_rss(owned) > cap_bytes:
+                if not owned:
+                    continue
+                rss = be.read_rss(owned)
+                # Record the peak as a free byproduct of this enforcement read.
+                with _PEAK_LOCK:
+                    if rss > _PEAK_RSS.get(did, 0):
+                        _PEAK_RSS[did] = rss
+                if rss > cap_bytes:
                     be.kill(owned)
                     killed.append(did)
             except Exception:
@@ -171,6 +190,36 @@ def delegation_rss(run_dir, delegation_id: str, backend=None) -> int:
         return be.read_rss(owned) if owned else 0
     except Exception:
         return 0
+
+
+def delegation_peak_rss(delegation_id: str) -> int:
+    """Peak process-tree RSS (bytes) seen for one delegation across the memory
+    watcher's 5s ticks — its high-water memory footprint, for the KPI footer and
+    GetStatus. 0 if the watcher never sampled it (a sub-tick or off-ledger
+    delegation). Lower bound: a spike between two ticks is missed."""
+    with _PEAK_LOCK:
+        return _PEAK_RSS.get(str(delegation_id), 0)
+
+
+def resource_envelope(run_dir, mem_cap_bytes: int | None) -> dict:
+    """The static resource envelope surfaced to an agent at delegation start —
+    "what you HAVE": ``{cores, ram_cap_bytes, disk_free_bytes}``.
+
+    All O(1): ``os.cpu_count()`` (cached by the OS), the passed cap (no syscall),
+    and ``shutil.disk_usage(run_dir).free`` (a single ``statvfs`` — NOT a
+    recursive walk). ``disk_free_bytes`` is the host filesystem's free space, not
+    a per-run quota. Never raises; fields fall back to None on error."""
+    cores = os.cpu_count()
+    disk_free = None
+    try:
+        disk_free = shutil.disk_usage(str(run_dir)).free
+    except OSError:
+        pass
+    return {
+        "cores": cores,
+        "ram_cap_bytes": int(mem_cap_bytes) if mem_cap_bytes else None,
+        "disk_free_bytes": disk_free,
+    }
 
 
 def _log_memory_kill(run_dir, killed: list[str], cap_bytes: int) -> None:
