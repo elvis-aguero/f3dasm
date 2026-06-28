@@ -187,8 +187,10 @@ and tools — NOT your science. Be concrete; quote specifics. Exactly:
   otherwise "ok". (Highest priority.)
 - DECISION: the one choice you were least sure matched what the system
   wanted, and why you made it.
-- FRICTION: anything counterintuitive or unclear about the tools/contracts,
-  or "none". (Lowest priority.)
+- FRICTION: anything counterintuitive or unclear about the tools/contracts —
+  INCLUDING friction you RECOVERED from (a tool call that errored, a tool name
+  you guessed wrong and had to correct, a dead-end you worked around), not only
+  what blocked you. Say "none" only if there was truly zero. (Lowest priority.)
 - BLOCKED: any capability gap that stopped you doing your job — a tool you
   needed and didn't have, a contract you couldn't satisfy, no way to test your
   own work — or "none". Name it specifically; an unreported gap can't be fixed.

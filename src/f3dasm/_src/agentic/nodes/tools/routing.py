@@ -123,7 +123,9 @@ _EXIT_INTERVIEW = (
     "Write 'flagged' and QUOTE both sides; otherwise 'ok'. (Most important.)\n"
     "- DECISION: the one strategic choice you were least sure the system "
     "wanted, and why you made it.\n"
-    "- FRICTION: anything counterintuitive about the rules/tools, or 'none'.\n"
+    "- FRICTION: anything counterintuitive about the rules/tools, INCLUDING what "
+    "you recovered from (an errored tool call, a wrong-guessed tool name), not "
+    "just blockers; 'none' only if truly zero.\n"
     "- BLOCKED: was there anything you NEEDED to do your job but COULDN'T — a "
     "missing tool, permission, or way to test/inspect your own work (e.g. no "
     "way to run or debug a deliverable you had to author)? Name it specifically, "
@@ -147,7 +149,9 @@ _FAILED_RETROSPECTIVE = (
     "is the most important field — be candid; an unreported gap can't be "
     "fixed.)\n"
     "- BLOCKER: in one line, the proximate reason the run did not pass.\n"
-    "- FRICTION: any rule/tool that worked against you, or 'none'.\n"
+    "- FRICTION: any rule/tool that worked against you, INCLUDING what you "
+    "recovered from (an errored call, a wrong-guessed tool name), not just "
+    "blockers; 'none' only if truly zero.\n"
     "This will NOT reopen the run."
 )
 
