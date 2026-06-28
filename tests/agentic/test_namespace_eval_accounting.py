@@ -109,3 +109,31 @@ def test_run_ledger_counts_rows_across_namespaces(tmp_path):
 
     row = run_ledger.extract(run_dir)
     assert row["ledger_rows"] == 200
+
+
+def test_ledger_breakdown_is_per_experiment_per_delegation(tmp_path):
+    """Report-time provenance: ledger_breakdown surfaces exactly what the
+    accounting counts, so a writeup derives counts instead of hardcoding them
+    (run 20260628T001710 hardcoded 70 polar evals; the ledger held 90 → UNGATED).
+    """
+    from f3dasm._src.agentic.instrumented import ledger_breakdown
+
+    store = tmp_path / "experiment_data"
+    _seed_store(store, 30, delegation_id="D004")          # default / cartesian
+    _seed_store(store / "polar", 50, delegation_id="D006")
+    _seed_store(store / "radial_focused", 15, delegation_id="D004")
+
+    rows = ledger_breakdown(store)
+    by_name = {r["experiment"]: r for r in rows}
+    assert by_name["default"]["total"] == 30
+    assert by_name["default"]["per_delegation"] == {"D004": 30}
+    assert by_name["polar"]["total"] == 50
+    assert by_name["polar"]["per_delegation"] == {"D006": 50}
+    assert by_name["radial_focused"]["per_delegation"] == {"D004": 15}
+    # default first, then experiments alphabetically.
+    assert [r["experiment"] for r in rows] == ["default", "polar", "radial_focused"]
+
+
+def test_ledger_breakdown_empty_store_is_empty_not_error(tmp_path):
+    from f3dasm._src.agentic.instrumented import ledger_breakdown
+    assert ledger_breakdown(tmp_path / "nope") == []

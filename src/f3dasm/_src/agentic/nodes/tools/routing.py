@@ -2660,6 +2660,42 @@ def build_routing_tools(node) -> dict:
                 + f"\n\nPillars present: {present}."
                 + (f" Missing: {missing}." if missing else " All present."))
 
+    def LedgerBreakdown() -> str:
+        """Show, per experiment and per delegation, how many ledgered evaluations
+        each contributed — read live from the canonical store. Use this at REPORT
+        time to DERIVE eval counts for the writeup/hypothesis evidence instead of
+        copying numbers from a plan or a delegation's notes (those drift from what
+        actually landed in the ledger). Read-only; does NOT spend eval budget.
+
+        Output is one line per experiment (the baseline store is 'default'; each
+        design parametrization by its registered name) with its total and a
+        per-delegation split, e.g.::
+
+            polar: 90 total  (D006: 50, D004: 40)
+
+        The numbers here are the ones pipeline.ipynb will reproduce — quote THESE,
+        never a remembered figure."""
+        prefix = node._drain_notifications()
+        notes = getattr(node, "_current_notes_dir", None)
+        if notes is None:
+            return prefix + "ERROR: no run context available."
+        store_root = notes.parent.parent / "experiment_data"
+        from ...instrumented import ledger_breakdown
+        rows = ledger_breakdown(store_root)
+        if not rows:
+            return (prefix + "No ledgered evaluations yet — the canonical store "
+                    "is empty. Run a campaign delegation first.")
+        lines = []
+        for r in rows:
+            split = ", ".join(
+                f"{d}: {n}" for d, n in sorted(r["per_delegation"].items()))
+            lines.append(
+                f"{r['experiment']}: {r['total']} total"
+                + (f"  ({split})" if split else ""))
+        grand = sum(r["total"] for r in rows)
+        lines.append(f"— run total: {grand} ledgered evaluations")
+        return prefix + "\n".join(lines)
+
     def RunScratch(code: str) -> str:
         """Run a short Python snippet against a COPY of the canonical ledger and
         return its stdout/stderr — your scratchpad for INSPECTING state before
@@ -2818,6 +2854,8 @@ def build_routing_tools(node) -> dict:
         closures["ShowNotebook"] = ShowNotebook
     if "RunScratch" in _agent_tools:
         closures["RunScratch"] = RunScratch
+    if "LedgerBreakdown" in _agent_tools:
+        closures["LedgerBreakdown"] = LedgerBreakdown
     if "RunPipelineCell" in _agent_tools:
         closures["RunPipelineCell"] = RunPipelineCell
     if "WriteNote" in _agent_tools:

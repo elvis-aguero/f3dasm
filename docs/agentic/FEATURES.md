@@ -116,6 +116,12 @@ Format per feature: **what** (plain language) · **why** · **where** (files) ·
   `agent_runtime.py` (`register_evaluator_entrypoint(namespace=…)`), `backends/base.py`
   + `backends/claude.py` (`set_namespace`/`F3DASM_NAMESPACE`), `graph_state.py`
   (`Delegation.namespace`), `routing.py` (`Delegate` + registration handoff).
+- **Report-time provenance:** `LedgerBreakdown()` (strategizer tool) shows per-experiment
+  / per-delegation ledgered eval counts read live from the stores
+  (`instrumented.ledger_breakdown`), so a writeup DERIVES counts from the ledger instead
+  of hardcoding stale plan numbers (run 20260628T001710 hardcoded 70 polar evals; the
+  ledger held 90 → UNGATED). Read-only; spends no eval budget.
+- **Tools:** `LedgerBreakdown`.
 - **Status:** plumbing complete (branch `exp/open-design-space`); gated on the 2D
   experiment before the baseline study adopts it.
 

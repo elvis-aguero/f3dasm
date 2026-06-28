@@ -1048,10 +1048,41 @@ def delegation_evals(store_root: Path | str, delegation_id: str) -> int:
     return total
 
 
+def ledger_breakdown(store_root: Path | str) -> list[dict]:
+    """Per-experiment, per-delegation eval counts across the whole run.
+
+    Returns one entry per experiment store (the default store is named
+    ``"default"``; each design experiment by its registered name) with::
+
+        {"experiment": <name>, "total": <rows>, "per_delegation": {<id>: <n>}}
+
+    This is the report-time provenance the agent could not otherwise see: it
+    exposes exactly what the provenance accounting counts, so a writeup DERIVES
+    its eval counts from the ledger instead of hardcoding stale plan numbers
+    (run 20260628T001710 hardcoded 70 polar evals; the real ledger held 90 →
+    UNGATED). Sorted: default first, then experiments alphabetically. Never
+    raises; an empty/absent store yields an empty list.
+    """
+    store_root = Path(store_root)
+    out: list[dict] = []
+    for store in experiment_stores(store_root):
+        s = RunStateSummary.from_store(store)
+        if s is None:
+            continue
+        name = "default" if store == store_root else store.name
+        out.append({
+            "experiment": name,
+            "total": int(s.n_rows),
+            "per_delegation": {k: int(v) for k, v in s.n_per_delegation.items()},
+        })
+    return out
+
+
 __all__ = [
     "InstrumentedDataGenerator",
     "RunStateSummary",
     "get_evaluator",
+    "ledger_breakdown",
     "load_inner_evaluator",
     "total_ledgered_evals",
     "delegation_evals",

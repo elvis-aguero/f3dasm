@@ -881,3 +881,61 @@ def test_stamped_eval_count_counts_only_provenance_rows(tmp_path):
     assert _stamped_eval_count(tmp_path, "D003") == 0
     # No store at all → 0, never raises.
     assert _stamped_eval_count(None, "D001") == 0
+
+
+def test_ledger_breakdown_tool_renders_per_experiment_split(tmp_path):
+    """LedgerBreakdown() reads the live stores under run_dir/experiment_data and
+    renders a per-experiment / per-delegation split — the report-time provenance
+    that prevents hardcoding stale counts (run 20260628T001710 UNGATED)."""
+    from f3dasm._src.agentic.backends.base import Agent, Edge, Graph
+    from f3dasm._src.agentic.nodes import StrategizerNode
+    from f3dasm._src.design.domain import Domain
+    from f3dasm._src.experimentdata import ExperimentData
+    from f3dasm._src.experimentsample import ExperimentSample, JobStatus
+
+    def seed(store_dir, n, did):
+        dom = Domain()
+        dom.add_float("x", 0.0, 1.0)
+        dom.add_output("score", exist_ok=True)
+        dom.add_output("_delegation_id", exist_ok=True)
+        rows = {i: ExperimentSample(
+            _input_data={"x": i / max(n, 1)},
+            _output_data={"score": 0.5, "_delegation_id": did},
+            job_status=JobStatus.FINISHED) for i in range(n)}
+        ExperimentData.from_data(data=rows, domain=dom).store(project_dir=store_dir)
+
+    run_dir, notes_dir = _build_run_layout(tmp_path)
+    store_root = run_dir / "experiment_data"
+    seed(store_root, 30, "D004")
+    seed(store_root / "polar", 50, "D006")
+
+    class StubAdapter:
+        def __init__(self):
+            self.closure_tools: dict = {}
+            self.route_watcher = None
+
+        def invoke(self, messages):
+            return ""
+
+    class StratAgent(Agent):
+        role = "strategizer"
+        tools = frozenset({"Done", "LedgerBreakdown"})
+        description = "test strategizer"
+
+    class WorkAgent(Agent):
+        description = "test worker"
+
+    spec = Graph(
+        nodes={"strat": StratAgent(), "worker": WorkAgent()},
+        edges=(Edge("strat", "worker"),), entry="strat")
+    node = StrategizerNode(
+        adapter=StubAdapter(), name="strat", outgoing=["worker"],
+        spec=spec, study_dir=str(tmp_path))
+    node._current_notes_dir = notes_dir
+    node.adapter.closure_tools.update(node._build_routing_closures())
+
+    assert "LedgerBreakdown" in node.adapter.closure_tools
+    out = node.adapter.closure_tools["LedgerBreakdown"]()
+    assert "default: 30 total" in out and "D004: 30" in out
+    assert "polar: 50 total" in out and "D006: 50" in out
+    assert "run total: 80" in out
