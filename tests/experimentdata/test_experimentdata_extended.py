@@ -156,3 +156,12 @@ class TestFromFile:
     def test_file_not_found(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             ExperimentData.from_file(project_dir=tmp_path / "nonexistent")
+
+    def test_relative_path_outside_hydra_gives_actionable_error(self):
+        """A missing RELATIVE path with no active Hydra run must surface a clear
+        'pass an ABSOLUTE project_dir' error, not a bare 'Cannot find the folder'
+        (agentic implementers hit this under `uv run` and worked around it by
+        parsing raw CSVs)."""
+        from pathlib import Path
+        with pytest.raises(FileNotFoundError, match="ABSOLUTE"):
+            ExperimentData.from_file(project_dir=Path("no_such_relative_store"))

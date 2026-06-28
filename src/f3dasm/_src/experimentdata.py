@@ -527,12 +527,23 @@ class ExperimentData:
                 wait_for_creation=wait_for_creation,
                 max_tries=max_tries,
             )
-        except FileNotFoundError:
+        except FileNotFoundError as not_found:
+            # Not found relative to the current working directory. If a Hydra
+            # run is active, retry against Hydra's ORIGINAL cwd. Outside Hydra
+            # (e.g. a plain `uv run` / subprocess) get_original_cwd() raises —
+            # so surface a clear, actionable error (the relative path and the
+            # cwd it was resolved against, plus the absolute-path remedy)
+            # instead of a bare "Cannot find the folder".
             try:
                 filename_with_path = Path(get_original_cwd()) / project_dir
-            except ValueError as exc:  # get_original_cwd() error
+            except ValueError as exc:  # no active Hydra run
+                if project_dir.is_absolute():
+                    raise not_found  # nothing more to try — the path was absolute
                 raise FileNotFoundError(
-                    f"Cannot find the folder {project_dir} !"
+                    f"Cannot find ExperimentData at {project_dir!s} "
+                    f"(resolved against cwd {Path.cwd()!s}). No Hydra run is "
+                    "active, so a relative path is taken as-is — pass an "
+                    "ABSOLUTE project_dir."
                 ) from exc
 
             return _from_file_attempt(

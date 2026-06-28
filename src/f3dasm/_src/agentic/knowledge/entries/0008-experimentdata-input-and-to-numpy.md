@@ -14,6 +14,20 @@ gotchas they encode, so you trust them:
   dicts consistent with them. Mixing `x0..x7` with a domain declared `x1..x8`
   silently misaligns columns.
 
+- **Column order follows the order you ADD variables, not your task wording or
+  dict key order.** `domain.input_names`, the `to_numpy()` X columns, and the
+  stored CSV all follow Domain *insertion* order (it is NOT alphabetised). So if
+  the task says "(θ, r_offset)" but you call `add_float("r_offset", …)` first,
+  column 0 is `r_offset`. Key your `ExperimentSample(_input_data={...})` by NAME
+  (a dict, so order-independent) and trust `input_names` for positional arrays —
+  do not assume a sort.
+
+- **Load with an ABSOLUTE `project_dir`.** `ExperimentData.from_file(project_dir=
+  os.environ["F3DASM_CANONICAL_STORE"])` (or any absolute path) always works. A
+  *relative* path only re-resolves against Hydra's original cwd, and outside a
+  Hydra run (e.g. under `uv run`) it is taken as-is against the current cwd — so
+  pass the absolute store path and skip the ambiguity.
+
 - **`to_numpy()` returns a tuple `(X, y)` — it takes no argument.** Not
   `to_numpy("input")`. The output array can carry metadata columns; if in
   doubt about the objective column, go through pandas (`_, df_out =
