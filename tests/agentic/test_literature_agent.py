@@ -300,3 +300,17 @@ def test_corpus_rank_tool_present(tmp_path):
     passages_str = "--- Paper (2024), p.1 ---\nSome passage.\n"
     result = tools["CorpusRank"](passages_str, "relevant query")
     assert isinstance(result, str)
+
+
+def test_cap_result_truncates_oversized_payloads():
+    """A search/read payload bigger than the cap is truncated with a marker, so it
+    never overflows the tool-result token limit and gets dropped whole (observed
+    every run: 'exceeds maximum allowed tokens')."""
+    from f3dasm._src.agentic.agents.literature import _cap_result, _MAX_RESULT_CHARS
+    small = "ok" * 10
+    assert _cap_result(small) == small               # under cap: untouched
+    big = "x" * (_MAX_RESULT_CHARS + 5000)
+    out = _cap_result(big)
+    assert len(out) < len(big) and "truncated" in out
+    assert out.startswith("x" * 100)                 # keeps the head
+    assert _cap_result(12345) == "12345"             # coerces non-str

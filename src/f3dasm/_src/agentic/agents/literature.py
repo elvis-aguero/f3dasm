@@ -32,6 +32,24 @@ _SS_MIN_INTERVAL: float = 3.0
 _ss_throttle_lock = threading.Lock()
 _ss_last_call_t: list = [0.0]  # mutable so closures can rebind
 
+# A single raw search/read payload can be enormous (full paper text, hundreds of
+# hits) and overflow the tool-result token cap — the harness then drops the whole
+# result and the reviewer loses the search (observed every run, e.g. "exceeds
+# maximum allowed tokens"). Cap each result so the reviewer always gets a usable
+# (if truncated) payload; deep reads go through targeted reads, not bulk search.
+_MAX_RESULT_CHARS: int = 6000
+
+
+def _cap_result(result) -> str:
+    """Truncate an oversized search/read payload with a clear marker."""
+    s = str(result)
+    if len(s) <= _MAX_RESULT_CHARS:
+        return s
+    return (s[:_MAX_RESULT_CHARS]
+            + f"\n\n[...truncated {len(s) - _MAX_RESULT_CHARS} chars — this "
+            "result was too large to return whole. Narrow the query, or read a "
+            "specific paper by id instead of bulk-searching.]")
+
 
 def _throttled_ss(fn, *args, **kwargs):
     """Call fn via _call_in_fresh_thread after honouring _SS_MIN_INTERVAL."""
@@ -199,7 +217,7 @@ def _make_search_async_pool():
                     else str(_w).strip().lower() not in ("false", "0", "no", ""))
             if wait:
                 with provider_lock(provider):
-                    return fn(*args, **kwargs)
+                    return _cap_result(fn(*args, **kwargs))
             h = f"{provider}#{next(seq)}"
             label = str((args[0] if args else None) or kwargs.get("query")
                         or kwargs.get("url") or kwargs.get("paper_id") or "")[:60]
@@ -254,7 +272,7 @@ def _make_search_async_pool():
                 continue
             done = rec["event"].wait(timeout=600)
             parts.append(f"=== {h} ({rec['label']}) ===\n" + (
-                str(rec["result"]) if done else "(still running after 600s)"))
+                _cap_result(rec["result"]) if done else "(still running after 600s)"))
             with reg_guard:
                 reg.pop(h, None)
         return "\n\n".join(parts)
