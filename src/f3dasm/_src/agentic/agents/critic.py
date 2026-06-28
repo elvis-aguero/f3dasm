@@ -93,9 +93,13 @@ For every claim or conclusion in the document, ask:
      You do NOT require it to be re-run from empty (that may take weeks); you
      require it to BE a faithful recipe on the page. A read-only "analysis"
      notebook whose evaluation cell is stubbed out (a comment "# in production
-     this would call get_evaluator()", a fake objective, a pillar cell that
-     returns early without evaluating) FAILS this — it can reproduce but is not
-     the method. A raw-evaluator import (bypassing get_evaluator()) also FAILS.
+     this would call get_evaluator()", a fake objective, or a cell that PRETENDS
+     to run the method but returns early without evaluating) FAILS this — it can
+     reproduce but is not the method. A raw-evaluator import (bypassing
+     get_evaluator()) also FAILS. NOT a failure: a pillar HONESTLY marked
+     "NOT executed (budget)" — an unrun phase declared as unrun is transparent,
+     not a stub; the sin is a hollow cell DISGUISED as having run, not an
+     openly-skipped one.
    • LAZY REPRODUCTION (the runtime checks by EXECUTING): after this gate the
      runtime executes pipeline.ipynb against the shipped ledger and asserts ZERO
      new oracle evals + the self-asserted headline. This is the binding dynamic
