@@ -120,7 +120,17 @@ Format per feature: **what** (plain language) · **why** · **where** (files) ·
   / per-delegation ledgered eval counts read live from the stores
   (`instrumented.ledger_breakdown`), so a writeup DERIVES counts from the ledger instead
   of hardcoding stale plan numbers (run 20260628T001710 hardcoded 70 polar evals; the
-  ledger held 90 → UNGATED). Read-only; spends no eval budget.
+  ledger held 90 → UNGATED). It also reads `eval_budget` from run_config and prints
+  `spent of budget — N remaining`, so the agent READS that number rather than hand-
+  computing it and flipping spent↔remaining (run 20260628T130525 asserted "200 remain"
+  with 200 spent of 300 → UNGATED). Read-only; spends no eval budget.
+- **Multi-experiment load idiom:** `f3dasm.agentic.load_experiments()` (`instrumented.
+  load_experiments`) loads every experiment store of a run as `{name: ExperimentData}`
+  (default + each design experiment, at their nested paths). A namespaced run has N
+  stores and no namespace column, so the single-study `from_file` idiom silently loads
+  only the default; this is the one call pipeline.ipynb uses to load them all. Wired
+  into the deliverable spec (`notebook_exec.py`) and the injected paths block
+  (`agent_prompts.py`).
 - **Tools:** `LedgerBreakdown`.
 - **Status:** plumbing complete (branch `exp/open-design-space`); gated on the 2D
   experiment before the baseline study adopts it.

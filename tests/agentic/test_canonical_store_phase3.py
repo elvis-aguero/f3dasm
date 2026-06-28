@@ -904,10 +904,15 @@ def test_ledger_breakdown_tool_renders_per_experiment_split(tmp_path):
             job_status=JobStatus.FINISHED) for i in range(n)}
         ExperimentData.from_data(data=rows, domain=dom).store(project_dir=store_dir)
 
+    import json as _json
     run_dir, notes_dir = _build_run_layout(tmp_path)
     store_root = run_dir / "experiment_data"
     seed(store_root, 30, "D004")
     seed(store_root / "polar", 50, "D006")
+    # eval_budget grounds the spent/remaining line so the agent reads it, not
+    # hand-computes it (run 20260628T130525 flipped spent<->remaining → UNGATED).
+    (run_dir / "debug" / "run_config.json").write_text(
+        _json.dumps({"eval_budget": 300}))
 
     class StubAdapter:
         def __init__(self):
@@ -938,4 +943,5 @@ def test_ledger_breakdown_tool_renders_per_experiment_split(tmp_path):
     out = node.adapter.closure_tools["LedgerBreakdown"]()
     assert "default: 30 total" in out and "D004: 30" in out
     assert "polar: 50 total" in out and "D006: 50" in out
-    assert "run total: 80" in out
+    # grounded against budget: 80 spent of 300 → 220 remaining (read, not computed)
+    assert "80 of 300 eval budget spent" in out and "220 remaining" in out

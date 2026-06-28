@@ -1048,6 +1048,39 @@ def delegation_evals(store_root: Path | str, delegation_id: str) -> int:
     return total
 
 
+def load_experiments(
+    store_root: Path | str | None = None,
+) -> dict[str, "ExperimentData"]:
+    """Load EVERY experiment store of a run as a dict ``{name: ExperimentData}``.
+
+    A namespaced run holds one clean ``ExperimentData`` per experiment at nested
+    paths — the default store at ``<root>/experiment_data/`` and each design
+    experiment at ``<root>/<name>/experiment_data/`` — so a single
+    ``ExperimentData.from_file`` (the single-study idiom) loads only the default
+    store and silently misses the rest. This is the multi-namespace load idiom
+    for pipeline.ipynb: one call returns them all, keyed by experiment name
+    (the default/baseline store is ``"default"``).
+
+    ``store_root`` defaults to ``$F3DASM_CANONICAL_STORE`` (set in the notebook's
+    execution env), so the notebook body is just
+    ``experiments = load_experiments()``. Empty/absent stores are skipped; an
+    empty run yields ``{}``. Never raises on a missing store.
+    """
+    if store_root is None:
+        store_root = os.environ.get("F3DASM_CANONICAL_STORE", "")
+    store_root = Path(store_root)
+    out: dict[str, ExperimentData] = {}
+    for store in experiment_stores(store_root):
+        name = "default" if store == store_root else store.name
+        try:
+            data = ExperimentData.from_file(project_dir=store)
+        except Exception:  # noqa: BLE001 — empty/absent store
+            continue
+        if len(data) > 0:
+            out[name] = data
+    return out
+
+
 def ledger_breakdown(store_root: Path | str) -> list[dict]:
     """Per-experiment, per-delegation eval counts across the whole run.
 
@@ -1083,6 +1116,7 @@ __all__ = [
     "RunStateSummary",
     "get_evaluator",
     "ledger_breakdown",
+    "load_experiments",
     "load_inner_evaluator",
     "total_ledgered_evals",
     "delegation_evals",

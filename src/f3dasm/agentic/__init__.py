@@ -41,7 +41,7 @@ from .._src.agentic.graph_state import AgenticState
 # oracle. InstrumentedDataGenerator stays internal (constructed solely inside
 # get_evaluator); it is deliberately not re-exported so agents cannot build a
 # store-redirected evaluator. See KB 0001.
-from .._src.agentic.instrumented import get_evaluator
+from .._src.agentic.instrumented import get_evaluator, load_experiments
 from .._src.agentic.lookup import LookupDataGenerator
 from .._src.agentic.nodes import (
     AgentNode,
@@ -59,6 +59,7 @@ __all__ = [
     "Agent",
     "AgentNode",
     "get_evaluator",
+    "load_experiments",
     "AgenticOptimizerAdapter",
     "DataGeneratorAgent",
     "F3dasmImplementerAgent",

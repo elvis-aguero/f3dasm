@@ -137,3 +137,36 @@ def test_ledger_breakdown_is_per_experiment_per_delegation(tmp_path):
 def test_ledger_breakdown_empty_store_is_empty_not_error(tmp_path):
     from f3dasm._src.agentic.instrumented import ledger_breakdown
     assert ledger_breakdown(tmp_path / "nope") == []
+
+
+def test_load_experiments_returns_every_store_keyed_by_name(tmp_path):
+    """The multi-namespace load idiom: one call returns all experiment stores
+    (default + each design experiment), so a notebook does not silently miss
+    polar by loading only the default store (run 20260628T130525 CRITICAL)."""
+    from f3dasm._src.agentic.instrumented import load_experiments
+
+    store = tmp_path / "experiment_data"
+    _seed_store(store, 30, delegation_id="D004")          # default
+    _seed_store(store / "polar", 50, delegation_id="D006")
+
+    exps = load_experiments(store)
+    assert set(exps) == {"default", "polar"}
+    assert len(exps["default"]) == 30
+    assert len(exps["polar"]) == 50
+
+
+def test_load_experiments_single_study_is_just_default(tmp_path):
+    from f3dasm._src.agentic.instrumented import load_experiments
+    store = tmp_path / "experiment_data"
+    _seed_store(store, 12)
+    exps = load_experiments(store)
+    assert set(exps) == {"default"} and len(exps["default"]) == 12
+
+
+def test_load_experiments_empty_run_is_empty_dict(tmp_path):
+    from f3dasm._src.agentic.instrumented import load_experiments
+    assert load_experiments(tmp_path / "nope") == {}
+
+
+def test_load_experiments_is_exported_from_agentic():
+    from f3dasm.agentic import load_experiments  # noqa: F401

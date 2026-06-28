@@ -2693,7 +2693,23 @@ def build_routing_tools(node) -> dict:
                 f"{r['experiment']}: {r['total']} total"
                 + (f"  ({split})" if split else ""))
         grand = sum(r["total"] for r in rows)
-        lines.append(f"— run total: {grand} ledgered evaluations")
+        # Ground the spent/remaining number against the budget so it is READ,
+        # not hand-computed (agents flip spent<->remaining: run 20260628T130525
+        # asserted "200 remain" when 200 were spent of 300 → UNGATED).
+        budget = None
+        try:
+            import json as _json
+            _cfg = notes.parent.parent / "debug" / "run_config.json"
+            if _cfg.exists():
+                budget = _json.loads(_cfg.read_text()).get("eval_budget")
+        except Exception:  # noqa: BLE001
+            budget = None
+        if budget:
+            lines.append(
+                f"— run total: {grand} of {int(budget)} eval budget spent "
+                f"— {max(int(budget) - grand, 0)} remaining")
+        else:
+            lines.append(f"— run total: {grand} ledgered evaluations")
         return prefix + "\n".join(lines)
 
     def RunScratch(code: str) -> str:

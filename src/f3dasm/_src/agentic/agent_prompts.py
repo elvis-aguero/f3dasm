@@ -165,10 +165,13 @@ hypotheses_json       = {notes_dir}/hypotheses.json
 delegation_log_jsonl  = {debug_dir}/delegation_log.jsonl
 diagnostics_jsonl     = {debug_dir}/diagnostics.jsonl
 canonical_store       = {experiment_data_dir}
-  ^ this is the ExperimentData PROJECT_DIR. Load the ledger with
+  ^ this is the ExperimentData PROJECT_DIR. To load ONE store directly:
   ExperimentData.from_file(project_dir="{experiment_data_dir}") — the CSVs live
   one level UNDER it; never hardcode a deeper/shallower path or you'll read an
-  empty store. pipeline.ipynb MUST load it exactly this way.
+  empty store. But a run may hold SEVERAL experiments (a baseline + design
+  parametrizations), each its own store at a nested path — to load them all,
+  use `from f3dasm.agentic import load_experiments; experiments = load_experiments()`
+  (returns {{name: ExperimentData}}; {{'default': ...}} for a single-experiment run).
 workspace_dir         = {debug_dir}/delegations
 Use these absolute paths when calling Read() and WriteNote().
 WriteNote also accepts a bare filename such as 'meta_errors.md',
