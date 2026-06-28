@@ -449,6 +449,12 @@ def test_wall_per_delegation_and_footer(tmp_path):
         "D001", wall_remaining_s=1800.0, wall_budget_s=3600.0)
     assert "wall budget remaining" in footer_b
 
+    # Peak-RAM telemetry: rendered when given, against the hard cap; absent otherwise.
+    footer_mem = summary.delegation_footer(
+        "D001", peak_rss_bytes=2 * 1024**3, ram_cap_bytes=4 * 1024**3)
+    assert "peak RAM (this delegation): 2.00 GB of 4.0 GB hard cap" in footer_mem
+    assert "peak RAM" not in summary.delegation_footer("D001")  # none → no line
+
     # A delegation that wrote no rows gets no footer (not a fabricated zero).
     assert summary.delegation_footer("D999") is None
 

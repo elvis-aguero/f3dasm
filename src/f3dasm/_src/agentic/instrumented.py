@@ -771,6 +771,8 @@ class RunStateSummary:
         *,
         wall_remaining_s: float | None = None,
         wall_budget_s: float | None = None,
+        peak_rss_bytes: int | None = None,
+        ram_cap_bytes: int | None = None,
     ) -> str | None:
         """Compact KPI footer for ONE delegation's ledgered rows, or None.
 
@@ -808,6 +810,11 @@ class RunStateSummary:
                 f"{_dur(max(0.0, wall_remaining_s) * 1000)} of "
                 f"{_dur(wall_budget_s * 1000)}"
             )
+        if peak_rss_bytes:
+            _gb = peak_rss_bytes / 1024 ** 3
+            cap = (f" of {ram_cap_bytes / 1024 ** 3:.1f} GB hard cap"
+                   if ram_cap_bytes else "")
+            lines.append(f"  peak RAM (this delegation): {_gb:.2f} GB{cap}")
         return "\n".join(lines)
 
     # ------------------------------------------------------------------

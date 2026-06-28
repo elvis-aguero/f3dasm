@@ -180,7 +180,7 @@ To see what is INSIDE a directory (e.g. the store layout), use Glob('<dir>/*')
 WriteNote also accepts a bare filename such as 'meta_errors.md',
 which is anchored under strategizer_notes_dir automatically.
 Workers write exclusively inside workspace_dir/D###/.
-</run_paths>
+{resources}</run_paths>
 
 """
 """Run-paths preamble injected at the head of the Strategizer system
@@ -219,7 +219,7 @@ Evaluate designs ONLY through the instrumented evaluator: \
 — results are recorded in the run's canonical evaluation ledger \
 automatically. Raw evaluator imports bypass the ledger, are flagged \
 by the monitor, and can invalidate the run.
-</workspace>
+{resources}</workspace>
 
 """
 """Workspace preamble injected at the head of worker system prompts.

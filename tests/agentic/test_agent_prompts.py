@@ -704,6 +704,7 @@ def test_run_paths_preamble_template_placeholders():
         debug_dir="/a/study/runs/ts/debug",
         notes_dir="/a/notes",
         experiment_data_dir="/a/study/runs/ts/experiment_data",
+        resources="",
     )
     assert "/a/study" in result, (
         "study_dir substitution not found in result"
@@ -763,6 +764,7 @@ def test_workspace_preamble_template_placeholder_and_no_tmp():
     result = WORKSPACE_PREAMBLE_TEMPLATE.format(
         workspace_dir="/a/workspace",
         study_dir="/a/study",
+        resources="",
     )
     assert "/a/workspace" in result, (
         "workspace_dir substitution not found in result"
@@ -1073,3 +1075,22 @@ def test_no_agent_bare_advertises_its_closures():
             "'No such tool available'. Present capabilities and defer to the "
             "<tools> catalog for exact names (as the strategizer does)."
         )
+
+
+def test_resource_envelope_stanza_primes_ram_and_parallelism(tmp_path):
+    """The static envelope injected at delegation start names cores, the HARD RAM
+    cap, and free disk, and primes safe parallelism — and both preambles carry the
+    {resources} placeholder so the stanza actually lands."""
+    from types import SimpleNamespace
+    from f3dasm._src.agentic.agent_runtime import AgenticRun
+    from f3dasm._src.agentic.agent_prompts import (
+        RUN_PATHS_PREAMBLE_TEMPLATE,
+        WORKSPACE_PREAMBLE_TEMPLATE,
+    )
+    ns = SimpleNamespace(_mem_cap_bytes=4 * 1024 ** 3, study_dir=tmp_path)
+    stanza = AgenticRun._resource_stanza(ns, tmp_path)  # unbound; uses only those attrs
+    assert "CPU cores" in stanza
+    assert "RAM cap 4.0 GB" in stanza and "KILLED" in stanza
+    assert "Parallelize" in stanza and "disk free" in stanza
+    assert "{resources}" in RUN_PATHS_PREAMBLE_TEMPLATE
+    assert "{resources}" in WORKSPACE_PREAMBLE_TEMPLATE

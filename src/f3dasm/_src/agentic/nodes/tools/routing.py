@@ -848,10 +848,27 @@ def build_routing_tools(node) -> dict:
                                 _bs - (time.time() - _rs)
                                 if _bs and _rs else None
                             )
+                            # Peak RAM this delegation reached (watcher high-water,
+                            # free) against the hard cap, so the strategizer learns
+                            # the memory footprint like it learns the time cost.
+                            from ...watchdog_cleanup import delegation_peak_rss
+                            _peak = delegation_peak_rss(delegation_id)
+                            _cap = None
+                            try:
+                                import json as _json
+                                _cfgp = (_notes.parent.parent / "debug"
+                                         / "run_config.json")
+                                if _cfgp.exists():
+                                    _cap = _json.loads(
+                                        _cfgp.read_text()).get("mem_cap_bytes")
+                            except Exception:  # noqa: BLE001
+                                _cap = None
                             _footer = _summary.delegation_footer(
                                 delegation_id,
                                 wall_remaining_s=_rem,
                                 wall_budget_s=_bs,
+                                peak_rss_bytes=_peak,
+                                ram_cap_bytes=_cap,
                             )
                             if _footer:
                                 text = text + _footer
@@ -1186,10 +1203,16 @@ def build_routing_tools(node) -> dict:
         # and Confer the implementer. Best-effort; appended only if known.
         if _run_exp is not None:
             try:
-                from ...watchdog_cleanup import delegation_rss
+                from ...watchdog_cleanup import (
+                    delegation_peak_rss,
+                    delegation_rss,
+                )
                 _rss = delegation_rss(_run_exp.parent, delegation_id)
                 if _rss > 0:
                     progress_desc += f"; ~{_rss / 1024 ** 2:.0f} MB RSS"
+                    _peak = delegation_peak_rss(delegation_id)
+                    if _peak > _rss:
+                        progress_desc += f" (peak ~{_peak / 1024 ** 2:.0f} MB)"
             except Exception:  # noqa: BLE001
                 pass
         note_desc = ""

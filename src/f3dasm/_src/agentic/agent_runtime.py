@@ -900,8 +900,33 @@ class AgenticRun:
             pass
         return problem + addendum
 
+    def _resource_stanza(self, run_dir) -> str:
+        """The static resource-envelope stanza — "what you HAVE" — injected into a
+        worker/strategizer preamble at delegation start, so the agent is primed to
+        parallelize within RAM rather than run-and-hope. O(1): cpu_count + one
+        statvfs (no directory walk). Empty string on any failure (never fatal)."""
+        try:
+            from .watchdog_cleanup import resource_envelope
+            env = resource_envelope(run_dir or self.study_dir, self._mem_cap_bytes)
+            cores = env["cores"]
+            ram = (f"{env['ram_cap_bytes'] / 1024 ** 3:.1f} GB"
+                   if env["ram_cap_bytes"] else "unset")
+            disk = (f"{env['disk_free_bytes'] / 1024 ** 3:.0f} GB"
+                    if env["disk_free_bytes"] is not None else "unknown")
+            return (
+                "resources: "
+                f"~{cores} CPU cores · RAM cap {ram} per delegation (HARD — exceed "
+                "it and your process is KILLED; stream/cache large data, don't load "
+                f"it all at once) · disk free {disk}.\n"
+                f"Parallelize independent work (up to ~{cores} ways) to save "
+                "wall-clock, but size concurrency to the RAM cap.\n"
+            )
+        except Exception:  # noqa: BLE001 — telemetry must never break a run
+            return ""
+
     def _make_adapter(self, name: str, agent: Agent):
         run_dir = self._run_dir
+        _resources = self._resource_stanza(run_dir)
 
         has_outgoing = (
             run_dir
@@ -917,6 +942,7 @@ class AgenticRun:
                 debug_dir=debug_dir,
                 notes_dir=notes_dir,
                 experiment_data_dir=Path(run_dir) / "experiment_data",
+                resources=_resources,
             )
             system_prompt = preamble + agent.system_prompt
             cwd = self.study_dir
@@ -929,6 +955,7 @@ class AgenticRun:
             preamble = WORKSPACE_PREAMBLE_TEMPLATE.format(
                 workspace_dir=workspace_dir,
                 study_dir=self.study_dir,
+                resources=_resources,
             )
             system_prompt = preamble + agent.system_prompt
             # Critics read from the study tree, not from a delegation subfolder.

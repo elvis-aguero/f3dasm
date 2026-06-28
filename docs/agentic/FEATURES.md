@@ -171,10 +171,32 @@ Format per feature: **what** (plain language) · **why** · **where** (files) ·
 - **Where:** `resource_backend.py`. **Status:** done (Linux cgroup backend = future).
 
 ### Per-delegation resource telemetry
-- **What:** `GetStatus` shows a delegation's eval count and RSS, so the strategizer
-  can see a fat campaign (and `Confer` the implementer).
-- **Where:** `nodes/tools/routing.py`, `watchdog_cleanup.py` `delegation_rss`.
+- **What:** `GetStatus` shows a delegation's eval count, current RSS, and **peak
+  RSS** (the high-water across the watcher's ticks), so the strategizer can see a
+  fat or fattening campaign (and `Confer` the implementer).
+- **Where:** `nodes/tools/routing.py`, `watchdog_cleanup.py`
+  `delegation_rss` / `delegation_peak_rss`.
 - **Status:** done.
+
+### Resource AWARENESS (telemetry, NOT enforcement)
+- **What:** primes agents to be efficient with the things models ignore — time,
+  RAM, disk, parallelism width — via two surfaces:
+  - **Static envelope at delegation start:** a `<resources>`-style stanza in the
+    worker/strategizer preamble — `~N CPU cores · RAM cap X GB (HARD — exceed it
+    and your process is killed; stream/cache) · disk free Y GB · parallelize up to
+    ~N ways, sized to RAM`.
+  - **Measured peak RAM in the KPI footer:** `peak RAM (this delegation): Z GB of
+    X GB hard cap`, the watcher's high-water — so memory cost travels with the
+    result like wall-time already does.
+- **Footprint (by design):** peak RAM rides the memory watcher's existing 5s poll
+  (one `max()` per tick — no new poll/thread/I/O); the envelope is one
+  `os.cpu_count()` + one `shutil.disk_usage` (O(1) `statvfs`, **never** a recursive
+  `du`); the per-eval hot path is untouched (no per-eval RSS/disk stamping).
+- **Where:** `watchdog_cleanup.py` `resource_envelope` / `delegation_peak_rss`
+  (high-water recorded in `check_memory_and_kill`); `agent_runtime.py`
+  `_resource_stanza`; `agent_prompts.py` `{resources}` placeholder;
+  `instrumented.py` `delegation_footer` peak-RAM line.
+- **Status:** awareness only — the hard memory cap stays the one enforced boundary.
 
 ### Per-delegation ledger KPIs auto-appended to the report
 - **What:** when a delegation completes, a KPI footer is appended to the result
