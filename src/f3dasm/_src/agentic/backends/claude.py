@@ -347,8 +347,15 @@ class ClaudeAdapter:
         """
         return self
 
-    async def ainvoke(self, messages: list[dict]) -> str:
-        """Run one agent turn asynchronously; return assembled text."""
+    async def ainvoke(
+        self, messages: list[dict], *, idle_timeout: float | None = None,
+    ) -> str:
+        """Run one agent turn asynchronously; return assembled text.
+
+        ``idle_timeout`` overrides the run-wide ``llm_stream_idle_timeout`` for
+        THIS call only — used by short advisory side-calls (e.g. the verdict
+        validator) that must not inherit a real agent turn's generous window.
+        """
         _require_sdk()
         from claude_agent_sdk import (
             AssistantMessage,
@@ -545,7 +552,8 @@ class ClaudeAdapter:
         # llm_stream_idle_timeout (0 disables); llm_tool_idle_timeout caps tool
         # execution (0 = uncapped).
         from ..settings import get_float as _get_float
-        _idle = _get_float("llm_stream_idle_timeout", 600.0)
+        _idle = (idle_timeout if idle_timeout is not None
+                 else _get_float("llm_stream_idle_timeout", 600.0))
         _tool_idle = _get_float("llm_tool_idle_timeout", 0.0)
 
         def _phase(msg: Any):
@@ -713,15 +721,26 @@ class ClaudeAdapter:
             text = (text + "\n\n" + _note) if text else _note
         return text
 
-    def invoke(self, messages: list[dict]) -> str:
+    def invoke(
+        self, messages: list[dict], *,
+        idle_timeout: float | None = None, retry_max: int | None = None,
+    ) -> str:
         """Synchronous wrapper around :meth:`ainvoke`.
 
         Acquires _lock to serialize concurrent callers (e.g. parallel
         delegations to the same shared worker adapter). Transient API/network
         failures are retried with exponential backoff (see retry_on_transient).
+
+        ``idle_timeout`` / ``retry_max`` override the run-wide stream-idle and
+        retry budgets for THIS call only. A short advisory side-call (verdict
+        validator) passes a tight idle + ``retry_max=1`` so a hung CLI stream
+        aborts in ~that window instead of inheriting a real turn's
+        5×600s budget (which once froze a whole run for ~89 min).
         """
         from .base import retry_on_transient
         with self._lock:
             return retry_on_transient(
-                lambda: _run_async_safe(self.ainvoke(messages))
+                lambda: _run_async_safe(
+                    self.ainvoke(messages, idle_timeout=idle_timeout)),
+                max_attempts=retry_max,
             )

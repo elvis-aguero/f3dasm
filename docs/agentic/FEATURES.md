@@ -41,6 +41,10 @@ Format per feature: **what** (plain language) · **why** · **where** (files) ·
   hypothesis (from the ledger `status_log`, via `_prior_rulings_digest`) with a
   justify-any-reversal guard, so a borderline verdict can't silently flip between
   calls. Mirrors the gate critic's prior-reviews digest.
+- **Bounded budget:** the advisory call runs with a tight `idle_timeout=120s` +
+  `retry_max=1` (NOT the run-wide 5×600s agent-turn budget). A hung CLI stream once
+  froze a whole run for ~89 min here; on any timeout/failure the verdict simply
+  stands (the call is advisory).
 - **Config:** kill switch `F3DASM_VERDICT_VALIDATOR=0`. **Status:** advisory, non-blocking.
 
 ### Science monitor

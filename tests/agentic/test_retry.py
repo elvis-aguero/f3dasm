@@ -101,6 +101,6 @@ def test_claude_invoke_retries(monkeypatch):
         return "done"
 
     monkeypatch.setattr(cl, "_run_async_safe", lambda _coro: flaky())
-    monkeypatch.setattr(a, "ainvoke", lambda _m: None)  # coro arg unused
+    monkeypatch.setattr(a, "ainvoke", lambda _m, **_k: None)  # coro arg unused
     assert a.invoke([{"role": "user", "content": "hi"}]) == "done"
     assert calls["n"] == 2

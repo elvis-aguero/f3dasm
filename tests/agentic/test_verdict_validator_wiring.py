@@ -140,6 +140,36 @@ def test_flag_lands_in_result_and_persists_but_update_stands(tmp_path):
                for e in events)
 
 
+# ── the advisory call must carry a TIGHT budget, not a full agent turn's ─────
+
+def test_validator_call_uses_a_bounded_budget(tmp_path):
+    """Regression for run 20260627T211310: the validator inherited the main
+    loop's 5×600s stream/retry budget and a hung CLI stream froze the whole run
+    for ~89 min. The advisory call must pass a tight idle + retry_max=1 so it
+    aborts ~2 min after a silent stream."""
+    class _RecordingCritic(_CriticStub):
+        def __init__(self):
+            super().__init__(reply="SUBSTANCE: OK")
+            self.kwargs = None
+
+        def invoke(self, messages, **kwargs):
+            self.calls += 1
+            self.kwargs = kwargs
+            return self.reply
+
+    n, _, _ = _node(tmp_path)
+    rec = _RecordingCritic()
+    n._worker_adapters["critic"] = rec
+    h = _propose(n)
+    _record_done(n, "D001", h_ids=[h])
+    n.adapter.closure_tools["HypothesisUpdate"](
+        h, "FALSIFIED", "test contradicted the prediction", 0.1,
+        evidence={"delegation": "D001", "numbers": {"best_f": 1.47}},
+    )
+    assert rec.calls == 1
+    assert rec.kwargs == {"idle_timeout": 120.0, "retry_max": 1}
+
+
 # ── OPEN is not a closing verdict → validator must not fire ──────────────────
 
 def test_open_retraction_skips_the_validator(tmp_path):

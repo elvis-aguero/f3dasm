@@ -246,7 +246,18 @@ class CriticGateMixin:
             return ""
         adapter = self._worker_adapters[critic_name]
         worker = adapter.copy() if hasattr(adapter, "copy") else adapter
+        # Tight budget: this advisory judge must NOT inherit a real agent turn's
+        # 5×600s stream/retry budget. A hung CLI stream once froze a whole run
+        # for ~89 min here (run 20260627T211310). idle=120 + retry_max=1 abort
+        # ~2 min after the stream goes silent; the call is advisory, so on any
+        # failure the verdict stands (see _run_verdict_validator).
         try:
+            reply = worker.invoke(
+                [{"role": "user", "content": prompt}],
+                idle_timeout=120.0, retry_max=1,
+            )
+        except TypeError:
+            # A backend/stub without the budget kwargs — fall back gracefully.
             reply = worker.invoke([{"role": "user", "content": prompt}])
         except Exception:  # noqa: BLE001
             return ""
