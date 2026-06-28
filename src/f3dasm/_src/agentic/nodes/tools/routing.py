@@ -1915,6 +1915,10 @@ def build_routing_tools(node) -> dict:
         def RecallHistory(n: int = 5) -> str:
             """Return the last n delegations received by this node as (task, deliverable) pairs.
             Call at the start of a delegation to recall prior work. Returns oldest-first."""
+            try:
+                n = int(n)  # the model may pass "5"; query_received does [-n:]
+            except (TypeError, ValueError):
+                n = 5
             records = _dlog.query_received(node._name, n)
             if not records:
                 return "No prior delegations found."

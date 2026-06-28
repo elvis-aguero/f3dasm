@@ -2513,6 +2513,14 @@ def test_recall_history_returns_formatted_pairs(tmp_path):
     assert "Second result" in result
     assert "Prior delegation 1" in result
     assert "Prior delegation 2" in result
+    # Regression: the model may pass n as a STRING ("5"); query_received does
+    # matching[-n:] which raised "bad operand type for unary -: 'str'"
+    # (observed run 20260627T233316). RecallHistory must coerce, not crash.
+    result_str_n = node.adapter.closure_tools["RecallHistory"](n="5")
+    assert "First task" in result_str_n and "Second task" in result_str_n
+    # garbage falls back to the default rather than raising
+    assert node.adapter.closure_tools["RecallHistory"](n="lots").startswith(
+        "== Prior delegation")
 
 
 def test_worker_node_has_recall_history_closure(tmp_path):
