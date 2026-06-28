@@ -664,3 +664,38 @@ an architectural change the user owns. Related: #18 (critic blind to
 infeasible-extremum headlines) and #17 (budget-severity model) are the same class
 — the critic/validator scrutinise mechanics and atomic verdicts, not the headline
 as a communicated scientific claim.
+
+---
+
+## #22 — Stall watchdog: liveness = "file written", not "progress made" (backstop defect)
+
+**Severity:** medium (a backstop, not a primary control — the real cure for the
+hang it failed to bound is the per-call validator timeout, shipped in `9d58b2a3`).
+
+**What happened.** Run `20260627T211310` (watchdog_killed, 2h20m). A verdict-validator
+LLM call hung at 22:03:29 (see `9d58b2a3` for the root cause). The study's stall
+watchdog (`studies/agentic_namespace_ring/run.py` `_watchdog`, using
+`watchdog_cleanup.seconds_since_last_activity`) is supposed to force-exit a hung run
+after `STALL_SECONDS` (1200s here). It did fire — but only at **idle 5378s (~89 min)**,
+~4.5× its own threshold. The watchdog post-mortem records `force-killed at 5378s`.
+
+**Suspected cause (UNCONFIRMED — snapshot mtimes corrupted by the batch's non-`-p`
+cp, so not provable from preserved artifacts):** `seconds_since_last_activity` =
+most-recent mtime of ANY file under the run dir. Liveness so defined is satisfied by
+a hung-but-still-twitching CLI subprocess (partial transcript flushes, checkpoint WAL,
+telemetry) — i.e. *activity ≠ progress*. A run can write bytes while making zero
+scientific progress, resetting the idle clock. (Alternative: daemon-thread starvation
+under a GIL-holding loop — also unproven.)
+
+**Proposed fix (deferred — the user flagged the watchdog as a SYMPTOM; do not
+re-prioritise it over root causes):** define "stall" as *no PROGRESS* — no new ledgered
+evaluations and no delegation state-transition for the window — rather than *no file
+written*. Catches both a true hang and a grind-without-progress, and never kills a run
+that is still producing evals (honours "never penalise parallel/slow-but-live work").
+Needs a progress signal the watchdog can read cheaply (e.g. max over ledger row count +
+delegation_log completed count). Validate headless before trusting it.
+
+**Why not now:** with the validator call bounded (`9d58b2a3`), the specific hang that
+exposed this can no longer run 89 min — it aborts in ~2 min. The watchdog defect only
+matters for a *different*, not-yet-observed hang that the per-call timeouts don't cover.
+Fix it when such a case appears, or as deliberate hardening — not as symptom-chasing.
