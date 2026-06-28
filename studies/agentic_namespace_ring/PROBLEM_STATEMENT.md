@@ -1,77 +1,45 @@
 # Find the high-scoring region of a concentrated 2-D landscape
 
-Maximise a fixed objective `score(x, y)` over the closed unit disk
-(`x² + y² ≤ 1`). Higher is better; the maximum value is `1.0`. The landscape is
-**concentrated**: almost the whole disk scores near zero, and the high-scoring
-region is a thin set that uniform `(x, y)` sampling rarely lands on.
+We have a fixed objective `score(x, y)` defined over the closed unit disk
+(`x² + y² ≤ 1`). Higher is better; the best attainable value is `1.0`. The catch:
+the landscape is **concentrated** — almost the entire disk scores near zero, and
+the high-scoring region is a thin sliver. Sample `(x, y)` uniformly and you burn
+your whole budget in the dead zone.
 
-This problem is deliberately small and fast — it is a test of *how you frame the
-search*, not of compute.
+The budget is small and the problem is fast on purpose. This is not a
+compute problem — it is a question of how cleverly you go after that sliver.
 
----
+## The baseline
 
-## The baseline design space — `cartesian`
-
-The default (registered) design space parametrises a point by its coordinates
-directly:
-
-| Variable | Lower | Upper |
-|----------|-------|-------|
-| `x`      | −1    | 1     |
-| `y`      | −1    | 1     |
-
-Reach the oracle through `get_evaluator()` (never import the oracle directly):
+The default design space searches the coordinates directly — `x ∈ [−1, 1]`,
+`y ∈ [−1, 1]` — and you reach the (one, fixed) objective through the metered
+oracle:
 
 ```python
 from f3dasm.agentic import get_evaluator
-gen = get_evaluator()              # the 'cartesian' baseline oracle
+gen = get_evaluator()              # the baseline oracle
 gen.call(data, mode="sequential")  # evaluate + log to the canonical ledger
 ```
 
-A uniform/LHS sweep of this box is the **baseline to beat**. You will find it
-spends most of its budget in the near-zero region.
+A uniform / space-filling sweep of that box is the number to beat under the same
+budget. You will see most of it land where the score is ~0.
 
----
+## What I'm asking
 
-## You may invent a better *parametrization* — the key idea
+Beat the baseline. Spend the same budget, find a better-scoring design, and —
+more importantly — tell me **why** your approach worked. Here the way you set up
+the search will buy you more than the choice of optimizer, so think about that
+first.
 
-The deeper lever here is not the optimiser — it is **how the design space is
-represented**. The objective `score(x, y)` is FIXED (it is the one ruler), but
-*the variables you search over are yours to choose*. A representation that
-concentrates its samples where the score lives will beat the Cartesian box with
-the same budget.
+If it helps, the framework lets you stand up alternative design spaces of your
+own and search those instead of the default box (the handbook has the mechanics).
+Use that freedom if you see a reason to; don't if you don't.
 
-When a different representation is the question, open it as a **new design
-namespace**: `Delegate(target="datagenerator", namespace="your_name", …)` to
-build + register its oracle, then `Delegate(target="implementer",
-namespace="your_name", …)` to search it. Each namespace keeps its own ledger;
-the baseline is untouched.
-
-**Worked example you are encouraged to try — `polar`.** Parametrise the same
-point by a radius and an angle instead of coordinates:
-
-```python
-# the 'polar' oracle the datagenerator authors — it calls the SAME objective,
-# so its scores are directly comparable to the cartesian baseline:
-from objective import score
-import math
-def evaluate_kw(**kw):
-    r, theta = float(kw["r"]), float(kw["theta"])     # r in [0,1], theta in [0, 2*pi]
-    return score(r * math.cos(theta), r * math.sin(theta))
-```
-
-This is not the only possible reparametrization — propose your own if you see a
-better one. The discipline: a new namespace's oracle must call `objective.score`
-so a "this design wins" claim is measured on the same ruler. If you ever change
-what is measured, say so and justify why the comparison still holds.
-
----
-
-## What to report
-
-- The best point found and its `score`, **per namespace** you explored.
-- Which parametrization searched the landscape most efficiently for the budget,
-  and **why** (the mechanism — not just the number).
-- Total evaluations used (per namespace) and the search strategy.
-- Honest epistemic status: if a parametrization did *not* beat the baseline, say
-  so — the idea can still be worth recording.
+Two non-negotiables, the way they'd be in any honest study:
+- **One ruler.** Whatever you search, it must be scored by the same
+  `objective.score`, so "this beats that" is a real comparison. If you ever
+  change what is measured, say so and justify why the comparison still stands.
+- **Honest result.** Report the best design and score for each thing you tried,
+  the budget each used, and the mechanism behind the winner. If an idea did not
+  beat the baseline, say so plainly — a negative result that's understood is
+  worth recording.
