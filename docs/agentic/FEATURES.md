@@ -230,6 +230,13 @@ Format per feature: **what** (plain language) · **why** · **where** (files) ·
 ### KB (handbook) entries
 - **What:** curated knowledge the agents consult (incl. running on SLURM, pipeline
   patterns). **Where:** `knowledge/entries/`. **Status:** core.
+- **Injected menu:** an audience-filtered, one-line-per-entry MENU
+  (`KnowledgeBase.menu(audience)`) is injected into every agent's system prompt
+  (`agent_runtime._kb_menu` → the `{knowledge}` placeholder in both preambles), so
+  an agent always SEES the latent chapters it can pull — the same way it always
+  sees its tool list — instead of only discovering one if it already thought to
+  call `ConsultHandbook`. The descriptor is the entry `title`, capped to one terse
+  line by a ≤100-char invariant (`test_knowledge_base.py`).
 
 ---
 

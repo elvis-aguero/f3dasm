@@ -125,3 +125,44 @@ class TestCharterChapter:
         toc = kb.toc()
         for e in kb.entries:
             assert e.id in toc
+
+
+# ── KB menu (injected into the system prompt, like the tool list) ────────────
+
+def test_kb_menu_is_audience_filtered_and_points_at_consulthandbook():
+    """The injected menu lists only entries for the agent's role and tells it how
+    to pull a full chapter — so it SEES its latent knowledge without first having
+    to guess that ConsultHandbook exists."""
+    from f3dasm._src.agentic.knowledge import KnowledgeBase
+    kb = KnowledgeBase.load()
+
+    strat = kb.menu(audience="strategizer")
+    impl = kb.menu(audience="implementer")
+    assert "ConsultHandbook" in strat
+    # a strategizer-only entry shows for the strategizer, not the implementer
+    assert "one-delegation-one-experiment" in strat
+    assert "one-delegation-one-experiment" not in impl
+    # an implementer-only entry shows for the implementer, not the strategizer
+    assert "experimentdata-gotchas" in impl
+    assert "experimentdata-gotchas" not in strat
+    # the charter (all-audience) shows for both
+    assert "falsification-charter" in strat and "falsification-charter" in impl
+
+
+def test_kb_menu_empty_for_unknown_audience_is_safe():
+    from f3dasm._src.agentic.knowledge import KnowledgeBase
+    # 'literature_reviewer' has no targeted entries → menu lists only the
+    # universal ones (or is empty), never raises.
+    out = KnowledgeBase.load().menu(audience="nobody_role")
+    assert isinstance(out, str)
+
+
+def test_every_kb_entry_title_is_at_most_100_chars():
+    """The menu descriptor (the title) is the one-line summary injected into every
+    prompt — cap it at 100 chars so the menu stays a terse, scannable index, not a
+    paragraph. A new entry with a long title fails here on purpose."""
+    from f3dasm._src.agentic.knowledge import KnowledgeBase
+    for e in KnowledgeBase.load().entries:
+        assert len(e.title) <= 100, (
+            f"KB entry {e.id!r} title is {len(e.title)} chars (>100): {e.title!r}"
+        )

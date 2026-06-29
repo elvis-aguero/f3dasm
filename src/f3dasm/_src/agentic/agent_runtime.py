@@ -943,8 +943,22 @@ class AgenticRun:
         except Exception:  # noqa: BLE001 — telemetry must never break a run
             return ""
 
+    def _kb_menu(self, role) -> str:
+        """Audience-filtered handbook MENU injected at the head of an agent's
+        prompt — so it always SEES the latent knowledge it can pull (mirroring
+        how it always sees its tool list), instead of only discovering a chapter
+        if it already thought to call ConsultHandbook. Cached; empty on failure."""
+        try:
+            if getattr(self, "_kb", None) is None:
+                from .knowledge import KnowledgeBase
+                self._kb = KnowledgeBase.load()
+            return self._kb.menu(audience=role)
+        except Exception:  # noqa: BLE001 — a missing menu must never break a run
+            return ""
+
     def _make_adapter(self, name: str, agent: Agent):
         run_dir = self._run_dir
+        _role = getattr(agent, "role", None)
 
         has_outgoing = (
             run_dir
@@ -961,6 +975,7 @@ class AgenticRun:
                 notes_dir=notes_dir,
                 experiment_data_dir=Path(run_dir) / "experiment_data",
                 resources=self._resource_stanza(run_dir, for_worker=False),
+                knowledge=self._kb_menu(_role),
             )
             system_prompt = preamble + agent.system_prompt
             cwd = self.study_dir
@@ -978,6 +993,7 @@ class AgenticRun:
                 workspace_dir=workspace_dir,
                 study_dir=self.study_dir,
                 resources=self._resource_stanza(run_dir, for_worker=_is_campaign),
+                knowledge=self._kb_menu(_role),
             )
             system_prompt = preamble + agent.system_prompt
             # Critics read from the study tree, not from a delegation subfolder.

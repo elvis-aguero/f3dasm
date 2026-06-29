@@ -181,7 +181,7 @@ WriteNote also accepts a bare filename such as 'meta_errors.md',
 which is anchored under strategizer_notes_dir automatically.
 Workers write exclusively inside workspace_dir/D###/.
 {resources}</run_paths>
-
+{knowledge}
 """
 """Run-paths preamble injected at the head of the Strategizer system
 prompt for every new run.
@@ -220,7 +220,7 @@ Evaluate designs ONLY through the instrumented evaluator: \
 automatically. Raw evaluator imports bypass the ledger, are flagged \
 by the monitor, and can invalidate the run.
 {resources}</workspace>
-
+{knowledge}
 """
 """Workspace preamble injected at the head of worker system prompts.
 

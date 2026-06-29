@@ -705,6 +705,7 @@ def test_run_paths_preamble_template_placeholders():
         notes_dir="/a/notes",
         experiment_data_dir="/a/study/runs/ts/experiment_data",
         resources="",
+        knowledge="",
     )
     assert "/a/study" in result, (
         "study_dir substitution not found in result"
@@ -765,6 +766,7 @@ def test_workspace_preamble_template_placeholder_and_no_tmp():
         workspace_dir="/a/workspace",
         study_dir="/a/study",
         resources="",
+        knowledge="",
     )
     assert "/a/workspace" in result, (
         "workspace_dir substitution not found in result"

@@ -175,6 +175,32 @@ class KnowledgeBase:
                 lines.append(f"    {e.summary}")
         return "\n".join(lines)
 
+    def menu(self, audience: str | None = None) -> str:
+        """A compact, audience-filtered MENU of available chapters for INJECTION
+        into a system prompt — one line per entry (``id: title``), so an agent
+        always sees the latent knowledge it can pull, the same way it always sees
+        its tool list. This closes the discovery chicken-and-egg: ``toc()`` is only
+        seen if the agent already thought to call ConsultHandbook.
+
+        ``audience`` filters to entries relevant to that role (entries with no
+        declared audience are shown to everyone). Empty string if nothing matches.
+        Titles are the descriptors and are capped to one terse line by the
+        ≤100-char invariant (enforced in tests)."""
+        rows = [
+            f"- {e.id}: {e.title}"
+            for e in self._entries
+            if not (audience and e.audience and audience not in e.audience)
+        ]
+        if not rows:
+            return ""
+        header = (
+            "<knowledge_base>\n"
+            "Latent expertise on tap — you are NOT expected to know these by "
+            'heart. Pull a chapter with ConsultHandbook("<id>"), or search with '
+            'ConsultHandbook("<keywords>"), whenever one is relevant:'
+        )
+        return header + "\n" + "\n".join(rows) + "\n</knowledge_base>\n"
+
     def search(self, query: str, k: int = 3) -> list[KBEntry]:
         """Return up to ``k`` entries most relevant to ``query``.
 
