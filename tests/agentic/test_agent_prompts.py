@@ -1088,9 +1088,17 @@ def test_resource_envelope_stanza_primes_ram_and_parallelism(tmp_path):
         WORKSPACE_PREAMBLE_TEMPLATE,
     )
     ns = SimpleNamespace(_mem_cap_bytes=4 * 1024 ** 3, study_dir=tmp_path)
-    stanza = AgenticRun._resource_stanza(ns, tmp_path)  # unbound; uses only those attrs
-    assert "CPU cores" in stanza
-    assert "RAM cap 4.0 GB" in stanza and "KILLED" in stanza
-    assert "Parallelize" in stanza and "disk free" in stanza
+    worker = AgenticRun._resource_stanza(ns, tmp_path, for_worker=True)
+    strat = AgenticRun._resource_stanza(ns, tmp_path, for_worker=False)
+    # Shared facts in BOTH roles.
+    for s in (worker, strat):
+        assert "CPU cores" in s
+        assert "RAM cap 4.0 GB" in s and "KILLED" in s and "disk free" in s
+    # Role-aware parallelism: the worker is primed to parallelize its
+    # EVALUATIONS (compute, epistemically neutral); the strategizer is NOT
+    # resource-nudged to fan out experiments (that's its design call, and the
+    # nudge drove the monolithic run 20260628T224159).
+    assert "EVALUATIONS within your campaign" in worker
+    assert "parallel" not in strat.lower()
     assert "{resources}" in RUN_PATHS_PREAMBLE_TEMPLATE
     assert "{resources}" in WORKSPACE_PREAMBLE_TEMPLATE

@@ -900,11 +900,20 @@ class AgenticRun:
             pass
         return problem + addendum
 
-    def _resource_stanza(self, run_dir) -> str:
+    def _resource_stanza(self, run_dir, *, for_worker: bool) -> str:
         """The static resource-envelope stanza — "what you HAVE" — injected into a
-        worker/strategizer preamble at delegation start, so the agent is primed to
-        parallelize within RAM rather than run-and-hope. O(1): cpu_count + one
-        statvfs (no directory walk). Empty string on any failure (never fatal)."""
+        worker/strategizer preamble at delegation start, so the agent stops
+        running-and-hoping. O(1): cpu_count + one statvfs (no directory walk).
+        Empty string on any failure (never fatal).
+
+        ROLE-AWARE parallelism (deliberate): the cores/RAM/disk facts are shared,
+        but only the WORKER is primed to parallelize — and only its EVALUATIONS
+        within a campaign (compute speedup, same experiment/budget, epistemically
+        neutral). The strategizer is NOT resource-nudged to fan out experiments:
+        running multiple arms concurrently is an experimental-design decision with
+        epistemic weight (budget splits, comparison validity) that lives in its own
+        guidance — resource-priming it nudges breadth over disciplined comparison
+        (observed run 20260628T224159: a 3-arm, unequal-budget, INCONCLUSIVE run)."""
         try:
             from .watchdog_cleanup import resource_envelope
             env = resource_envelope(run_dir or self.study_dir, self._mem_cap_bytes)
@@ -913,20 +922,29 @@ class AgenticRun:
                    if env["ram_cap_bytes"] else "unset")
             disk = (f"{env['disk_free_bytes'] / 1024 ** 3:.0f} GB"
                     if env["disk_free_bytes"] is not None else "unknown")
-            return (
+            facts = (
                 "resources: "
                 f"~{cores} CPU cores · RAM cap {ram} per delegation (HARD — exceed "
                 "it and your process is KILLED; stream/cache large data, don't load "
                 f"it all at once) · disk free {disk}.\n"
-                f"Parallelize independent work (up to ~{cores} ways) to save "
-                "wall-clock, but size concurrency to the RAM cap.\n"
             )
+            if for_worker:
+                facts += (
+                    "Use the cores: parallelize the EVALUATIONS within your "
+                    "campaign (e.g. gen.call(mode='parallel'), or concurrent "
+                    "candidate evaluations) to finish faster — same experiment, "
+                    "just quicker. Size concurrency to the RAM cap.\n"
+                )
+            # Non-campaign roles (strategizer, critic, datagenerator, literature)
+            # get the facts only — NO parallelism imperative. Fanning out
+            # experiments is the strategizer's design call (KB 0004: one
+            # delegation = one experiment), not something to resource-nudge.
+            return facts
         except Exception:  # noqa: BLE001 — telemetry must never break a run
             return ""
 
     def _make_adapter(self, name: str, agent: Agent):
         run_dir = self._run_dir
-        _resources = self._resource_stanza(run_dir)
 
         has_outgoing = (
             run_dir
@@ -942,7 +960,7 @@ class AgenticRun:
                 debug_dir=debug_dir,
                 notes_dir=notes_dir,
                 experiment_data_dir=Path(run_dir) / "experiment_data",
-                resources=_resources,
+                resources=self._resource_stanza(run_dir, for_worker=False),
             )
             system_prompt = preamble + agent.system_prompt
             cwd = self.study_dir
@@ -952,10 +970,14 @@ class AgenticRun:
                 workspace_dir.mkdir(parents=True, exist_ok=True)
             else:
                 workspace_dir = self.study_dir
+            # Only the implementer runs evaluation campaigns → only it gets the
+            # eval-parallelism nudge; the critic/datagenerator/literature get the
+            # resource facts alone.
+            _is_campaign = getattr(agent, "role", None) == "implementer"
             preamble = WORKSPACE_PREAMBLE_TEMPLATE.format(
                 workspace_dir=workspace_dir,
                 study_dir=self.study_dir,
-                resources=_resources,
+                resources=self._resource_stanza(run_dir, for_worker=_is_campaign),
             )
             system_prompt = preamble + agent.system_prompt
             # Critics read from the study tree, not from a delegation subfolder.
