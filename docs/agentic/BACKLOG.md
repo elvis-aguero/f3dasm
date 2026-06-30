@@ -29,6 +29,7 @@ Resolved items keep their write-up below for the record; `(commit)` is what fixe
 - [ ] **#17** Closure + budget-severity model (Memory>Time>Eval; dynamic constraints) — *open, §4 user-owned* — Done() prompt iterated (`0400a653`); runtime nudge + severity model deferred
 - [ ] **#18** Critic should flag an infeasible-extremum headline on a constrained study — *open, §4 user-owned* — grounding moved to the critic (`6494489b`) but it only checks the value is real, not feasible
 - [ ] **#20** Open design-space discovery (agent invents new low-D parametrizations) — *spec approved, §4 user-owned, awaiting 2D experiment* — see [`OPEN_DESIGN_SPACE_FRAMEWORK.md`](OPEN_DESIGN_SPACE_FRAMEWORK.md); branch `exp/open-design-space`
+- [ ] **#23** Rename `literature_reviewer` → `consultant` + give it live-web tools so it answers tech-stack/API/doc questions, not only academic literature — *spec, not built (user decision 2026-06-30)* — see §23 below
 - [ ] **#21** RecallStore is namespace-blind — *open, low* (branch `exp/open-design-space`). The strategizer's `RecallStore()` ledger SUMMARY (`routing.py` `_derive_store_dir`/`RecallStore`) reports only the canonical store, so a multi-namespace run's namespace evals don't appear in that view. Eval COUNTING is namespace-aware everywhere (commits cea08d8b→d27a33ae); this is the remaining SUMMARY surface. Aggregating a full `RunStateSummary` (per-delegation/per-source dicts + output stats) across stores is a larger change than the count helper — deferred. The strategizer still sees namespace progress via per-delegation reports, so this is informational, not a metering gap.
 
 ---
@@ -699,3 +700,62 @@ delegation_log completed count). Validate headless before trusting it.
 exposed this can no longer run 89 min — it aborts in ~2 min. The watchdog defect only
 matters for a *different*, not-yet-observed hang that the per-call timeouts don't cover.
 Fix it when such a case appears, or as deliberate hardening — not as symptom-chasing.
+
+---
+
+## 23. `consultant` — broaden the literature_reviewer into a research+docs consultant
+
+**Status:** spec only; NOT built (user decision 2026-06-30: "one agent, general
+but sharp … spec it and put it on the backlog"). Name decided: **`consultant`**.
+
+**Motivation (evidence).** Run `20260629T191754` (supercompressible-material-
+creative) shows the datagenerator/implementer repeatedly brute-forcing live
+tech-stack gotchas with no doc-lookup channel: `.fil` vs `.odb` for Abaqus
+`*IMPERFECTION` (D007), `max_waiting_time=60` too short for Riks preprocessing
+(D007), `except RuntimeError` not catching `CalledProcessError`/`TimeoutError`
+(D003), `data.add()` not existing on `ExperimentData` (D003), store ordering by
+completion time (D004). Each is a documentation question the agents could not
+ask anyone — the literature_reviewer can only search *academic papers*
+(Corpus/Semantic Scholar/OpenAlex/arXiv), not Abaqus or Python docs.
+
+**Current state (the channel already exists — this is mostly capability+prompt,
+not topology).**
+- `agents/_graphs.py` already wires `datagenerator → literature_reviewer` and
+  `implementer → literature_reviewer`, and `agents/datagenerator.py` already
+  instructs `Delegate(target="literature_reviewer", …)`.
+- BUT `agents/datagenerator.py:48` says *"Delegate for methodology, not for
+  Python syntax"* — the exact opposite of consulting for an API gotcha.
+- AND `agents/literature.py` has **no** general-web tool (no WebSearch/WebFetch);
+  its toolset is academic-paper search only.
+
+**Proposed changes (one agent, two modes — "general but sharp").**
+1. **Add `WebSearch` + `WebFetch`** to the agent (general web covers Abaqus,
+   Python, any tech stack — no per-tool MCP needed). FEATURES.md entry required
+   in the same commit (tool catalog is enforced by
+   `tests/agentic/test_features_documented.py`).
+2. **Flip the guidance** in `agents/datagenerator.py` (and the implementer) so
+   workers may consult for tooling/API/doc questions, not just methodology.
+3. **Rename** `literature_reviewer` → `consultant` everywhere: the agent class
+   `role`, the node name + edges in `_graphs.py`, every prompt reference
+   (strategizer/datagenerator/implementer/critic), the KB-menu audience filter,
+   and the milestone/gate text that special-cases `literature_reviewer` (e.g.
+   `milestones.py` "literature_reviewer is never gated" and its tests). This is
+   the bulk of the mechanical churn — grep `literature_reviewer` across `src/`
+   and `tests/` first; ~dozens of sites.
+4. **Two-mode prompt (the one real risk).** The current prompt is science-
+   citation-heavy (corpus, falsification support). A doc lookup needs *different*
+   rigor — the right answer + a source URL, fast — not a literature synthesis.
+   The prompt must explicitly distinguish: (a) *literature mode* (academic claim
+   → cite a paper from the corpus) vs (b) *docs mode* (API/tooling question →
+   authoritative doc/source URL, concise). Without this the agent will
+   over-academicize a one-line API question.
+
+**Scope guard.** One agent, not a split — the web tools serve both modes and a
+second node is churn without evidence the roles conflict. Revisit only if a run
+shows the two modes degrading each other.
+
+**Not §4.** This is agent capability/tooling + prompt, not science epistemics —
+no science_monitor / charter / critic-criteria / budget change. Build under the
+normal contract (headless test first: assert the renamed node + edges resolve,
+the new tools appear in the catalog, and both preamble/guidance render; e2e
+behavior-only last).
