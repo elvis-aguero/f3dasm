@@ -693,24 +693,24 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         node = self
 
         def MilestoneList() -> str:
-            """List process milestones with id, status, gate/phase, description.
+            """List process milestones with id, status, description.
 
             Milestones are PROCESS steps (do X before Y; get Z ready), distinct
-            from hypotheses (epistemics). Default gates self-resolve when their
-            condition is met; you author your own with MilestonePropose."""
+            from hypotheses (epistemics). Default milestones self-resolve when
+            their condition is met; you author your own with MilestonePropose."""
             if node._milestones is None:
                 return "Milestone ledger not available in this run."
             return node._milestones.format()
 
-        def MilestonePropose(description: str, phase: str | None = None,
-                             gate: bool = False) -> str:
+        def MilestonePropose(description: str) -> str:
             """Add your own process milestone. Returns its id (M1, M2, …).
 
-            phase: optional f3dasm phase it relates to. gate=True makes it nudge
-            when that phase is entered while still pending."""
+            While pending, it joins the backlog that gates delegating to the
+            implementer (exactly like the default milestones) — so use it to
+            hold yourself to a process step you don't want to skip."""
             if node._milestones is None:
                 return "ERROR: milestone ledger not available in this run."
-            return node._milestones.propose(description, phase, gate)
+            return node._milestones.propose(description)
 
         def MilestoneComplete(milestone_id: str, note: str) -> str:
             """Mark a milestone DONE. A brief `note` (one line on WHY it's

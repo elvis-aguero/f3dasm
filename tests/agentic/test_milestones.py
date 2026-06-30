@@ -117,6 +117,21 @@ def test_craft_pipeline_auto_satisfies_when_pipeline_exists(tmp_path):
     assert "assess_literature_need" in pend_keys   # manual, still pending
 
 
+def test_milestone_propose_tool_does_not_crash(tmp_path):
+    """Regression (run 20260629T191754): the MilestonePropose tool WRAPPER
+    crashed on every call — it forwarded (description, phase, gate) to
+    MilestoneLedger.propose(), which takes only `description`, raising
+    TypeError: propose() takes 2 positional arguments but 4 were given. The
+    feature was dead. Exercise the wrapper end-to-end (not the ledger method)
+    and assert it returns a milestone id, and that the proposed milestone is
+    pending (so it genuinely joins the implementer-gating backlog)."""
+    n = _node(tmp_path)
+    mid = n.adapter.closure_tools["MilestonePropose"]("verify both stage gates")
+    assert mid.startswith("M"), mid
+    pending_ids = {m["id"] for m in n._milestones.pending()}
+    assert mid in pending_ids
+
+
 def test_delegate_to_implementer_milestone_is_two_shot_nudge(tmp_path):
     """The milestone backlog NUDGES the implementer delegation once (not a hard
     block): the agent re-delegates to confirm and it fires. MilestoneComplete/
