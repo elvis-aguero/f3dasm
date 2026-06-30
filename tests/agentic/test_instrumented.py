@@ -83,6 +83,36 @@ def test_execute_stamps_provenance(tmp_path):
     assert isinstance(row["_ts"], str) and len(row["_ts"]) > 0
 
 
+def test_execute_marks_finished_in_canonical_store(tmp_path):
+    """B (run 20260629T191754): a completed eval must persist as FINISHED in the
+    canonical store. A real oracle does NOT self-mark its sample finished —
+    f3dasm's _run_sample marks the agent's *working* copy, not the deepcopy the
+    instrumented wrapper buffers. So InstrumentedDataGenerator must stamp it, or
+    finished rows persist as IN_PROGRESS (defeating is_all_finished(), the
+    FINISHED-regression store guard, and resumption). The stub here deliberately
+    leaves job_status untouched, mimicking the real oracle."""
+    from f3dasm._src.agentic.instrumented import InstrumentedDataGenerator
+
+    class _NoMarkGenerator(DataGenerator):
+        def execute(self, experiment_sample, **kwargs):
+            experiment_sample._output_data["f"] = 1.0  # no job_status change
+            return experiment_sample
+
+    gen = InstrumentedDataGenerator(
+        inner=_NoMarkGenerator(), store_dir=tmp_path,
+        delegation_id="D001", source="s", flush_every=1,
+    )
+    # Mirrors the live dispatch: get_open_job() marks a row IN_PROGRESS before
+    # handing it to the evaluator — the exact state that leaked to disk.
+    gen.execute(ExperimentSample(
+        _input_data={"x0": 0.5}, _output_data={},
+        job_status=JobStatus.IN_PROGRESS))
+
+    data = ExperimentData.from_file(project_dir=tmp_path)
+    assert data.is_all_finished(), (
+        f"completed eval persisted as non-FINISHED: {data.jobs.tolist()}")
+
+
 def test_execute_stamps_wall_ms(tmp_path):
     """Spec A: each eval carries its own wall-time (_wall_ms), generically."""
     import time as _time

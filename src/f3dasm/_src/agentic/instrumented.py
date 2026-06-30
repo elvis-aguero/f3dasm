@@ -163,6 +163,15 @@ class InstrumentedDataGenerator(DataGenerator):
         for _col, _val in self.extra_provenance.items():
             out._output_data[_col] = _val
 
+        # The inner generator returned normally, so this evaluation COMPLETED:
+        # stamp FINISHED on the copy we buffer for the canonical store. f3dasm's
+        # _run_sample marks finished on the agent's *working* ExperimentData, not
+        # on this buffered deepcopy — without this, completed rows persist as
+        # IN_PROGRESS in the canonical jobs.csv, defeating the FINISHED-regression
+        # store guard, is_all_finished(), and resumption logic. (Errors raise out
+        # of inner.execute before this line and are marked elsewhere.)
+        out.mark("finished")
+
         self._buffer.append(deepcopy(out))
 
         if len(self._buffer) >= self.flush_every:
