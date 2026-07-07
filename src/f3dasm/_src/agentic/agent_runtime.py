@@ -216,6 +216,31 @@ def register_evaluator_entrypoint(
             "evaluator_lookup": None,  # entrypoint takes precedence
         }
     else:
+        prior_ep = config.get("evaluator_entrypoint")
+        if prior_ep and prior_ep != entrypoint:
+            # Overwriting the canonical oracle with a DIFFERENT file. This is
+            # legitimate for a re-registration of THE baseline, but it is also
+            # how a NEW-family oracle whose namespace failed to propagate
+            # (Delegate arg + manifest both null) silently destroys the
+            # baseline. Do not block it, but snapshot the prior config and warn
+            # loudly so an accidental clobber is visible and recoverable
+            # (run 20260706T204732: D006 replaced the baseline; D007 had to
+            # self-heal via a hand-made .bak).
+            bak = run_config_path.with_name(
+                run_config_path.name + ".bak_preclobber")
+            try:
+                bak.write_text(
+                    _json.dumps(config, indent=2), encoding="utf-8")
+            except OSError:
+                bak = None
+            logging.getLogger("f3dasm.agentic").warning(
+                "register_evaluator_entrypoint: OVERWRITING the canonical "
+                "evaluator_entrypoint %r -> %r (namespace=None). If this "
+                "oracle was meant for a NEW design family, register it under "
+                "an explicit namespace instead; the prior config was "
+                "snapshotted to %s.",
+                prior_ep, entrypoint,
+                bak if bak is not None else "(snapshot failed)")
         config["evaluator_entrypoint"] = entrypoint
         config["evaluator_output_names"] = output_names
         config["evaluator_lookup"] = None  # entrypoint takes precedence
