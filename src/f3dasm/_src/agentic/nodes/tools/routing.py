@@ -1969,10 +1969,11 @@ def build_routing_tools(node) -> dict:
     # ------------------------------------------------------------------
 
     def _derive_store_dir() -> Path | None:
-        nd = node._current_notes_dir
-        if nd is None:
-            return None
-        return nd.parent.parent / "experiment_data"
+        # Resolve run_dir via the node (entry: from its notes dir; delegating
+        # worker: from the shared delegation-log path) so these tools are not
+        # dead on worker nodes, which have _current_notes_dir=None.
+        rd = node._resolve_run_dir()
+        return (rd / "experiment_data") if rd is not None else None
 
     def RecallStore() -> str:
         """Summary of the run's canonical evaluation ledger: rows per
