@@ -555,10 +555,21 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                         "delegation log — if the delegation hasn't finished, wait "
                         "for it."
                     )
-            triggered_by: str | None = (
-                node._delegation_log.last_completed_id(node._name)
-                if node._delegation_log is not None else None
-            )
+            # Provenance: a verdict is attributed to the source it RESTS ON, so
+            # `triggered_by` is the delegation the agent CITED as evidence
+            # (validated above as a single completed delegation / the D000
+            # ground-truth anchor). Only when no evidence delegation was cited
+            # (non-closing updates) fall back to the most-recently-completed
+            # delegation. Previously this always used last_completed_id, which
+            # mislabelled the audit trail whenever an unrelated delegation
+            # finished after the cited one (run 20260706T204732: H5 cited D011
+            # but recorded triggered_by=D013).
+            triggered_by: str | None = None
+            if isinstance(d_cited, str) and d_cited:
+                triggered_by = d_cited
+            elif node._delegation_log is not None:
+                triggered_by = node._delegation_log.last_completed_id(
+                    node._name)
             if triggered_by is None:
                 with node._registry_lock:
                     done_entries = [
