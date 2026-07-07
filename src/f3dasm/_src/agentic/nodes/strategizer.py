@@ -922,10 +922,9 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
             _cfg["lock_path"] = str(sb_store / "experiment_data" / ".lock")
             sb_run_config.write_text(_json.dumps(_cfg))
 
-            env = dict(os.environ)
-            env["F3DASM_CANONICAL_STORE"] = str(sb_store)
-            env["F3DASM_RUN_CONFIG"] = str(sb_run_config)
-            env.setdefault("F3DASM_DELEGATION_ID", "D999")
+            from ..notebook_exec import sandbox_env
+            env = sandbox_env(
+                sb_store, sb_run_config, study_root=self._study_dir)
             _timeout = (
                 max(0.1 * self._budget_seconds, 180.0)
                 if self._budget_seconds else 300.0

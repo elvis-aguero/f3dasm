@@ -86,6 +86,19 @@ Format per feature: **what** (plain language) · **why** · **where** (files) ·
 - **Where:** `notebook_exec.py` `diagnose_notebook`, `RunPipelineCell` closure.
 - **Tools:** `RunPipelineCell`. **Status:** done.
 
+### Sandbox study-root anchor (`F3DASM_STUDY_ROOT`)
+- **What:** the reproduction gate, `CheckDeliverable`, `RunPipelineCell`, and the
+  scratch tool run against a *temp copy* of the ledger, so the store path has no
+  relationship to the study repo. They now also inject `F3DASM_STUDY_ROOT` (a
+  read-only anchor to the real study root) so a pillar cell can locate non-ledger
+  repo resources (e.g. `bo/cei_core.py` for a surrogate self-check) deterministically
+  instead of hand-rolling multi-candidate path search. Store isolation is unchanged —
+  only the store is a copy; the study root is read-only reference code. The three
+  duplicated sandbox-env blocks are unified in one `sandbox_env()` helper.
+- **Where:** `notebook_exec.py` `sandbox_env`; call sites in `nodes/strategizer.py`
+  (`_reproduction_gate`) and `nodes/tools/routing.py` (`RunPipelineCell`, scratch).
+- **Status:** telemetry/ergonomics, not a new cap. Run 20260705T181941 friction.
+
 ### Output-column guidance fix
 - **What:** notebook guidance requires naming the objective column EXPLICITLY. The
   earlier "first non-provenance output" auto-detect was unsafe: `output_names` is

@@ -2781,10 +2781,8 @@ def build_routing_tools(node) -> dict:
             _cfg["store_dir"] = str(sb_store)
             sb_cfg = sandbox / "run_config.json"
             sb_cfg.write_text(_json.dumps(_cfg))
-            env = dict(_os.environ)
-            env["F3DASM_CANONICAL_STORE"] = str(sb_store)
-            env["F3DASM_RUN_CONFIG"] = str(sb_cfg)
-            env.setdefault("F3DASM_DELEGATION_ID", "D999")
+            from ...notebook_exec import sandbox_env
+            env = sandbox_env(sb_store, sb_cfg, study_root=node._study_dir)
             snippet = sandbox / "_scratch.py"
             snippet.write_text(code)
             try:
@@ -2843,10 +2841,8 @@ def build_routing_tools(node) -> dict:
             _cfg["store_dir"] = str(sb_store)
             sb_cfg = sandbox / "run_config.json"
             sb_cfg.write_text(_json.dumps(_cfg))
-            env = dict(_os.environ)
-            env["F3DASM_CANONICAL_STORE"] = str(sb_store)
-            env["F3DASM_RUN_CONFIG"] = str(sb_cfg)
-            env.setdefault("F3DASM_DELEGATION_ID", "D999")
+            from ...notebook_exec import sandbox_env
+            env = sandbox_env(sb_store, sb_cfg, study_root=node._study_dir)
             try:
                 from ...notebook_exec import diagnose_notebook
                 trace = diagnose_notebook(

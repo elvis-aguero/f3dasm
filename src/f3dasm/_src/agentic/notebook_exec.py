@@ -25,7 +25,35 @@ __all__ = [
     "run_deliverable",
     "build_notebook",
     "notebook_deliverable_spec",
+    "sandbox_env",
 ]
+
+
+def sandbox_env(
+    sb_store,
+    sb_run_config,
+    study_root=None,
+    delegation_id: str = "D999",
+    base=None,
+) -> dict:
+    """Build the environment for running a deliverable / cell / scratch snippet
+    against a SANDBOX copy of the ledger.
+
+    F3DASM_CANONICAL_STORE / F3DASM_RUN_CONFIG point at the sandbox copy so no
+    execution can touch the real store. F3DASM_STUDY_ROOT is a READ-ONLY anchor
+    to the real study repo, so pipeline cells can locate non-ledger resources
+    (e.g. ``bo/cei_core.py`` for a surrogate self-check) deterministically
+    instead of hand-rolling multi-candidate path searches relative to the
+    store. Isolation is unaffected: only the store is a copy; the study root is
+    read-only reference code.
+    """
+    env = dict(os.environ if base is None else base)
+    env["F3DASM_CANONICAL_STORE"] = str(sb_store)
+    env["F3DASM_RUN_CONFIG"] = str(sb_run_config)
+    if study_root is not None:
+        env["F3DASM_STUDY_ROOT"] = str(study_root)
+    env.setdefault("F3DASM_DELEGATION_ID", str(delegation_id))
+    return env
 
 
 # The canonical notebook structure — ONE source, referenced by the agent prompt
@@ -152,6 +180,10 @@ def notebook_deliverable_spec(role: str = "strategizer") -> str:
         "  `canonical_store = os.environ['F3DASM_CANONICAL_STORE']` (bracket access —\n"
         "  raises if missing). Read it at the TOP of every cell that needs it; the gate\n"
         "  re-executes cells independently, so do not rely on a variable from a prior cell.\n"
+        "- NON-LEDGER REPO RESOURCES: to locate study code that is NOT in the ledger\n"
+        "  (e.g. a surrogate helper like `bo/cei_core.py`), anchor paths to\n"
+        "  `os.environ['F3DASM_STUDY_ROOT']` (the study repo root) — do NOT derive them\n"
+        "  from the store path, which points at a temp sandbox copy unrelated to the repo.\n"
         "- OBJECTIVE COLUMN NAME: name your study's objective column EXPLICITLY —\n"
         "  it is a fixed property of the study (e.g. `output_col = 'lambda_cr_nd'`).\n"
         "  Do NOT auto-detect it by output order: `data.domain.output_names` is\n"
@@ -237,7 +269,8 @@ def required_deliverable_name() -> str:
 def _patched_environ(env: dict | None):
     """Temporarily replace os.environ with `env` so a freshly-spawned Jupyter
     kernel (which inherits os.environ at launch) sees the gate's injected vars
-    (F3DASM_CANONICAL_STORE / F3DASM_RUN_CONFIG / F3DASM_DELEGATION_ID)."""
+    (F3DASM_CANONICAL_STORE / F3DASM_RUN_CONFIG / F3DASM_STUDY_ROOT /
+    F3DASM_DELEGATION_ID)."""
     if env is None:
         yield
         return
