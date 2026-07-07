@@ -51,10 +51,14 @@ class ScienceMonitor:
         max_inject: int = MAX_INJECT_PER_TURN,
         escalation_cap: int = ESCALATION_CAP,
         store_dir: str | None = None,
+        role_of: Callable[[str], str] | None = None,
     ) -> None:
         self._ledger = ledger
         self._dlog = delegation_log
         self._diag = diagnostics_writer
+        # Maps a node name -> its role, so UNLEDGERED_EVALS can exempt roles
+        # whose contract forbids get_evaluator() (the datagenerator).
+        self._role_of = role_of
         self._max_inject = max_inject
         self._escalation_cap = escalation_cap
         self._lock = threading.Lock()
@@ -95,6 +99,14 @@ class ScienceMonitor:
                 continue
             evals = r.get("evals", 0) or 0
             if evals <= 0:
+                continue
+            # The datagenerator validates ONE sample by calling its generator
+            # directly (gen.call), NOT get_evaluator() — its source is not yet
+            # registered at validation time, so by spec it CANNOT ledger that
+            # eval. Flagging it as unledgered drift is a guaranteed false
+            # positive against the role contract, so exempt the role.
+            if (self._role_of is not None
+                    and self._role_of(r.get("to_node", "")) == "datagenerator"):
                 continue
             d_id = r.get("id", "")
             if _devals(sd, d_id) > 0:

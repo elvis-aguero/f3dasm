@@ -216,3 +216,37 @@ def test_removed_rule_does_not_fire(tmp_path, rule):
     violations = mon.evaluate()
     fired = {v.rule for v in violations}
     assert rule not in fired, f"{rule} was expected removed but fired: {fired}"
+
+
+# ---------------------------------------------------------------------------
+# UNLEDGERED_EVALS — datagenerator role is exempt (pre-registration by spec)
+# ---------------------------------------------------------------------------
+
+def test_unledgered_exempts_datagenerator_role(tmp_path):
+    """The datagenerator validates ONE sample via gen.call() — its spec forbids
+    get_evaluator() pre-registration — so its reported eval can NEVER be
+    ledgered. UNLEDGERED_EVALS must not false-flag the datagenerator role,
+    while an implementer with the same unledgered condition IS still flagged.
+    Regression: run 20260705T181941 (D001/D005 datagenerator false positives).
+    """
+    ledger = HypothesisLedger(tmp_path)
+    dlog = DelegationLog(tmp_path / "delegation_log.jsonl")
+
+    def role_of(name):
+        return {"datagenerator": "datagenerator",
+                "implementer": "implementer"}.get(name, name)
+
+    mon = ScienceMonitor(ledger, dlog, role_of=role_of)
+    for did, to in (("D001", "datagenerator"), ("D002", "implementer")):
+        dlog.record(
+            id=did, from_node="strategizer", to_node=to, task="t",
+            deliverable=REPORT, hypothesis_ids=[],
+            started_at="2026-01-01T00:00:00+00:00",
+            completed_at="2026-01-01T01:00:00+00:00", status="DONE", evals=3)
+    store_dir = tmp_path / "experiment_data"
+    store_dir.mkdir()
+    mon.store_dir = str(store_dir)
+
+    flagged = {v.h_id for v in mon.evaluate() if v.rule == "UNLEDGERED_EVALS"}
+    assert "D001" not in flagged, "datagenerator validation must be exempt"
+    assert "D002" in flagged, "implementer bypass must still be flagged"

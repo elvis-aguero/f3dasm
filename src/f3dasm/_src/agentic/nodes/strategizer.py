@@ -112,6 +112,7 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                 self._ledger,
                 delegation_log,
                 diagnostics_writer=self._record_science_drift,
+                role_of=self._role_of,
             )
         # Running total of delegations at the START of the current __call__
         # Used as a seed for the delegation sequence counter.
