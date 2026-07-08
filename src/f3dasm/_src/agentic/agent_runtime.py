@@ -15,6 +15,7 @@ import yaml  # available via hydra-core
 from langchain_core.messages import HumanMessage
 
 from . import settings
+from ._f3dasm_compat import PROTECTED_STORE_SENTINEL
 from .agent_prompts import (
     RUN_PATHS_PREAMBLE_TEMPLATE,
     WORKSPACE_PREAMBLE_TEMPLATE,
@@ -46,12 +47,6 @@ DEFAULT_OLLAMA_MODEL = "qwen2.5:1.5b"
 # GP-on-5302-points blowup that pegged the host. See resolve_mem_cap_bytes for
 # the resolution order (config -> env -> SLURM allocation -> this default).
 DEFAULT_MEM_CAP_BYTES = 4 * 1024 ** 3
-
-# Filename that marks a store as the PROTECTED canonical ledger. a3dasm owns
-# this constant (stock f3dasm does not define it). Writing the marker is a
-# no-op against a plain f3dasm; the store()-level guard that reads it is
-# re-homed into a3dasm separately (currently provided by the vendored core).
-PROTECTED_STORE_SENTINEL = ".f3dasm_protected"
 
 
 def resolve_mem_cap_bytes(explicit, env=None) -> int:

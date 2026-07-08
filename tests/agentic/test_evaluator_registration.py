@@ -97,7 +97,7 @@ def test_register_then_get_evaluator_resolves(tmp_path, monkeypatch):
 def test_register_namespace_writes_oracles_block_not_default(tmp_path):
     """Registering for a namespace writes oracles[ns] and creates its own
     isolated store + sentinel — the canonical default oracle is untouched."""
-    from f3dasm._src._io import PROTECTED_STORE_SENTINEL
+    from f3dasm._src.agentic._f3dasm_compat import PROTECTED_STORE_SENTINEL
 
     study_dir = tmp_path / "study"
     study_dir.mkdir()
