@@ -142,24 +142,26 @@ class WorkerNode(AgentNode):
         from langchain_core.messages import AIMessage
         from langgraph.types import Command
 
-        from ..agent_prompts import IMPLEMENTER_REPORT_RETRY_PROMPT
+        from ..agent_prompts import build_report_retry_prompt
 
         self._evals_reported.clear()
         messages = _to_adapter_messages(state["messages"])
         text = self.adapter.invoke(messages)
 
-        diagnosis = _classify_response(
-            text,
-            list(self._report_sections) if self._report_sections else None,
+        _req_sections = (
+            list(self._report_sections) if self._report_sections else None
         )
+        diagnosis = _classify_response(text, _req_sections)
         if diagnosis is not None:
-            # One retry with correction prompt
+            # One retry — the correction prompt is built from THIS agent's own
+            # report_sections so it can't command a structure that omits a
+            # section the parser requires (e.g. the implementer's Retrospective).
             retry_messages = messages + [
                 {"role": "ai", "content": text},
                 {
                     "role": "user",
                     "content": (
-                        f"{IMPLEMENTER_REPORT_RETRY_PROMPT}"
+                        f"{build_report_retry_prompt(_req_sections)}"
                         f"\n\nDiagnosis: {diagnosis}"
                     ),
                 },

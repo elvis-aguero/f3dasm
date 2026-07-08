@@ -75,6 +75,7 @@ __all__ = [
     "RUN_PATHS_PREAMBLE_TEMPLATE",
     "WORKSPACE_PREAMBLE_TEMPLATE",
     "IMPLEMENTER_REPORT_RETRY_PROMPT",
+    "build_report_retry_prompt",
     "REFLECT_DIAGNOSIS_SHORT",
     "REFLECT_DIAGNOSIS_CAPABILITY_LIMIT",
     "REFLECT_DIAGNOSIS_MISSING_SUBSECTIONS_TEMPLATE",
@@ -234,23 +235,37 @@ workspace_dir : str or Path
 
 # =============================================================================
 
-IMPLEMENTER_REPORT_RETRY_PROMPT = (
-    "Your previous reply did not contain a parseable "
-    "`## Report` block. Re-emit your output now using "
-    "EXACTLY this structure, with the literal line "
-    "`## Report` on its own line:\n\n"
-    "## Report\n\n"
-    "### Actions taken\n- <bulleted list>\n\n"
-    "### Files touched\n- <absolute paths under "
-    "workspace_dir>\n\n"
-    "### Conclusions\n<prose, <= 200 words>\n\n"
-    "### Numbers\n- <key>: <value>\n\n"
-    "Do not skip any subsection. Include the Stage 1 / "
-    "Stage 2 / Stage 3 prose ONLY before the `## Report` "
-    "heading. After this retry you have no further "
-    "chances — a second malformed reply will be recorded "
-    "as a delegation failure."
-)
+def build_report_retry_prompt(sections=None) -> str:
+    """Correction message when a worker's reply lacks a parseable ``## Report``
+    block, built from the agent's OWN ``report_sections`` so the structure it
+    COMMANDS can never drift from what the parser VALIDATES. The old static
+    prompt hardcoded the 4 implementer subsections and told the model "EXACTLY
+    this structure / do not skip any subsection" — which would make a compliant
+    model DROP the implementer's 5th section, ``### Retrospective`` (the
+    highest-signal analysis artifact), and was outright wrong for the critic /
+    literature reviewer, whose ``report_sections`` differ.
+    """
+    secs = list(sections) if sections else [
+        "### Actions taken", "### Files touched", "### Conclusions",
+        "### Numbers", "### Retrospective",
+    ]
+    body = "".join(f"{s}\n- <...>\n\n" for s in secs)
+    return (
+        "Your previous reply did not contain a parseable `## Report` block. "
+        "Re-emit your output now using EXACTLY this structure, with the literal "
+        "line `## Report` on its own line:\n\n"
+        "## Report\n\n" + body +
+        "Do not skip any subsection. Include any Stage 1 / Stage 2 / Stage 3 "
+        "prose ONLY before the `## Report` heading. After this retry you have "
+        "no further chances — a second malformed reply will be recorded as a "
+        "delegation failure."
+    )
+
+
+# Back-compat constant (the generic implementer-shaped default). Prefer
+# build_report_retry_prompt(agent.report_sections) at call sites so the prompt
+# tracks each agent's declared sections.
+IMPLEMENTER_REPORT_RETRY_PROMPT = build_report_retry_prompt()
 """Correction message sent to the Implementer when its first reply
 lacks a parseable ``## Report`` block.
 

@@ -886,7 +886,7 @@ def build_routing_tools(node) -> dict:
             # ConsultHandbook is injected universally at adapter construction
             # (agent_runtime._make_adapter) — every node gets it equally there.
             try:
-                from ...agent_prompts import IMPLEMENTER_REPORT_RETRY_PROMPT
+                from ...agent_prompts import build_report_retry_prompt
                 from ...backends.base import (
                     debug_enabled as _dbg,
                 )
@@ -966,7 +966,7 @@ def build_routing_tools(node) -> dict:
                         {
                             "role": "user",
                             "content": (
-                                f"{IMPLEMENTER_REPORT_RETRY_PROMPT}"
+                                f"{build_report_retry_prompt(_req_sections)}"
                                 f"\n\nDiagnosis: {diagnosis}"
                             ),
                         },
