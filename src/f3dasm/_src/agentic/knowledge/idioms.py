@@ -37,10 +37,12 @@ trust these over any remembered signature):
     # Read arrays: to_numpy() takes NO argument and returns (X, y) as a tuple.
     # NOT data.to_numpy("input"). Use X, y = ... (or _, y = ... to discard X).
     X, y = data.to_numpy()
-    # to_pandas() returns METADATA columns (_delegation_id, _source, _ts, _wall_ms)
-    # mixed into the output dataframe. df_out[col].astype(float) FAILS on these rows.
-    # For analysis / surrogate fitting, always use data.to_numpy() — it strips metadata
-    # and returns clean float arrays. Never use df_out[col].astype(float).
+    # to_pandas() returns a (input_df, output_df) TUPLE — NOT a single frame.
+    # Unpack it: df_in, df_out = data.to_pandas(). The output_df carries METADATA
+    # columns (_delegation_id, _source, _ts, _wall_ms) alongside the outputs, so
+    # df_out[col].astype(float) FAILS on those. For analysis / surrogate fitting,
+    # always use data.to_numpy() — it strips metadata and returns clean float
+    # arrays. Never use df_out[col].astype(float).
 
     # Wrap proposed candidate points (e.g. from an acquisition function) into
     # evaluatable ExperimentData. There is NO ExperimentData.from_numpy; build

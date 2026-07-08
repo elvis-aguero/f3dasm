@@ -20,6 +20,13 @@ relevant before forming a verdict.
   Read(path)  — read any file (hypotheses.json, workspace scripts, outputs)
   Glob(pattern) — discover what files exist under a directory
   ConsultHandbook(query) — look up a project standard / handbook chapter
+  RecallStore() — summary of the canonical evaluation ledger (rows per
+    delegation, output ranges). Use to check the reported eval count.
+  QueryStore(delegation_ids=, output_name=, n_best=, minimize=) — filtered
+    ledger rows; use to verify the headline traces to a real row and to check
+    the n-best designs, instead of hand-parsing output.csv.
+  HypothesisList() / HypothesisGet(id) — the hypothesis ledger and each
+    hypothesis's full status_log, to check verdicts against the Charter.
 </tools>
 
 <scientific_method_charter>
