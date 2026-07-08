@@ -310,3 +310,83 @@ def test_build_arxiv_closures_returns_empty_without_package(monkeypatch):
             sys.modules["arxiv"] = real
         else:
             sys.modules.pop("arxiv", None)
+
+
+# ---------------------------------------------------------------------------
+# Tool-surface parity: the tools a worker can declare and expect to work must
+# resolve on EVERY backend, through whatever mechanism that backend uses
+# (Claude: SDK-native; the OpenAI-compatible family: the framework native map).
+# This is what silently breaks when a tool is added to one path and forgotten
+# on the other (e.g. BashOutput/KillShell added to Claude's NATIVE_TOOLS but
+# not to _native_tool_map, or vice versa).
+# ---------------------------------------------------------------------------
+
+# Tools that any agent may declare and rely on across all backends. (Claude-only
+# SDK built-ins — Task/WebFetch/WebSearch/computer — are deliberately NOT here:
+# they have no ollama/vllm equivalent, so an agent that declares one is
+# Claude-only by design.)
+_COMMON_NATIVE_TOOLS = frozenset({
+    "Bash", "Edit", "Read", "Write", "Glob", "Grep", "BashOutput", "KillShell",
+})
+
+
+def test_common_native_tools_resolve_on_every_backend():
+    from f3dasm._src.agentic.backends.claude import ClaudeAdapter
+    from f3dasm._src.agentic.backends.openai_compatible import _native_tool_map
+    # Claude executes these as SDK CLI built-ins.
+    missing_claude = _COMMON_NATIVE_TOOLS - set(ClaudeAdapter.NATIVE_TOOLS)
+    assert not missing_claude, (
+        f"Claude NATIVE_TOOLS is missing {missing_claude} — a shared tool must "
+        "be a Claude SDK built-in or it can't reach parity.")
+    # The OpenAI-compatible family provides them via the framework native map.
+    fw = set(_native_tool_map(None).keys())
+    missing_fw = _COMMON_NATIVE_TOOLS - fw
+    assert not missing_fw, (
+        f"_native_tool_map is missing {missing_fw} — a tool that is native on "
+        "Claude but absent here is silently dropped on ollama/vllm/openrouter.")
+
+
+def test_bash_companions_are_at_parity():
+    """The Bash background trio must appear together on both surfaces — adding
+    Bash without BashOutput/KillShell (or vice versa) is the exact regression."""
+    from f3dasm._src.agentic.backends.claude import ClaudeAdapter
+    from f3dasm._src.agentic.backends.openai_compatible import _native_tool_map
+    trio = {"Bash", "BashOutput", "KillShell"}
+    assert trio <= set(ClaudeAdapter.NATIVE_TOOLS)
+    assert trio <= set(_native_tool_map(None).keys())
+
+
+# ---------------------------------------------------------------------------
+# Thin-subclass guard: ollama/vllm/openrouter must stay pure endpoint/auth
+# overrides of OpenAICompatibleAdapter, so the "one implementation" invariant
+# can't silently drift (a divergent same-named method override would otherwise
+# slip past the name-based method-parity check above).
+# ---------------------------------------------------------------------------
+
+_ENDPOINT_AUTH_ATTRS = {"DEFAULT_BASE_URL", "BASE_URL_ENV", "API_KEY", "API_KEY_ENV"}
+
+
+def test_openai_compatible_subclasses_are_thin():
+    from f3dasm._src.agentic.backends.ollama import OllamaAdapter
+    from f3dasm._src.agentic.backends.openai_compatible import (
+        OpenAICompatibleAdapter,
+    )
+    from f3dasm._src.agentic.backends.openrouter import OpenRouterAdapter
+    from f3dasm._src.agentic.backends.vllm import VLLMAdapter
+
+    assert OpenAICompatibleAdapter is not None  # (import anchors the base)
+    for cls in (OllamaAdapter, VLLMAdapter, OpenRouterAdapter):
+        own = {k for k in vars(cls) if not k.startswith("__")}
+        extra = own - _ENDPOINT_AUTH_ATTRS
+        assert not extra, (
+            f"{cls.__name__} defines {extra} beyond endpoint/auth — it must be a "
+            "thin subclass so all behavior stays in OpenAICompatibleAdapter.")
+        # And it must not SHADOW any behavioral method. An inherited method is
+        # absent from the subclass __dict__; an override is present. (Checking
+        # __dict__ rather than identity is robust for classmethods, whose bound
+        # object differs per class even when inherited.)
+        overridden = {"invoke", "_build_tools", "_build_agent",
+                      "select_native_tools", "copy"} & set(vars(cls))
+        assert not overridden, (
+            f"{cls.__name__} overrides {overridden} — breaks one-implementation "
+            "parity across the OpenAI-compatible backends.")
