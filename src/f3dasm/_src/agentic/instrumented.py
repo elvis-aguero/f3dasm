@@ -1031,17 +1031,32 @@ def experiment_stores(store_root: Path | str) -> list[Path]:
 
 
 def total_ledgered_evals(store_root: Path | str) -> int:
-    """Total ledgered evaluations across every experiment store in the run.
+    """Total REAL oracle evaluations in the run: provenance-stamped rows
+    ATTRIBUTED to a delegation, summed across every experiment store.
 
-    The run's true eval count is the sum over all experiment stores (default +
-    each design experiment) — a single store would miss the others (observed:
-    run 20260626T231202 reported 180 while 780 real evals ran). Never raises.
+    This is deliberately the SAME set that delegation_evals (and the
+    UNLEDGERED_EVALS guard) reads — the per-delegation stamped rows — so the
+    reported number (run_status evals_used, the budget spent, the deliverable
+    count) and the guarded number can no longer diverge. That divergence was the
+    structural root of the recurring eval-accounting backdoors (post-mortem
+    989e7daa): this used to sum n_rows = len(df_out), the RAW physical row count,
+    which ALSO counted (a) D000 precomputed-pool rows — ground-truth data the
+    code elsewhere says are "never counted as evaluations" — and (b) any
+    UNSTAMPED rows appended to the store outside get_evaluator(). Both are now
+    excluded: D000 by id, unstamped rows because value_counts() drops them from
+    n_per_delegation. (Cross-store summing is preserved — a single store would
+    miss the design-namespace stores; observed run 20260626T231202.) Never
+    raises. NOTE: this does not SEAL the unstamped-write path (public
+    ExperimentData.store() can still append rows); it stops such rows from
+    inflating the COUNT, and detecting/refusing the write is a separate step.
     """
     total = 0
     for store in experiment_stores(store_root):
         s = RunStateSummary.from_store(store)
         if s is not None:
-            total += int(s.n_rows)
+            total += sum(
+                int(c) for did, c in s.n_per_delegation.items()
+                if did and str(did) != "D000")
     return total
 
 
