@@ -289,6 +289,11 @@ class LiteratureReviewAgent(Agent):
     """
 
     inject_problem_statement = True
+    # Declare the role explicitly — the base default is "implementer", and
+    # inheriting it makes implementer-only logic (the milestone-backlog nudge,
+    # the eval-parallelism resource nudge, role telemetry) mis-fire on the
+    # literature reviewer.
+    role = "literature_reviewer"
     tools = frozenset({"Read", "Grep", "Glob"})
     reset_on_checkpoint = True
     description = (

@@ -87,6 +87,9 @@ class DebuggerAgent(Agent):
     """
 
     system_prompt = DEBUGGER_SYSTEM_PROMPT
+    # Declare the role explicitly — inheriting the base "implementer" default
+    # makes implementer-only logic mis-fire on the debugger.
+    role = "debugger"
     tools = frozenset({"Bash", "Read", "Grep", "Edit", "Write",
                        # read-only ledger/store access for diagnosis
                        "RecallStore", "QueryStore",

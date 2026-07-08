@@ -185,7 +185,11 @@ class Agent:
     tools: frozenset[str] = frozenset()
     reset_on_checkpoint: bool = True
     description: str = ""
-    role: str = "implementer"
+    # Neutral default: a subclass that forgets to declare its role must NOT
+    # silently inherit "implementer" and pick up implementer-only behavior
+    # (the milestone gate, the eval-parallelism nudge). Every shipped agent
+    # declares its own role; this default only guards future ones.
+    role: str = "worker"
     backend: str | None = None
     mcp_servers: dict = {}
     extra_allowed_tools: frozenset[str] = frozenset()
