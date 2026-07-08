@@ -166,3 +166,20 @@ def test_warning_when_gpu_or_size_unknown():
     # gpu known but size unparseable and not set -> can't check
     spec2 = S.resolve_serve_spec("mystery", overrides={"gpu_model": "a100"})
     assert "model size unknown" in (S.serve_throughput_warning(spec2) or "")
+
+
+def test_reap_run_serve_job_cancels_persisted_jobid(tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(S, "cancel_job", seen.append)
+    debug = tmp_path / "debug"
+    debug.mkdir()
+    (debug / "serve_job.jobid").write_text("4242\n")
+    S.reap_run_serve_job(tmp_path)
+    assert seen == ["4242"]
+
+
+def test_reap_run_serve_job_noop_without_file(tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(S, "cancel_job", seen.append)
+    S.reap_run_serve_job(tmp_path)   # no debug/ at all -> no-op, no raise
+    assert seen == []

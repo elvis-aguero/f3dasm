@@ -177,6 +177,10 @@ def _watchdog() -> None:
                 if runs_dir.exists() else []
             if _rds:
                 reap_governor_pids(_rds[-1])
+                # scancel a leftover vLLM-on-SLURM serve job (os._exit bypasses
+                # execute()'s finally, so it would otherwise leak the GPU).
+                from f3dasm._src.agentic.slurm_llm import reap_run_serve_job
+                reap_run_serve_job(_rds[-1])
         except Exception:
             pass
         time.sleep(0.5)

@@ -333,3 +333,17 @@ def cancel_job(jobid: str) -> None:
     except Exception:  # noqa: BLE001
         log.warning("scancel %s failed — check `squeue` for a leaked allocation",
                     jobid, exc_info=True)
+
+
+def reap_run_serve_job(run_dir) -> None:
+    """scancel the serve job a run persisted, if any. For the study watchdog's
+    hard-kill path (``os._exit`` bypasses ``execute()``'s finally, so the serve
+    allocation would otherwise leak). Reads ``<run_dir>/debug/serve_job.jobid``;
+    a no-op when the file is absent. Never raises."""
+    try:
+        from pathlib import Path
+        jobid_file = Path(run_dir) / "debug" / "serve_job.jobid"
+        if jobid_file.exists():
+            cancel_job(jobid_file.read_text(encoding="utf-8").strip())
+    except Exception:  # noqa: BLE001
+        log.warning("reap_run_serve_job(%s) failed", run_dir, exc_info=True)

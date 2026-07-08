@@ -90,6 +90,16 @@ def _watchdog() -> None:
             print(f"WATCHDOG: ledger row appended for {_rd.name}", flush=True)
     except Exception as _e:
         print(f"WATCHDOG: cleanup failed: {_e}", flush=True)
+    # scancel a leftover vLLM-on-SLURM serve job (os._exit bypasses
+    # execute()'s finally, so it would otherwise leak the GPU).
+    try:
+        from f3dasm._src.agentic.slurm_llm import reap_run_serve_job
+        _rs = STUDY_DIR / "runs"
+        _rd_dirs = sorted(d for d in _rs.iterdir() if d.is_dir()) if _rs.exists() else []
+        if _rd_dirs:
+            reap_run_serve_job(_rd_dirs[-1])
+    except Exception:
+        pass
     os._exit(2)
 
 
