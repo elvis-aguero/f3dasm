@@ -156,6 +156,236 @@ _FAILED_RETROSPECTIVE = (
 )
 
 
+def build_declared_read_closures(node, agent_tools) -> dict:
+    """Read-only ledger/store tools, granted to ANY node type by DECLARATION.
+
+    Single source of truth: a tool is exposed iff the agent lists it in its
+    `tools`. These four are read-only and node-type-agnostic — the entry
+    strategizer, a delegating worker (implementer/datagenerator), and a leaf
+    worker (critic) all resolve the run's store/ledger through
+    node._resolve_run_dir()/node._read_ledger(), so they behave identically
+    everywhere. No mutation is possible here.
+    """
+    out: dict = {}
+
+    def _derive_store_dir() -> Path | None:
+        # Resolve run_dir via the node (entry: from its notes dir; any worker:
+        # from the shared delegation-log path) so these tools are never dead.
+        rd = node._resolve_run_dir()
+        return (rd / "experiment_data") if rd is not None else None
+
+    if "RecallStore" in agent_tools:
+        def RecallStore() -> str:
+            """Summary of the run's canonical evaluation ledger: rows per
+            delegation/source, output ranges. Call before deciding the next
+            delegation."""
+            from ...instrumented import RunStateSummary
+            sd = _derive_store_dir()
+            if sd is None:
+                return (
+                    "Canonical store is empty — no instrumented "
+                    "evaluations recorded yet."
+                )
+            summary = RunStateSummary.from_store(sd)
+            if summary is None:
+                return (
+                    "Canonical store is empty — no instrumented "
+                    "evaluations recorded yet."
+                )
+            return summary.format()
+        out["RecallStore"] = RecallStore
+
+    if "QueryStore" in agent_tools:
+        def QueryStore(
+            delegation_ids: str | list | None = None,
+            source: str | None = None,
+            n_best: int | None = None,
+            output_name: str | None = None,
+            minimize: bool = True,
+        ) -> str:
+            """Filtered view of the evaluation ledger (e.g. rows from D001+D003
+            only). Use to ground claims or to select training subsets; cite row
+            values from here as evidence.
+
+            n_best returns the best rows by output_name: smallest when
+            minimize=True (default), largest when minimize=False (set this for
+            MAXIMIZATION objectives). Infeasible/placeholder rows (large-
+            magnitude sentinel outputs) are never returned as 'best'."""
+            import json as _json
+
+            from ....errors import EmptyFileError, ReachMaximumTriesError
+            from ....experimentdata import ExperimentData
+            from ...instrumented import _PROVENANCE_COLS
+
+            sd = _derive_store_dir()
+            if sd is None:
+                return (
+                    "Canonical store is empty — no instrumented "
+                    "evaluations recorded yet."
+                )
+            try:
+                data = ExperimentData.from_file(project_dir=sd)
+                df_in, df_out = data.to_pandas()
+            except (FileNotFoundError, EmptyFileError,
+                    ReachMaximumTriesError):
+                return (
+                    "Canonical store is empty — no instrumented "
+                    "evaluations recorded yet."
+                )
+            if df_out.empty:
+                return (
+                    "Canonical store is empty — no instrumented "
+                    "evaluations recorded yet."
+                )
+
+            # Decode delegation_ids: JSON / comma / bare / list
+            d_ids: list[str] | None = None
+            if delegation_ids is not None:
+                if isinstance(delegation_ids, list):
+                    d_ids = [str(x) for x in delegation_ids]
+                elif isinstance(delegation_ids, str):
+                    raw = delegation_ids.strip()
+                    if raw.startswith("["):
+                        try:
+                            decoded = _json.loads(raw)
+                            d_ids = (
+                                [str(h) for h in decoded]
+                                if isinstance(decoded, list)
+                                else [raw]
+                            )
+                        except _json.JSONDecodeError:
+                            d_ids = [raw]
+                    elif "," in raw:
+                        d_ids = [
+                            p.strip() for p in raw.split(",")
+                            if p.strip()
+                        ]
+                    else:
+                        d_ids = [raw]
+
+            # Apply filters (read-only: build a boolean mask)
+            import pandas as _pd
+            mask = _pd.Series([True] * len(df_out), index=df_out.index)
+            if d_ids is not None and "_delegation_id" in df_out.columns:
+                mask &= df_out["_delegation_id"].isin(d_ids)
+            if source is not None and "_source" in df_out.columns:
+                mask &= df_out["_source"] == source
+
+            filtered = df_out[mask]
+            filtered_in = df_in[mask] if df_in is not None else None
+
+            if filtered.empty:
+                return "No rows match the given filters."
+
+            # n_best: return the n rows with smallest output_name value.
+            # MCP string-in tools may pass n_best as a string ("5") — coerce
+            # to int (pandas nsmallest does `if n <= 0`, which TypeErrors on
+            # a str). Same string-arg-decoding discipline as delegation_ids.
+            if n_best is not None:
+                try:
+                    n_best = int(n_best)
+                except (TypeError, ValueError):
+                    return (
+                        f"ERROR: n_best must be an integer, got "
+                        f"{n_best!r}."
+                    )
+            if isinstance(minimize, str):  # MCP string-in may pass "false"
+                minimize = minimize.strip().lower() not in (
+                    "false", "0", "no", "max", "maximize"
+                )
+            if n_best is not None and output_name is not None:
+                if output_name not in filtered.columns:
+                    return (
+                        f"ERROR: output column {output_name!r} not found. "
+                        f"Available: {list(filtered.columns)}"
+                    )
+                best_idx = _select_best_index(
+                    filtered[output_name], n_best, minimize=minimize
+                )
+                if len(best_idx) == 0:
+                    return (
+                        f"No feasible rows to rank by {output_name!r} "
+                        "(all matching rows are infeasibility placeholders)."
+                    )
+                best_rows = filtered.loc[best_idx]
+                # Include input columns + output_name + _delegation_id
+                show_cols = []
+                if filtered_in is not None:
+                    input_cols = [
+                        c for c in filtered_in.columns
+                        if c not in _PROVENANCE_COLS
+                    ]
+                    show_cols.extend(input_cols)
+                show_cols.append(output_name)
+                if "_delegation_id" in best_rows.columns:
+                    show_cols.append("_delegation_id")
+                show_cols = [c for c in show_cols if c in best_rows.columns]
+
+                if filtered_in is not None:
+                    best_in = filtered_in.loc[best_idx, [
+                        c for c in filtered_in.columns
+                        if c in show_cols
+                    ]]
+                    combined = _pd.concat(
+                        [best_in, best_rows[
+                            [c for c in show_cols
+                             if c not in best_in.columns]
+                        ]], axis=1
+                    )
+                else:
+                    combined = best_rows[
+                        [c for c in show_cols if c in best_rows.columns]
+                    ]
+                return combined.to_string(index=False)
+
+            # Default: return count + first 20 rows
+            n_shown = min(20, len(filtered))
+            subset = filtered.iloc[:n_shown]
+            return (
+                f"{len(filtered)} rows match. "
+                f"Showing first {n_shown}:\n"
+                + subset.to_string(index=False)
+            )
+        out["QueryStore"] = QueryStore
+
+    if "HypothesisList" in agent_tools:
+        def HypothesisList(hypothesis_ids: list | None = None) -> str:
+            """List all hypotheses with id, status, belief, statement.
+
+            Takes no real arguments — it always lists ALL hypotheses. The
+            optional `hypothesis_ids` is accepted-and-ignored so a stray kwarg
+            (agents confuse this with Delegate/AskForFeedback) returns the list
+            instead of crashing the turn with a TypeError.
+            """
+            led = node._read_ledger()
+            if led is None:
+                return "ERROR: hypothesis ledger not available in this run."
+            items = led.list_all()
+            if not items:
+                return "No hypotheses proposed yet."
+            return "\n".join(
+                f"- {h['id']} [{h['current_status']}]"
+                f" (belief {h['belief']}): {h['statement']}"
+                for h in items
+            )
+        out["HypothesisList"] = HypothesisList
+
+    if "HypothesisGet" in agent_tools:
+        def HypothesisGet(hypothesis_id: str) -> str:
+            """Get full hypothesis entry including status_log."""
+            led = node._read_ledger()
+            if led is None:
+                return "ERROR: hypothesis ledger not available in this run."
+            import json as _json
+            entry = led.get(hypothesis_id)
+            if entry is None:
+                return f"ERROR: hypothesis {hypothesis_id!r} not found."
+            return _json.dumps(entry, indent=2)
+        out["HypothesisGet"] = HypothesisGet
+
+    return out
+
+
 def build_routing_tools(node) -> dict:
     route = node._route
     outgoing = node._outgoing
@@ -1958,193 +2188,6 @@ def build_routing_tools(node) -> dict:
                 )
             return "\n\n---\n\n".join(parts)
 
-    # ------------------------------------------------------------------
-    # RecallStore / QueryStore: canonical ledger read tools.
-    # notes_dir = run_dir/debug/strategizer_notes
-    #   → parent       = run_dir/debug/
-    #   → parent.parent = run_dir
-    #   → store_dir    = run_dir/experiment_data
-    # RunStateSummary.from_store(store_dir) reads
-    #   store_dir/experiment_data/output.csv  ✓
-    # ------------------------------------------------------------------
-
-    def _derive_store_dir() -> Path | None:
-        # Resolve run_dir via the node (entry: from its notes dir; delegating
-        # worker: from the shared delegation-log path) so these tools are not
-        # dead on worker nodes, which have _current_notes_dir=None.
-        rd = node._resolve_run_dir()
-        return (rd / "experiment_data") if rd is not None else None
-
-    def RecallStore() -> str:
-        """Summary of the run's canonical evaluation ledger: rows per
-        delegation/source, output ranges. Call before deciding the next
-        delegation."""
-        from ...instrumented import RunStateSummary
-        sd = _derive_store_dir()
-        if sd is None:
-            return (
-                "Canonical store is empty — no instrumented "
-                "evaluations recorded yet."
-            )
-        summary = RunStateSummary.from_store(sd)
-        if summary is None:
-            return (
-                "Canonical store is empty — no instrumented "
-                "evaluations recorded yet."
-            )
-        return summary.format()
-
-    def QueryStore(
-        delegation_ids: str | list | None = None,
-        source: str | None = None,
-        n_best: int | None = None,
-        output_name: str | None = None,
-        minimize: bool = True,
-    ) -> str:
-        """Filtered view of the evaluation ledger (e.g. rows from D001+D003
-        only). Use to ground claims or to select training subsets; cite row
-        values from here as evidence.
-
-        n_best returns the best rows by output_name: smallest when minimize=True
-        (default), largest when minimize=False (set this for MAXIMIZATION
-        objectives). Infeasible/placeholder rows (large-magnitude sentinel
-        outputs) are never returned as 'best'."""
-        import json as _json
-
-        from ....errors import EmptyFileError, ReachMaximumTriesError
-        from ....experimentdata import ExperimentData
-        from ...instrumented import _PROVENANCE_COLS
-
-        sd = _derive_store_dir()
-        if sd is None:
-            return (
-                "Canonical store is empty — no instrumented "
-                "evaluations recorded yet."
-            )
-        try:
-            data = ExperimentData.from_file(project_dir=sd)
-            df_in, df_out = data.to_pandas()
-        except (FileNotFoundError, EmptyFileError,
-                ReachMaximumTriesError):
-            return (
-                "Canonical store is empty — no instrumented "
-                "evaluations recorded yet."
-            )
-        if df_out.empty:
-            return (
-                "Canonical store is empty — no instrumented "
-                "evaluations recorded yet."
-            )
-
-        # Decode delegation_ids: JSON / comma / bare / list
-        d_ids: list[str] | None = None
-        if delegation_ids is not None:
-            if isinstance(delegation_ids, list):
-                d_ids = [str(x) for x in delegation_ids]
-            elif isinstance(delegation_ids, str):
-                raw = delegation_ids.strip()
-                if raw.startswith("["):
-                    try:
-                        decoded = _json.loads(raw)
-                        d_ids = (
-                            [str(h) for h in decoded]
-                            if isinstance(decoded, list)
-                            else [raw]
-                        )
-                    except _json.JSONDecodeError:
-                        d_ids = [raw]
-                elif "," in raw:
-                    d_ids = [
-                        p.strip() for p in raw.split(",")
-                        if p.strip()
-                    ]
-                else:
-                    d_ids = [raw]
-
-        # Apply filters (read-only: build a boolean mask)
-        import pandas as _pd
-        mask = _pd.Series([True] * len(df_out), index=df_out.index)
-        if d_ids is not None and "_delegation_id" in df_out.columns:
-            mask &= df_out["_delegation_id"].isin(d_ids)
-        if source is not None and "_source" in df_out.columns:
-            mask &= df_out["_source"] == source
-
-        filtered = df_out[mask]
-        filtered_in = df_in[mask] if df_in is not None else None
-
-        if filtered.empty:
-            return "No rows match the given filters."
-
-        # n_best: return the n rows with smallest output_name value.
-        # MCP string-in tools may pass n_best as a string ("5") — coerce
-        # to int (pandas nsmallest does `if n <= 0`, which TypeErrors on
-        # a str). Same string-arg-decoding discipline as delegation_ids.
-        if n_best is not None:
-            try:
-                n_best = int(n_best)
-            except (TypeError, ValueError):
-                return (
-                    f"ERROR: n_best must be an integer, got "
-                    f"{n_best!r}."
-                )
-        if isinstance(minimize, str):  # MCP string-in tools may pass "false"
-            minimize = minimize.strip().lower() not in (
-                "false", "0", "no", "max", "maximize"
-            )
-        if n_best is not None and output_name is not None:
-            if output_name not in filtered.columns:
-                return (
-                    f"ERROR: output column {output_name!r} not found. "
-                    f"Available: {list(filtered.columns)}"
-                )
-            best_idx = _select_best_index(
-                filtered[output_name], n_best, minimize=minimize
-            )
-            if len(best_idx) == 0:
-                return (
-                    f"No feasible rows to rank by {output_name!r} "
-                    "(all matching rows are infeasibility placeholders)."
-                )
-            best_rows = filtered.loc[best_idx]
-            # Include input columns + output_name + _delegation_id
-            show_cols = []
-            if filtered_in is not None:
-                input_cols = [
-                    c for c in filtered_in.columns
-                    if c not in _PROVENANCE_COLS
-                ]
-                show_cols.extend(input_cols)
-            show_cols.append(output_name)
-            if "_delegation_id" in best_rows.columns:
-                show_cols.append("_delegation_id")
-            show_cols = [c for c in show_cols if c in best_rows.columns]
-
-            if filtered_in is not None:
-                best_in = filtered_in.loc[best_idx, [
-                    c for c in filtered_in.columns
-                    if c in show_cols
-                ]]
-                combined = _pd.concat(
-                    [best_in, best_rows[
-                        [c for c in show_cols
-                         if c not in best_in.columns]
-                    ]], axis=1
-                )
-            else:
-                combined = best_rows[
-                    [c for c in show_cols if c in best_rows.columns]
-                ]
-            return combined.to_string(index=False)
-
-        # Default: return count + first 20 rows
-        n_shown = min(20, len(filtered))
-        subset = filtered.iloc[:n_shown]
-        return (
-            f"{len(filtered)} rows match. "
-            f"Showing first {n_shown}:\n"
-            + subset.to_string(index=False)
-        )
-
     def _build_confer(sender_name: str):
         """Factory: returns a Confer closure for any node in the graph.
 
@@ -2200,14 +2243,15 @@ def build_routing_tools(node) -> dict:
         prefix = node._drain_notifications()
         return prefix + _build_confer(node._name)(target, message)
 
-    # Topology-injected tools go to every orchestrating node.
+    # Topology-injected tools: granted to every orchestrating node because the
+    # ability to delegate/recall derives from having outgoing edges, not from a
+    # static class declaration. Capability tools (RecallStore/QueryStore/
+    # Hypothesis*/Milestone*/...) are declaration-gated below, NOT here.
     closures: dict = {
         "Delegate": Delegate,
         "Wait": Wait,
         "Reply": Reply,
         "FollowUp": FollowUp,
-        "RecallStore": RecallStore,
-        "QueryStore": QueryStore,
     }
 
     if node._delegation_log is not None:
@@ -2931,11 +2975,24 @@ def build_routing_tools(node) -> dict:
     # ConsultHandbook is injected universally at adapter construction
     # (agent_runtime._make_adapter) — no per-node duplication here.
 
-    # Hypothesis closures: always built but functionally inert without a
-    # ledger (notes_dir only provided to the entry node).
-    closures.update(node._build_hypothesis_closures())
+    # Capability closures are DECLARATION-GATED (single source of truth = the
+    # Agent's `tools`), exactly like the notebook/Done/notes tools above.
+    # Hypothesis MUTATE tools go only to agents that declare them (the
+    # strategizer); a stateless worker must never mutate the shared ledger.
+    _hyp = node._build_hypothesis_closures()
+    for _t in ("HypothesisPropose", "HypothesisUpdate",
+               "LinkFalsificationAttempt"):
+        if _t in _agent_tools and _t in _hyp:
+            closures[_t] = _hyp[_t]
+    # Milestone tools (process policy) — declaration-gated too.
     if hasattr(node, "_build_milestone_closures"):
-        closures.update(node._build_milestone_closures())
+        for _t, _fn in node._build_milestone_closures().items():
+            if _t in _agent_tools:
+                closures[_t] = _fn
+    # Read-only ledger/store tools — declaration-gated and shared verbatim with
+    # leaf WorkerNodes (see WorkerNode.__init__), so the exposure surface is
+    # identical across node types.
+    closures.update(build_declared_read_closures(node, _agent_tools))
 
     # AskForFeedback is only injected when a critic node is
     # connected AND this is the entry node (only the entry node

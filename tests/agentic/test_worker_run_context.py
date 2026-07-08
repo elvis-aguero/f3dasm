@@ -1,6 +1,7 @@
-"""Delegating-worker orchestrating nodes must resolve their run context so the
-topology-injected read tools (RecallStore/QueryStore) and the hypothesis-read
-tools (HypothesisList/HypothesisGet) actually work.
+"""Any node granted the read tools must resolve its run context so
+RecallStore/QueryStore and HypothesisList/HypothesisGet actually work — on the
+entry strategizer, a delegating worker, and a leaf worker (critic) alike. Tools
+are declaration-gated (single source of truth = the Agent's `tools`).
 
 Regression for runs 20260705T181941 and 20260706T204732: the implementer and
 datagenerator have outgoing edges (to the literature_reviewer), so
@@ -63,6 +64,9 @@ def _worker_node(run_dir: Path) -> StrategizerNode:
     class Impl(Agent):
         role = "implementer"
         description = "i"
+        # Declaration-driven: the worker must DECLARE the read tools to get them.
+        tools = frozenset({"RecallStore", "QueryStore",
+                           "HypothesisList", "HypothesisGet"})
 
     class Lit(Agent):
         role = "literature_reviewer"
@@ -116,7 +120,52 @@ def test_worker_recallstore_and_querystore_see_the_rows(tmp_path):
 def test_worker_hypothesislist_sees_the_ledger(tmp_path):
     run_dir, hid = _setup(tmp_path)
     n = _worker_node(run_dir)
-    hyp = n._build_hypothesis_closures()
-    lst = hyp["HypothesisList"]()
+    # HypothesisList is now a declaration-gated read tool merged into the
+    # routing closures (same builder leaf workers use).
+    lst = n._build_routing_closures()["HypothesisList"]()
     assert "not available" not in lst.lower(), lst
     assert hid in lst, f"expected {hid} in listing: {lst!r}"
+
+
+# ---------------------------------------------------------------------------
+# Leaf WorkerNode (e.g. the critic): declaration-gated read tools, working
+# ---------------------------------------------------------------------------
+
+def _leaf_worker(run_dir, agent_tools):
+    """A leaf WorkerNode (no outgoing edges) with a stub adapter — the critic /
+    lit-reviewer shape."""
+    from f3dasm._src.agentic.nodes.worker import WorkerNode
+
+    class _A:
+        def __init__(self):
+            self.closure_tools: dict = {}
+            self.native_tools: list = []
+            self.last_usage: dict = {}
+            self.model = "m"
+
+        def invoke(self, messages):
+            return ""
+
+    dlog = DelegationLog(run_dir / "debug" / "delegation_log.jsonl")
+    return WorkerNode(_A(), name="critic", delegation_log=dlog,
+                      agent_tools=frozenset(agent_tools))
+
+
+def test_leaf_worker_gets_declared_read_tools_and_they_work(tmp_path):
+    run_dir, hid = _setup(tmp_path)
+    n = _leaf_worker(run_dir, {"RecallStore", "QueryStore",
+                               "HypothesisList", "HypothesisGet"})
+    ct = n.adapter.closure_tools
+    assert {"RecallStore", "QueryStore", "HypothesisList",
+            "HypothesisGet"} <= set(ct)
+    assert "empty" not in ct["RecallStore"]().lower()
+    assert hid in ct["HypothesisList"]()
+
+
+def test_leaf_worker_without_declaration_has_no_read_tools(tmp_path):
+    run_dir, _ = _setup(tmp_path)
+    n = _leaf_worker(run_dir, {"Read", "Glob"})
+    ct = n.adapter.closure_tools
+    assert "RecallStore" not in ct
+    assert "QueryStore" not in ct
+    assert "HypothesisList" not in ct

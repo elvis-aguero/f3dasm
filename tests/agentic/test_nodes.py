@@ -48,7 +48,7 @@ def _minimal_spec(name: str = "strategizer", target: str = "implementer") -> Gra
         # test strategizer opts in so behaviour tests still exercise them even
         # though production agents no longer grant them.
         tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
-                           "GetStatus", "CancelDelegation"})
+                           "GetStatus", "CancelDelegation", "HypothesisPropose", "HypothesisUpdate", "HypothesisList", "HypothesisGet", "LinkFalsificationAttempt", "MilestoneList", "MilestonePropose", "MilestoneComplete", "MilestoneSkip", "RecallStore", "QueryStore"})
         description = "Test strategizer."
 
     class B(Agent):
@@ -414,7 +414,7 @@ def test_strategizer_delegate_prepends_edge_preamble():
         # test strategizer opts in so behaviour tests still exercise them even
         # though production agents no longer grant them.
         tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
-                           "GetStatus", "CancelDelegation"})
+                           "GetStatus", "CancelDelegation", "HypothesisPropose", "HypothesisUpdate", "HypothesisList", "HypothesisGet", "LinkFalsificationAttempt", "MilestoneList", "MilestonePropose", "MilestoneComplete", "MilestoneSkip", "RecallStore", "QueryStore"})
         description = "Test strategizer."
 
     class B(Agent):
@@ -498,7 +498,7 @@ def test_parallel_two_delegations_both_complete():
         # test strategizer opts in so behaviour tests still exercise them even
         # though production agents no longer grant them.
         tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
-                           "GetStatus", "CancelDelegation"})
+                           "GetStatus", "CancelDelegation", "HypothesisPropose", "HypothesisUpdate", "HypothesisList", "HypothesisGet", "LinkFalsificationAttempt", "MilestoneList", "MilestonePropose", "MilestoneComplete", "MilestoneSkip", "RecallStore", "QueryStore"})
         description = "Test strategizer."
 
     class B(Agent):
@@ -1703,7 +1703,7 @@ def _spec_with_critic():
 
     class S(Agent):
         role = "strategizer"
-        tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote"})
+        tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote", "HypothesisPropose", "HypothesisUpdate", "HypothesisList", "HypothesisGet", "LinkFalsificationAttempt", "MilestoneList", "MilestonePropose", "MilestoneComplete", "MilestoneSkip", "RecallStore", "QueryStore"})
         description = "Test strategizer."
 
     class W(Agent):
@@ -2225,7 +2225,7 @@ def _spec_with_write_deliverable():
     class A(Agent):
         role = "strategizer"
         tools = frozenset(
-            {"Done", "FollowUp", "WriteNote", "ReadNote", "WriteDeliverable"}
+            {"Done", "FollowUp", "WriteNote", "ReadNote", "WriteDeliverable", "HypothesisPropose", "HypothesisUpdate", "HypothesisList", "HypothesisGet", "LinkFalsificationAttempt", "MilestoneList", "MilestonePropose", "MilestoneComplete", "MilestoneSkip", "RecallStore", "QueryStore"}
         )
         description = "Test strategizer."
 
@@ -2933,7 +2933,7 @@ def _spec_with_critic_and_deliverable():
     class S(Agent):
         role = "strategizer"
         tools = frozenset(
-            {"Done", "FollowUp", "WriteNote", "ReadNote", "WriteDeliverable"}
+            {"Done", "FollowUp", "WriteNote", "ReadNote", "WriteDeliverable", "HypothesisPropose", "HypothesisUpdate", "HypothesisList", "HypothesisGet", "LinkFalsificationAttempt", "MilestoneList", "MilestonePropose", "MilestoneComplete", "MilestoneSkip", "RecallStore", "QueryStore"}
         )
         description = "Test strategizer."
 

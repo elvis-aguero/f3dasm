@@ -76,7 +76,13 @@ def test_propose_complete_skip(tmp_path):
 def _node(tmp_path):
     class A(Agent):
         role = "strategizer"
-        tools = frozenset({"Done"})
+        # Declaration-driven exposure: declare the capability tools this stub
+        # exercises (hypothesis + milestone closures are no longer injected).
+        tools = frozenset({
+            "Done", "HypothesisPropose", "HypothesisUpdate", "HypothesisList",
+            "HypothesisGet", "LinkFalsificationAttempt", "MilestoneList",
+            "MilestonePropose", "MilestoneComplete", "MilestoneSkip",
+            "RecallStore", "QueryStore"})
         description = "strategizer"
 
     class Lit(Agent):

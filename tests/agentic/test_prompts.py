@@ -187,7 +187,7 @@ def test_strategizer_ledger_read_tools_documented(tmp_path):
 
     class A(Agent):
         role = "strategizer"
-        tools = frozenset({"Done"})
+        tools = frozenset({"Done", "HypothesisPropose", "HypothesisUpdate", "HypothesisList", "HypothesisGet", "LinkFalsificationAttempt", "MilestoneList", "MilestonePropose", "MilestoneComplete", "MilestoneSkip", "RecallStore", "QueryStore"})
         description = "strategizer"
 
     class B(Agent):

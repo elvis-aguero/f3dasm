@@ -44,7 +44,7 @@ class _CriticStub:
 def _node(tmp_path, critic_reply: str = "", critic_raises: bool = False):
     class S(Agent):
         role = "strategizer"
-        tools = frozenset({"Done"})
+        tools = frozenset({"Done", "HypothesisPropose", "HypothesisUpdate", "HypothesisList", "HypothesisGet", "LinkFalsificationAttempt", "MilestoneList", "MilestonePropose", "MilestoneComplete", "MilestoneSkip", "RecallStore", "QueryStore"})
         description = "strategizer"
 
     class I(Agent):

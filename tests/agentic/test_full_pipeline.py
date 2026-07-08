@@ -40,7 +40,7 @@ class _StrategistSpec(Agent):
     # GetStatus is opt-in (plug-and-play) since the Confer rework; this scripted
     # driver polls delegations deterministically, so it declares the opt-in.
     tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
-                       "WriteDeliverable", "GetStatus"})
+                       "WriteDeliverable", "GetStatus", "HypothesisPropose", "HypothesisUpdate", "HypothesisList", "HypothesisGet", "LinkFalsificationAttempt", "MilestoneList", "MilestonePropose", "MilestoneComplete", "MilestoneSkip", "RecallStore", "QueryStore"})
 
 
 class _WorkerSpec(Agent):

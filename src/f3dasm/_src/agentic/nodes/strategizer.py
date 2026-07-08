@@ -166,42 +166,6 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         self.adapter.closure_tools.update(self._build_routing_closures())
         self.adapter.route_watcher = lambda: self._route.get("kind") == "done"
 
-    def _resolve_run_dir(self) -> Path | None:
-        """run_dir, resolvable on delegating-worker orchestrating nodes too.
-
-        The entry node sets _current_notes_dir (=run_dir/debug/
-        strategizer_notes) inside __call__; a delegating worker is driven as an
-        adapter and never runs __call__, so its _current_notes_dir stays None
-        (graph_builder passes notes_dir only to the entry node). Every node DOES
-        hold the shared delegation log at run_dir/debug/delegation_log.jsonl, so
-        derive run_dir from that when the notes dir is unavailable. Without this
-        the store- and ledger-read tools that are injected into worker nodes are
-        starved of a path and falsely report "empty"/"not available".
-        """
-        if self._current_notes_dir is not None:
-            return self._current_notes_dir.parent.parent
-        p = getattr(self._delegation_log, "_path", None)
-        return Path(p).parent.parent if p is not None else None
-
-    def _read_ledger(self) -> HypothesisLedger | None:
-        """The hypothesis ledger for READ access, resolved on workers too.
-
-        Workers construct with _ledger=None (no notes_dir); resolve a read-only
-        view from the run's strategizer_notes when hypotheses.json exists.
-        Workers declare no HypothesisPropose/Update tools, so this grants read
-        only — and HypothesisLedger.__init__ performs no I/O, so there is no
-        write race with the entry node that owns the file.
-        """
-        if self._ledger is not None:
-            return self._ledger
-        rd = self._resolve_run_dir()
-        if rd is None:
-            return None
-        notes = rd / "debug" / "strategizer_notes"
-        if (notes / "hypotheses.json").exists():
-            return HypothesisLedger(notes)
-        return None
-
     # ── Authoritative delegation status (audit BF-0) ─────────────────────────
     # The persistent delegation_log owns existence + terminal status: it
     # survives node reconstruction and background threads write their terminal
@@ -694,47 +658,13 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
                 "prediction. Linking does NOT record a verdict."
             )
 
-        def HypothesisList(hypothesis_ids: list | None = None) -> str:
-            """List all hypotheses with id, status, belief, statement.
-
-            Takes no real arguments — it always lists ALL hypotheses. The
-            optional `hypothesis_ids` is accepted-and-ignored so a stray kwarg
-            (agents confuse this with Delegate/AskForFeedback) returns the list
-            instead of crashing the turn with a TypeError.
-            """
-            led = node._read_ledger()
-            if led is None:
-                return (
-                    "ERROR: hypothesis ledger not available in this run."
-                )
-            items = led.list_all()
-            if not items:
-                return "No hypotheses proposed yet."
-            lines = [
-                f"- {h['id']} [{h['current_status']}]"
-                f" (belief {h['belief']}): {h['statement']}"
-                for h in items
-            ]
-            return "\n".join(lines)
-
-        def HypothesisGet(hypothesis_id: str) -> str:
-            """Get full hypothesis entry including status_log."""
-            led = node._read_ledger()
-            if led is None:
-                return (
-                    "ERROR: hypothesis ledger not available in this run."
-                )
-            import json as _json
-            entry = led.get(hypothesis_id)
-            if entry is None:
-                return f"ERROR: hypothesis {hypothesis_id!r} not found."
-            return _json.dumps(entry, indent=2)
-
+        # HypothesisList / HypothesisGet (read-only) live in the shared,
+        # declaration-gated builder (build_declared_read_closures) so leaf
+        # workers can be granted them too. This builder returns only the
+        # MUTATE tools, which stay orchestrator-only.
         return {
             "HypothesisPropose": HypothesisPropose,
             "HypothesisUpdate": HypothesisUpdate,
-            "HypothesisList": HypothesisList,
-            "HypothesisGet": HypothesisGet,
             "LinkFalsificationAttempt": LinkFalsificationAttempt,
         }
 

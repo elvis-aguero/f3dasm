@@ -420,12 +420,26 @@ class StrategizerAgent(Agent):
     """Default orchestrator agent for f3dasm agentic runs."""
 
     system_prompt = STRATEGIZER_SYSTEM_PROMPT
+    # Single source of truth for this agent's tools. Topology tools
+    # (Delegate/Wait/Reply/FollowUp/RecallHistory) are auto-granted to any node
+    # with outgoing edges and need not be declared. Everything else — including
+    # the hypothesis/milestone/store tools that used to be force-injected — is
+    # declared here.
     tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
                        "WriteDeliverable", "CheckDeliverable",
                        "AddPipelineMarkdownCell", "AddPipelineCell",
                        "EditPipelineCell", "DeletePipelineCell", "ShowNotebook",
                        "RunScratch", "RunPipelineCell", "Wait", "Confer",
-                       "GetStatus", "LedgerBreakdown"})
+                       "GetStatus", "LedgerBreakdown",
+                       # hypothesis ledger — full read+mutate
+                       "HypothesisPropose", "HypothesisUpdate",
+                       "HypothesisList", "HypothesisGet",
+                       "LinkFalsificationAttempt",
+                       # process milestones
+                       "MilestoneList", "MilestonePropose",
+                       "MilestoneComplete", "MilestoneSkip",
+                       # canonical store read
+                       "RecallStore", "QueryStore"})
     # NOTE (audit): GetStatus/CancelDelegation are now opt-in (plug-and-play).
     # GetStatus is retained here pending the poll→push re-architecture that lets
     # Confer fully supersede it. CancelDelegation is intentionally NOT listed —

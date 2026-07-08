@@ -87,7 +87,10 @@ class DebuggerAgent(Agent):
     """
 
     system_prompt = DEBUGGER_SYSTEM_PROMPT
-    tools = frozenset({"Bash", "Read", "Grep", "Edit", "Write"})
+    tools = frozenset({"Bash", "Read", "Grep", "Edit", "Write",
+                       # read-only ledger/store access for diagnosis
+                       "RecallStore", "QueryStore",
+                       "HypothesisList", "HypothesisGet"})
     reset_on_checkpoint = True
     description = (
         "Diagnoses errors and applies minimal fixes. "

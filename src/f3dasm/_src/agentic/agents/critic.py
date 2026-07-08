@@ -215,7 +215,12 @@ class AdversarialCritiqueAgent(Agent):
     """
 
     system_prompt = ADVERSARIAL_CRITIQUE_SYSTEM_PROMPT
-    tools = frozenset({"Read", "Glob"})
+    # Read-only ledger/store tools let the critic verify the headline against
+    # the actual ledger rows and check hypothesis verdicts directly, instead of
+    # re-deriving them by hand from raw files. Read-only — it never mutates.
+    tools = frozenset({"Read", "Glob",
+                       "RecallStore", "QueryStore",
+                       "HypothesisList", "HypothesisGet"})
     reset_on_checkpoint = True
     role = "critic"
     description = (

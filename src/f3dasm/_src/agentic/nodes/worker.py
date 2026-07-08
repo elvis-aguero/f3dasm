@@ -29,9 +29,14 @@ class WorkerNode(AgentNode):
         delegation_log: DelegationLog | None = None,
         name: str = "worker",
         report_sections: tuple[str, ...] | None = None,
+        agent_tools: frozenset[str] | None = None,
     ) -> None:
         super().__init__(adapter)
         self._name = name
+        # The agent's declared tools — the single source of truth for which
+        # capability closures this leaf worker is granted (read-only ledger/
+        # store tools). Kept as a frozenset for membership checks.
+        self._agent_tools: frozenset[str] = frozenset(agent_tools or ())
         # This agent's declared report sections (e.g. the critic's
         # Findings/Verdict, not the implementer's Conclusions/Files touched).
         # Used to validate the worker's report against ITS OWN contract instead
@@ -45,6 +50,14 @@ class WorkerNode(AgentNode):
         self.adapter.closure_tools.update(self._build_eval_closures())
         if delegation_log is not None:
             self.adapter.closure_tools["RecallHistory"] = self._make_recall_history()
+        # Declaration-gated read-only ledger/store tools — the SAME builder the
+        # orchestrating nodes use, so a leaf worker (e.g. the critic) gets an
+        # identical, working RecallStore/QueryStore/HypothesisList/Get surface
+        # whenever it declares them. Resolves the run via the shared
+        # AgentNode._resolve_run_dir (delegation-log path).
+        from .tools.routing import build_declared_read_closures
+        self.adapter.closure_tools.update(
+            build_declared_read_closures(self, self._agent_tools))
 
     def _make_recall_history(self) -> Any:
         """Build the RecallHistory closure for this worker node."""

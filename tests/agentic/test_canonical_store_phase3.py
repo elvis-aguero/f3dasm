@@ -322,7 +322,7 @@ def _make_strategizer_with_notes(tmp_path: Path, notes_dir: Path):
 
     class StratAgent(Agent):
         role = "strategizer"
-        tools = frozenset({"Done", "WriteNote", "ReadNote"})
+        tools = frozenset({"Done", "WriteNote", "ReadNote", "RecallStore", "QueryStore"})
         description = "test strategizer"
 
     class WorkAgent(Agent):
@@ -395,7 +395,7 @@ class TestRecallStoreClosure:
 
         class SA(Agent):
             role = "strategizer"
-            tools = frozenset({"Done"})
+            tools = frozenset({"Done", "RecallStore", "QueryStore"})
             description = "s"
 
         class WA(Agent):
@@ -699,7 +699,7 @@ class TestNodesDelegationLogEvalsWiring:
 
         class SA(Agent):
             role = "strategizer"
-            tools = frozenset({"Done"})
+            tools = frozenset({"Done", "RecallStore", "QueryStore"})
             description = "s"
 
         class WA(Agent):
@@ -783,7 +783,7 @@ class TestScienceMonitorStoreDirWiring:
 
         class SA(Agent):
             role = "strategizer"
-            tools = frozenset({"Done"})
+            tools = frozenset({"Done", "RecallStore", "QueryStore"})
             description = "s"
 
         class WA(Agent):

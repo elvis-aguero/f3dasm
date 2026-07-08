@@ -263,5 +263,8 @@ Format per feature: **what** (plain language) · **why** · **where** (files) ·
 | `RunPipelineCell` | Per-cell notebook debugger (#13) |
 | `RunScratch` | Worker scratch execution against a ledger copy |
 | `WriteNote` · `ReadNote` | Agent scratch notes |
+| `RecallStore` · `QueryStore` | Canonical evaluation-store read (declaration-gated; shared verbatim across node types — strategizer, workers, and the critic) |
+| `HypothesisPropose` · `HypothesisUpdate` · `HypothesisList` · `HypothesisGet` · `LinkFalsificationAttempt` | Hypothesis ledger — read (List/Get) is declaration-gated to any node; mutate (Propose/Update/Link) is strategizer-only |
+| `MilestoneList` · `MilestonePropose` · `MilestoneComplete` · `MilestoneSkip` | Process milestones (strategizer-only) |
 | `Read` · `Write` · `Edit` · `Bash` · `Glob` · `Grep` | Workspace file/shell primitives |
 | `Done` | Close the run for the gate |

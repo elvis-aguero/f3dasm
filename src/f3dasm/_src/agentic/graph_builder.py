@@ -86,6 +86,7 @@ def build_graph(
                 delegation_log=delegation_log,
                 name=name,
                 report_sections=getattr(agent, "report_sections", None),
+                agent_tools=getattr(agent, "tools", None),
             )
 
         builder.add_node(name, node)

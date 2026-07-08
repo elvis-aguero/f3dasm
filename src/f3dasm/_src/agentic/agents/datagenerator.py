@@ -216,7 +216,9 @@ class DataGeneratorAgent(Agent):
 
     system_prompt = DATA_GENERATOR_SYSTEM_PROMPT
     tools = frozenset({
-        "Bash", "Edit", "Read", "Write", "Glob", "Grep", "ReportEvals"
+        "Bash", "Edit", "Read", "Write", "Glob", "Grep", "ReportEvals",
+        # read-only ledger/store access (single source of truth for tools)
+        "RecallStore", "QueryStore", "HypothesisList", "HypothesisGet",
     })
     reset_on_checkpoint = True
     role = "datagenerator"

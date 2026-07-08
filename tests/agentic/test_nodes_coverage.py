@@ -54,7 +54,7 @@ def _minimal_spec(name: str = "strategizer", target: str = "implementer") -> Gra
     class A(Agent):
         role = "strategizer"
         tools = frozenset({"Done", "FollowUp", "WriteNote", "ReadNote",
-                           "WriteDeliverable"})
+                           "WriteDeliverable", "HypothesisPropose", "HypothesisUpdate", "HypothesisList", "HypothesisGet", "LinkFalsificationAttempt", "MilestoneList", "MilestonePropose", "MilestoneComplete", "MilestoneSkip", "RecallStore", "QueryStore"})
         description = "Test strategizer."
 
     class B(Agent):

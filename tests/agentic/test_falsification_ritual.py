@@ -29,7 +29,11 @@ def _node(tmp_path, with_critic=False):
         role = "strategizer"
         # GetStatus is opt-in (plug-and-play) post-audit; opt in so the ritual
         # tests can drive a delegation to completion via polling.
-        tools = frozenset({"Done", "GetStatus"})
+        tools = frozenset({
+            "Done", "GetStatus", "HypothesisPropose", "HypothesisUpdate",
+            "HypothesisList", "HypothesisGet", "LinkFalsificationAttempt",
+            "MilestoneList", "MilestonePropose", "MilestoneComplete",
+            "MilestoneSkip", "RecallStore", "QueryStore"})
         description = "strategizer"
 
     class B(Agent):
