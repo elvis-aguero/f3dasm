@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import uuid
 from datetime import datetime, timezone
@@ -546,6 +547,69 @@ class AgenticRun:
         except OSError:
             pass
 
+    def _maybe_start_slurm_llm(self, full_cfg, debug_dir, log):
+        """Optionally own a vLLM server on a SLURM GPU node for this run.
+
+        Guarded by the ``llm_slurm.enabled`` config block. Submits a
+        ``vllm serve`` job (reusing f3dasm's ``SlurmCluster`` + the plain
+        ``sbatch`` submit idiom — a persistent server is not an eval array),
+        waits for the granted node and a ready server, then publishes
+        ``VLLM_BASE_URL`` so the vllm/openai-compatible adapter reaches it over
+        the cluster network. Returns the SLURM job id (for teardown) or None
+        when disabled.
+
+        No silent fallback: if the feature is enabled and the server cannot be
+        brought up, this raises — a run the user asked to serve locally must not
+        quietly fall back to a hosted API. The jobid is persisted to disk so the
+        study watchdog can reap a leaked allocation even if this process dies.
+        """
+        cfg = (full_cfg or {}).get("llm_slurm") or {}
+        if not cfg.get("enabled"):
+            return None
+
+        from . import slurm_llm
+        from ..pipeline.resources import SlurmCluster
+
+        model = cfg.get("model") or self._model
+        spec = slurm_llm.resolve_serve_spec(model, cfg)
+        warn = slurm_llm.serve_throughput_warning(spec)
+        if warn:
+            log.warning("llm_slurm: %s", warn)
+
+        cluster_cfg = cfg.get("cluster") or {}
+        cluster = SlurmCluster(
+            partition=cluster_cfg.get("partition", "batch"),
+            account=cluster_cfg.get("account", "default"),
+            env_setup=list(cluster_cfg.get("env_setup", []) or []),
+            env_vars=dict(cluster_cfg.get("env_vars", {}) or {}),
+            runner=cluster_cfg.get("runner", "python"),
+        )
+        port = spec.profile.port
+        script = slurm_llm.render_serve_script(
+            spec, cluster, port, str(debug_dir))
+        script_path = debug_dir / "vllm_serve.sh"
+        script_path.write_text(script, encoding="utf-8")
+
+        jobid = slurm_llm.submit_serve_job(str(script_path))
+        (debug_dir / "serve_job.jobid").write_text(jobid, encoding="utf-8")
+        log.info("llm_slurm: submitted serve job %s (model=%s)", jobid, model)
+
+        queue_timeout = float(cfg.get("queue_timeout", 3600))
+        serve_timeout = float(cfg.get("serve_timeout", 900))
+        node = slurm_llm.wait_until_running(jobid, queue_timeout)
+        base_url = f"http://{node}:{port}/v1"
+        log.info("llm_slurm: job %s RUNNING on %s; waiting for vLLM at %s",
+                 jobid, node, base_url)
+        slurm_llm.wait_until_ready(base_url, serve_timeout)
+        os.environ["VLLM_BASE_URL"] = base_url
+        log.info("llm_slurm: server ready; published VLLM_BASE_URL=%s", base_url)
+        if self._backend not in ("vllm", "openai", "openai_compatible"):
+            log.warning(
+                "llm_slurm.enabled but backend=%r (not vllm) — the served "
+                "endpoint will be IGNORED. Set `backend: vllm` in config.",
+                self._backend)
+        return jobid
+
     def execute(self) -> str:
         """Run the agentic loop; return the final report text.
 
@@ -715,44 +779,64 @@ class AgenticRun:
         from langgraph.checkpoint.sqlite import SqliteSaver
         ckpt_path = debug_dir / "checkpoints.sqlite"
         log.info("Invoking graph")
-        with SqliteSaver.from_conn_string(str(ckpt_path)) as saver:
-            graph = getattr(self, "_graph", None) or build_graph(
-                self._graph_spec, self._make_adapter, study_dir=self.study_dir,
-                interactive=self._interactive, max_ask=self._max_ask,
-                notes_dir=notes_dir,
-                lit_reviewer_notes_dir=lit_reviewer_notes_dir,
-                workspace_dir=workspace_dir,
-                delegation_log=delegation_log,
-                checkpointer=saver,
-            )
-            graph_input = None if _resume is not None else initial_state
-            # On resume, the checkpointed state still carries the OLD budgets
-            # and start_time. Re-seed them from this AgenticRun so a run that
-            # halted on a budget can actually make progress after the user
-            # raises it (cumulative token_totals persist in the checkpoint, so
-            # the spend-so-far is still counted against the new ceiling).
-            if _resume is not None and hasattr(graph, "update_state"):
-                try:
-                    graph.update_state(config, {
-                        "budget_seconds": getattr(self, "_budget", None),
-                        "budget_usd": getattr(self, "_budget_usd", None),
-                        "eval_budget": getattr(self, "_eval_budget", None),
-                        "start_time": start_time,
-                    })
-                except Exception:  # noqa: BLE001
-                    log.warning("resume state refresh failed", exc_info=True)
-            try:
-                result = graph.invoke(graph_input, config=config)
-            except BaseException as _exc:  # noqa: BLE001
-                # Any unhandled crash (GraphRecursionError, KeyboardInterrupt,
-                # OOM, …): record a resumable status so resume_from is always
-                # an option after a break, then re-raise (we do not swallow).
-                self._write_run_status(
-                    debug_dir, status="crashed",
-                    reason=f"{type(_exc).__name__}: {_exc}"[:500],
-                    resumable=True, thread_id=thread_id,
+        # Optionally own a vLLM server on a SLURM GPU node for this run; the
+        # jobid is torn down in the finally on EVERY exit path (normal close,
+        # crash, KeyboardInterrupt) so a killed run never leaks a GPU
+        # allocation. None when llm_slurm is disabled — the common path.
+        _serve_jobid = None
+        try:
+            _serve_jobid = self._maybe_start_slurm_llm(
+                _full_cfg, debug_dir, log)
+            with SqliteSaver.from_conn_string(str(ckpt_path)) as saver:
+                graph = getattr(self, "_graph", None) or build_graph(
+                    self._graph_spec, self._make_adapter,
+                    study_dir=self.study_dir,
+                    interactive=self._interactive, max_ask=self._max_ask,
+                    notes_dir=notes_dir,
+                    lit_reviewer_notes_dir=lit_reviewer_notes_dir,
+                    workspace_dir=workspace_dir,
+                    delegation_log=delegation_log,
+                    checkpointer=saver,
                 )
-                raise
+                graph_input = None if _resume is not None else initial_state
+                # On resume, the checkpointed state still carries the OLD
+                # budgets and start_time. Re-seed them from this AgenticRun so a
+                # run that halted on a budget can actually make progress after
+                # the user raises it (cumulative token_totals persist in the
+                # checkpoint, so the spend-so-far is still counted against the
+                # new ceiling).
+                if _resume is not None and hasattr(graph, "update_state"):
+                    try:
+                        graph.update_state(config, {
+                            "budget_seconds": getattr(self, "_budget", None),
+                            "budget_usd": getattr(self, "_budget_usd", None),
+                            "eval_budget": getattr(self, "_eval_budget", None),
+                            "start_time": start_time,
+                        })
+                    except Exception:  # noqa: BLE001
+                        log.warning("resume state refresh failed",
+                                    exc_info=True)
+                try:
+                    result = graph.invoke(graph_input, config=config)
+                except BaseException as _exc:  # noqa: BLE001
+                    # Any unhandled crash (GraphRecursionError,
+                    # KeyboardInterrupt, OOM, …): record a resumable status so
+                    # resume_from is always an option after a break, then
+                    # re-raise (we do not swallow).
+                    self._write_run_status(
+                        debug_dir, status="crashed",
+                        reason=f"{type(_exc).__name__}: {_exc}"[:500],
+                        resumable=True, thread_id=thread_id,
+                    )
+                    raise
+        finally:
+            if _serve_jobid:
+                from .slurm_llm import cancel_job
+                try:
+                    cancel_job(_serve_jobid)
+                    log.info("llm_slurm: scancel'd serve job %s", _serve_jobid)
+                except Exception:  # noqa: BLE001
+                    log.warning("llm_slurm: teardown failed", exc_info=True)
         # Merge per-call telemetry into an analysis-ready summary.json (additive,
         # off the decision path — a failure here must not fail the run).
         try:
