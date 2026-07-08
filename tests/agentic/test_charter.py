@@ -92,10 +92,11 @@ def test_charter_survived_adequate_test_routes_to_supported():
 
 def test_charter_absence_claim_needs_search_power():
     """§2: an achievement/absence claim ('some/no design reaches X') is
-    adequately tested only if the search had the POWER to find the instance —
-    coverage of the space + a surrogate above chance. A stalled search routes to
-    INCONCLUSIVE, not FALSIFIED (absence of evidence ≠ evidence of absence).
-    Pins the 2026-06-25 repair (run 20260625T014520)."""
+    adequately tested only if the search had the POWER to find the instance had
+    it existed. HOW that power is argued is open (adequate coverage, a guiding
+    surrogate on the claim's own observable, a bound) — not a fixed checklist.
+    A stalled search routes to INCONCLUSIVE, not FALSIFIED (absence of evidence
+    != evidence of absence). Pins the 2026-06-25 repair (run 20260625T014520)."""
     c = _normalised()
     assert "power to find" in c
     assert "stopped improving" in c

@@ -60,13 +60,20 @@ defers to it.
     For a prediction whose refutation turns on FINDING an instance — an
     achievement or existence claim ("some design in this space reaches X"), or
     its negation ("no design reaches X") — severity means the search had the
-    POWER to find that instance had it existed: adequate coverage of the space
-    the claim ranges over, and the surrogate that steers the search toward the
-    claim's own observable predicting above chance (a surrogate for a different
-    quantity does not confer severity on a claim it does not measure). A
-    search that merely stopped improving, or that rests on a surrogate the work
-    itself reports as near-chance, is an INADEQUATE test of such a claim and
-    routes to INCONCLUSIVE under §3 — failing to find a better instance is not
+    POWER to find that instance had it existed; concretely, that had a
+    qualifying instance existed in the space the claim ranges over, the search
+    would very probably have found it. That is the whole test. HOW you argue the
+    search had that power is open and judged on its merits — adequate coverage
+    of the space (dense/near-exhaustive sampling, credible in low dimension), a
+    guiding surrogate that predicts the claim's OWN observable above chance
+    (needed as dimension grows, where coverage alone cannot suffice), a
+    theoretical bound, or a combination. These are examples, not a checklist:
+    no single one is mandatory, and a surrogate for a DIFFERENT quantity never
+    counts (it does not measure the claim). A search that merely stopped
+    improving, or whose only power-argument the work itself undercuts (e.g. a
+    surrogate it reports as near-chance with no coverage argument to stand on),
+    is an INADEQUATE test of such a claim and routes to INCONCLUSIVE under §3 —
+    failing to find a better instance is not
     the same as showing none exists.
 
 §3  A hypothesis is FALSIFIED if and only if an ADEQUATE test (§2) of its
