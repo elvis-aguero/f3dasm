@@ -440,21 +440,54 @@ def _parse_budget_str(value) -> float | None:
 
 
 class AgenticRun:
-    """Run an agentic loop over a study directory using LangGraph.
+    """Run an agentic loop over a study directory.
+
+    The entry point of a3dasm. It reads ``PROBLEM_STATEMENT.md`` from the study
+    directory, builds the agent graph, runs the strategizer's open loop to a
+    gated deliverable, and returns the final report. Configuration not passed
+    here is read from ``<study_dir>/config.yaml``; explicit arguments win.
 
     Parameters
     ----------
     study_dir : Path
-        Root of the study tree.  Must contain ``PROBLEM_STATEMENT.md``.
+        Root of the study tree. Must contain ``PROBLEM_STATEMENT.md``.
     graph : Graph, optional
-        Custom agent graph.  Defaults to a 2-node strategizer→implementer
-        graph.
+        Custom agent graph. Defaults to the built-in strategizer-hub graph.
     model : str, optional
-        LLM model identifier.  Defaults to ``DEFAULT_MODEL``.
+        LLM model identifier. Defaults to ``config.yaml`` ``model`` or
+        ``DEFAULT_MODEL`` (``DEFAULT_OLLAMA_MODEL`` when the backend is Ollama).
     budget : float, optional
-        Time budget in seconds.  ``None`` means unlimited.
+        Wall-clock budget in seconds, or an ``"HH:MM:SS"`` string in
+        ``config.yaml``. ``None`` means unlimited. Soft: it nudges, it does not
+        hard-kill the science.
+    budget_usd : float, optional
+        Hard USD cost ceiling. Honoured only when the backend reports per-call
+        cost (the Claude backend); ``None`` means no ceiling.
     eval_budget : int, optional
-        Maximum function evaluations across all delegations.
+        Soft cap on oracle evaluations across all delegations. Nudges the
+        strategizer when approached; never stops a run on its own.
+    interactive : bool, default True
+        Whether the pre-run problem-statement review and in-graph FollowUp may
+        prompt on stdin. Forced off automatically when there is no TTY, so a
+        headless run never blocks on input.
+    max_ask : int, default 1
+        Maximum number of clarifying questions the interactive review may ask.
+    container : bool, default False
+        Run the loop inside a container via ``ContainerRunner`` instead of
+        in-process.
+    container_image : str, default "f3dasm-agentic:latest"
+        Image used when ``container`` is True.
+    resume_from : Path, optional
+        A prior run directory to resume from (replays the LangGraph checkpoint).
+        The run must have a ``debug/thread_id``.
+    review_statement : bool, default True
+        Run the advisory pre-run problem-statement review. Never blocks an
+        autonomous run.
+
+    Examples
+    --------
+    >>> from a3dasm import AgenticRun
+    >>> report = AgenticRun(study_dir="studies/my_study").execute()
     """
 
     def __init__(

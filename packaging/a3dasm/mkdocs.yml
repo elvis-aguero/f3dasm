@@ -77,8 +77,10 @@ nav:
     - Getting started:
         - 'installation.md'
         - 'concepts.md'
+        - 'Configuring the backend': 'backends.md'
     - Tutorials:
         - 'Quickstart': 'notebooks/quickstart.ipynb'
+        - 'Reading a run': 'reading-a-run.md'
     - How the system works:
         - 'Feature catalog': 'FEATURES.md'
         - 'Backlog': 'BACKLOG.md'
