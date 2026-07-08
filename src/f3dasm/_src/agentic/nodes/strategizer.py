@@ -25,6 +25,39 @@ from .parsing import _to_adapter_messages
 from .recording import RecordingMixin
 
 
+def _headline_consistency(stdout: str) -> str | None:
+    """Cross-check the notebook's STATED answer against its COMPUTED one.
+
+    If the deliverable prints BOTH a freshly-computed ``REPRODUCED: <v>`` and a
+    ``CLAIMED_HEADLINE: <v>`` (the value its write-up states), assert they
+    agree within a relative tolerance. Returns an error string on mismatch,
+    else None. LENIENT by design: if either marker is absent it returns None,
+    so it adds no new failure mode (and no wait) when the convention isn't used
+    — it only catches an internally self-contradicting deliverable (run
+    20260705T181941: prose said 0.3644 while an idxmax cell printed a 0.3648
+    noise row, and the gate waved it through for 4 rounds).
+    """
+    import re as _re
+
+    def _grab(tag: str):
+        m = _re.search(
+            tag + r":\s*([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)",
+            stdout or "")
+        return float(m.group(1)) if m else None
+
+    rep, claim = _grab("REPRODUCED"), _grab("CLAIMED_HEADLINE")
+    if rep is None or claim is None:
+        return None
+    if abs(rep - claim) > 1e-9 + 1e-3 * abs(claim):
+        return (
+            f"Headline inconsistency: the write-up states CLAIMED_HEADLINE="
+            f"{claim} but the notebook's own computation prints REPRODUCED="
+            f"{rep}. The reported answer must be what the notebook computes — "
+            "fix the selection (e.g. an idxmax picking a noise/near-duplicate "
+            "row) or the prose so the stated and computed headlines agree.")
+    return None
+
+
 class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode):
     """Orchestrator: reads Reports, decides next Delegation or Done/Ask."""
 
@@ -906,6 +939,12 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
         # (a constrained best is, by definition, not an objective extremum), so
         # it forced studies to headline their infeasible unconstrained extremum
         # — see audit run 20260624T021359.
+        # (e) internal consistency — if the notebook declares CLAIMED_HEADLINE
+        # (the value its write-up states), it must equal the freshly-computed
+        # REPRODUCED. Lenient: skips when the marker is absent.
+        _hc = _headline_consistency(proc.stdout or "")
+        if _hc is not None:
+            return _hc
         m = re.search(r"REPRODUCED:\s*([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)",
                       proc.stdout or "")
         headline = f", REPRODUCED={m.group(1)}" if m else ""
