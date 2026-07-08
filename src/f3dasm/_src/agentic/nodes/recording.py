@@ -15,6 +15,36 @@ from .parsing import _extract_report_section
 # (run 20260624T021359). Uniform across roles — no node-specific special-casing.
 _RETRO_TEXT_CAP = 8000
 
+# Fault classification (system vs agent) for the diagnostics KPI. The exception
+# TYPE is authoritative. Message matching is a fallback for string-only errors
+# (e.g. an adapter that returns "429 rate limit" as text), so it uses only
+# HIGH-PRECISION tokens — NOT natural-language words like "retry", "connection",
+# "timeout", "network", that routinely appear in a tool's own advice text and
+# caused agent errors to be mis-tagged "system" (run 20260630T164908: an
+# EditPipelineCell "...and retry." advice tagged the agent error as system).
+_SYSTEM_EXC_TYPES = frozenset({
+    "ConnectionError", "Timeout", "ReadTimeout", "ConnectTimeout",
+    "HTTPError", "ChunkedEncodingError", "ProxyError", "SSLError",
+})
+_SYSTEM_MSG_PATTERNS = (
+    "429", "rate limit", "rate-limit", "overloaded",
+    "500 internal server error", "502 bad gateway", "503 service unavailable",
+)
+
+
+def _classify_fault(error_type: str, message: str) -> str:
+    """"system" (transient API/network) vs "agent" (bad args / wrong usage).
+
+    Authoritative on the exception type; message match is a high-precision
+    fallback so tool-advice wording never mis-tags an agent error.
+    """
+    if error_type in _SYSTEM_EXC_TYPES:
+        return "system"
+    msg_lower = (message or "").lower()
+    if any(p in msg_lower for p in _SYSTEM_MSG_PATTERNS):
+        return "system"
+    return "agent"
+
 
 class RecordingMixin:
     def _role_of(self, target: str) -> str:
@@ -76,21 +106,8 @@ class RecordingMixin:
         """Increment error counter and append to diagnostics.jsonl (thread-safe)."""
         import json as _json
 
-        # Classify fault: system (rate limit / network / API) vs agent (bad args / wrong usage)
-        _SYSTEM_EXC_TYPES = {
-            "ConnectionError", "Timeout", "ReadTimeout", "ConnectTimeout",
-            "HTTPError", "ChunkedEncodingError", "ProxyError", "SSLError",
-        }
-        _SYSTEM_MSG_PATTERNS = [
-            "429", "rate limit", "rate-limit", "timeout", "timed out",
-            "connection", "503", "502", "500", "network", "unavailable",
-            "temporary", "retry",
-        ]
-        msg_lower = (message or "").lower()
-        if error_type in _SYSTEM_EXC_TYPES or any(p in msg_lower for p in _SYSTEM_MSG_PATTERNS):
-            fault = "system"
-        else:
-            fault = "agent"
+        # Classify fault: system (transient API/network) vs agent (bad usage).
+        fault = _classify_fault(error_type, message)
 
         with self._registry_lock:
             self._error_counts[node_name] = self._error_counts.get(node_name, 0) + 1
