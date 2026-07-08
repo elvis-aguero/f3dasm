@@ -99,3 +99,37 @@ def test_eval_count_sums_across_all_stores_not_just_main(tmp_path):
         "only the main folder again.")
     # a family's delegation is found in its own sub-store, not the main one
     assert delegation_evals(root, "D002") == 1
+
+
+# ---------------------------------------------------------------------------
+# The reverse-direction detector: rows in the store with no owner. The
+# unstamped-write door (public ExperimentData.store() append) is not sealed;
+# unstamped_row_count SURFACES the gap so the monitor can warn on it.
+# ---------------------------------------------------------------------------
+
+def test_unstamped_row_count_flags_empty_and_missing_stamps(tmp_path):
+    from f3dasm._src.agentic.instrumented import unstamped_row_count
+    store_root = tmp_path / "experiment_data"
+    _build_store(store_root, [
+        (0.1, 1.0, "D000", "precomputed_pool"),   # attributed (pool)
+        (0.3, 3.0, "D001", "oracle"),             # attributed
+        (0.6, 6.0, "", "rogue_append"),           # empty stamp -> unattributable
+    ])
+    # 3 physical rows, 2 attributable (D000 + D001) -> 1 unstamped.
+    assert unstamped_row_count(store_root) == 1
+
+
+def test_unstamped_row_count_zero_when_all_attributed(tmp_path):
+    from f3dasm._src.agentic.instrumented import unstamped_row_count
+    store_root = tmp_path / "experiment_data"
+    _build_store(store_root, [
+        (0.1, 1.0, "D000", "precomputed_pool"),
+        (0.3, 3.0, "D001", "oracle"),
+        (0.5, 5.0, "D002", "oracle"),
+    ])
+    assert unstamped_row_count(store_root) == 0
+    # invariant: it is exactly n_rows minus the attributable rows
+    from f3dasm._src.agentic.instrumented import (
+        RunStateSummary, experiment_stores)
+    s = RunStateSummary.from_store(experiment_stores(store_root)[0])
+    assert s.n_rows == 3

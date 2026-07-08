@@ -1060,6 +1060,30 @@ def total_ledgered_evals(store_root: Path | str) -> int:
     return total
 
 
+def unstamped_row_count(store_root: Path | str) -> int:
+    """Physical rows in the stores that carry NO provenance stamp, summed across
+    every experiment store. These are rows appended outside get_evaluator() (the
+    public ``ExperimentData.store()`` write-door): value_counts() drops them from
+    n_per_delegation, so they are excluded from the COUNT — but their existence
+    is itself a signal (an eval that ran without attribution). This surfaces the
+    gap so it is visible instead of silent. Never raises.
+
+    A row is attributable iff its _delegation_id is truthy (D000, D001, …);
+    unattributable rows are those with a MISSING stamp (NaN — dropped by
+    value_counts, so absent from n_per_delegation) OR an EMPTY stamp ("" — a key
+    in n_per_delegation but excluded from evals by the same truthiness test
+    total_ledgered_evals uses). Both are counted here.
+    """
+    total = 0
+    for store in experiment_stores(store_root):
+        s = RunStateSummary.from_store(store)
+        if s is not None:
+            attributed = sum(int(c) for did, c in s.n_per_delegation.items()
+                             if did)
+            total += max(0, int(s.n_rows) - attributed)
+    return total
+
+
 def delegation_evals(store_root: Path | str, delegation_id: str) -> int:
     """Rows stamped with this delegation_id across EVERY experiment store.
 
@@ -1151,5 +1175,6 @@ __all__ = [
     "load_inner_evaluator",
     "total_ledgered_evals",
     "delegation_evals",
+    "unstamped_row_count",
     "experiment_stores",
 ]

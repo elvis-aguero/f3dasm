@@ -70,9 +70,39 @@ class ScienceMonitor:
         self.store_dir: str | None = store_dir
 
     def evaluate(self) -> list[Violation]:
-        """Run UNLEDGERED_EVALS against current state."""
+        """Run UNLEDGERED_EVALS + UNSTAMPED_ROWS against current state."""
         records = self._dlog.query_all()
-        return self._check_unledgered(records)
+        return self._check_unledgered(records) + self._check_unstamped_rows()
+
+    def _check_unstamped_rows(self) -> list[Violation]:
+        """UNSTAMPED_ROWS: the experiment stores gained rows that carry no
+        provenance stamp — appended outside get_evaluator() (the public
+        ExperimentData.store() write-door). Principle: a counted eval must be
+        attributable to a source; a stamp-less append is neither counted nor
+        reproducible, so surface it instead of letting it pass silently. This is
+        the reverse direction of UNLEDGERED_EVALS (which asks 'did a delegation's
+        evals reach the store?'); this asks 'do all the store's rows have an
+        owner?'. Warn-only — it never blocks a run. No-ops when store_dir is None.
+        """
+        if self.store_dir is None:
+            return []
+        try:
+            from .instrumented import unstamped_row_count as _unstamped
+            n = _unstamped(self.store_dir)
+        except Exception:  # noqa: BLE001
+            return []
+        if n <= 0:
+            return []
+        return [Violation(
+            "UNSTAMPED_ROWS", "warn", None,
+            f"{n} row(s) in the experiment store carry no provenance stamp — "
+            "they were written outside get_evaluator() (e.g. a direct "
+            "ExperimentData.store() append). Such rows are NOT counted as "
+            "evaluations and CANNOT be attributed to a delegation or "
+            "reproduced. Any number backing the headline must come from rows "
+            "written through get_evaluator(). Re-run those evaluations via "
+            "get_evaluator() so they are ledgered and attributable.",
+        )]
 
     def _check_unledgered(self, all_records: list[dict]) -> list[Violation]:
         """UNLEDGERED_EVALS: DONE delegations that reported evals but wrote no

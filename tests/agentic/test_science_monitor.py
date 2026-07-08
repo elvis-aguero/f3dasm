@@ -250,3 +250,38 @@ def test_unledgered_exempts_datagenerator_role(tmp_path):
     flagged = {v.h_id for v in mon.evaluate() if v.rule == "UNLEDGERED_EVALS"}
     assert "D001" not in flagged, "datagenerator validation must be exempt"
     assert "D002" in flagged, "implementer bypass must still be flagged"
+
+
+# ---------------------------------------------------------------------------
+# UNSTAMPED_ROWS — the reverse-direction detector: rows in the store with no
+# provenance owner (the unstamped-write door). Warn-only, principled nudge.
+# ---------------------------------------------------------------------------
+
+def test_unstamped_rows_fires_on_ownerless_rows(tmp_path):
+    ledger, dlog, mon, _ = make_world(tmp_path)
+    store_dir = tmp_path / "experiment_data"
+    store_dir.mkdir()
+    mon.store_dir = str(store_dir)
+    # 6 physical rows, 5 attributed to D001 -> 1 ownerless row.
+    stub = RunStateSummary(
+        n_rows=6, n_per_delegation={"D001": 5},
+        n_per_source={}, n_per_fidelity=None, output_stats={})
+    with patch.object(RunStateSummary, "from_store", return_value=stub):
+        violations = mon.evaluate()
+    unstamped = [v for v in violations if v.rule == "UNSTAMPED_ROWS"]
+    assert len(unstamped) == 1
+    assert unstamped[0].severity == "warn"          # never blocks
+    assert "1 row" in unstamped[0].message
+
+
+def test_unstamped_rows_silent_when_every_row_attributed(tmp_path):
+    ledger, dlog, mon, _ = make_world(tmp_path)
+    store_dir = tmp_path / "experiment_data"
+    store_dir.mkdir()
+    mon.store_dir = str(store_dir)
+    stub = RunStateSummary(
+        n_rows=5, n_per_delegation={"D001": 5},
+        n_per_source={}, n_per_fidelity=None, output_stats={})
+    with patch.object(RunStateSummary, "from_store", return_value=stub):
+        violations = mon.evaluate()
+    assert "UNSTAMPED_ROWS" not in {v.rule for v in violations}

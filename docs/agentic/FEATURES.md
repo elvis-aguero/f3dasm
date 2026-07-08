@@ -48,9 +48,15 @@ Format per feature: **what** (plain language) · **why** · **where** (files) ·
 - **Config:** kill switch `F3DASM_VERDICT_VALIDATOR=0`. **Status:** advisory, non-blocking.
 
 ### Science monitor
-- **What:** background rules that flag scientific drift (unledgered evals, premature
-  closes, …) and escalate repeated drift to the critic.
-- **Where:** `science_monitor.py`. **Status:** core (§4 user-owned).
+- **What:** background rules that flag scientific drift and escalate repeated
+  drift to the critic. Two provenance-integrity rules bracket the eval ledger
+  from both directions: **UNLEDGERED_EVALS** (a delegation reported evals but
+  wrote no attributable rows — evals that never reached the store) and
+  **UNSTAMPED_ROWS** (the store gained rows with no provenance owner — the
+  reverse: rows written outside get_evaluator() via the public
+  ExperimentData.store() door, neither counted nor reproducible). Both warn-only.
+- **Where:** `science_monitor.py` (`_check_unledgered`, `_check_unstamped_rows`);
+  `instrumented.py` `unstamped_row_count`. **Status:** core (§4 user-owned).
 
 ### Process milestones
 - **What:** a small backlog (assess-literature, oracle-ready, …) that gates the
