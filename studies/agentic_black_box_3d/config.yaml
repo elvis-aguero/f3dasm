@@ -2,6 +2,27 @@ model: claude-haiku-4-5-20251001
 backend: claude
 budget: "00:15:00"
 eval_budget: 1000
+
+# --- Optional: serve the agent's own LLM locally on a SLURM GPU node (vLLM) ---
+# Off by default → this study uses the hosted `claude` backend above. To use a
+# local model, set `backend: vllm`, name the model, and enable this block. The
+# framework submits `vllm serve`, waits for the node + a ready server, points
+# the backend at it, and scancels on every exit path. See FEATURES.md §D.
+# llm_slurm:
+#   enabled: true
+#   model: gemma-4-27b-it        # model-keyed defaults; below only override them
+#   gpu_model: a100              # enables the config-time throughput check
+#   # gres: gpu:1                # SLURM --gres (default from the model profile)
+#   # mem: 48G
+#   # time: "08:00:00"
+#   # params_b: 27               # set when the size isn't parseable from the name
+#   # queue_timeout: 3600        # max wait for the GPU allocation (s)
+#   # serve_timeout: 900         # max wait for the cold model to load (s)
+#   cluster:
+#     partition: gpu
+#     account: my_acct
+#     runner: "uv run python"
+#     env_setup: ["module load cuda", "module load vllm"]
 # Hard per-delegation memory cap, in BYTES (host safety; the one hard boundary).
 # 4 GiB. On a big node/SLURM, raise it (keep it below the job's --mem).
 mem_cap: 4294967296

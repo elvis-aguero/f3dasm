@@ -5,11 +5,20 @@ tags: [slurm, cluster, hpc, pipeline, parallel, resources, get_evaluator, canoni
 audience: [strategizer, implementer]
 ---
 SLURM runs the DELIVERABLE pipeline, not the agentic orchestration. The
-strategizer/critic graph (and the `claude` CLI behind each node) always runs
-LOCAL on one host — there is no cluster mode for the agent loop. What maps onto
-SLURM is the f3dasm `Pipeline` your deliverable builds: the DoE → `get_evaluator()`
-→ analyze recipe (see [[pipeline-building-patterns]]). You change the `.run(...)`
-call and per-step resources; the composition is identical to local mode.
+strategizer/critic graph runs LOCAL on one host, and by default each node's
+LLM is a hosted API (the `claude` CLI). What maps onto SLURM is the f3dasm
+`Pipeline` your deliverable builds: the DoE → `get_evaluator()` → analyze
+recipe (see [[pipeline-building-patterns]]). You change the `.run(...)` call and
+per-step resources; the composition is identical to local mode.
+
+> **Opt-in exception — the agent's *own* LLM served on a SLURM GPU node.** The
+> framework can own a local model (vLLM) on a separate GPU allocation instead
+> of a hosted API: it submits the `vllm serve` job, waits for the node + a ready
+> server, points the backend at it over the cluster network, and scancels it on
+> every exit path (normal/crash/watchdog). This is the LLM *behind* the nodes,
+> not the deliverable pipeline. Enable it with the `llm_slurm:` config block
+> (see the feature catalog); disabled by default, so the claim above holds
+> unless you turn it on.
 
 ## The API (all top-level f3dasm exports)
 ```python

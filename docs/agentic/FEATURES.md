@@ -247,6 +247,36 @@ Format per feature: **what** (plain language) · **why** · **where** (files) ·
   delegation_footer}`; appended in `nodes/tools/routing.py`.
 - **Status:** done.
 
+### Framework-owned local LLM on a SLURM GPU node (vLLM)
+- **What:** instead of a hosted API, the framework can own the LLM *behind the
+  nodes* on a separate SLURM GPU allocation: it resolves model-keyed serve
+  defaults (config overrides them), submits a `vllm serve` job (reusing f3dasm's
+  `SlurmCluster` + the plain `sbatch` idiom — a persistent server is NOT routed
+  through the eval-oriented `Pipeline`/`SlurmExecutor`), waits for the granted
+  node, polls `/v1/models` past the cold model load, publishes `VLLM_BASE_URL`
+  so the existing vLLM adapter reaches it over the cluster network, and
+  scancels the job on EVERY exit path (normal close, crash, and the watchdog's
+  `os._exit` hard-kill via `reap_run_serve_job`). A build-time, leading-order
+  throughput bound (decode is memory-bandwidth-bound; GPU/model-size/dtype/
+  tensor-parallel are all config-known) warns loudly when a config is likely to
+  choke — a nudge at config time, never a block. Same physics the token
+  telemetry measures after the fact (parity). Phase 1: one allocation for the
+  run's lifetime; Phase 2 (walltime chaining + a stable local proxy) is designed
+  but deferred.
+- **Config:** `llm_slurm:` block — `enabled` (default off), `model`, resource
+  overrides (`gres`/`mem`/`time`/`cpus_per_task`/`vllm_args`), throughput inputs
+  (`gpu_model`/`params_b`/`dtype_bytes`/`tensor_parallel`), `queue_timeout`/
+  `serve_timeout`, and a nested `cluster:` (`partition`/`account`/`env_setup`/
+  `env_vars`/`runner`). Requires `backend: vllm`. Disabled → hosted-API runs are
+  unchanged.
+- **Where:** `agentic/slurm_llm.py` (profiles, resolve, render/submit, wait,
+  throughput bound, teardown, reaper); `agent_runtime.py`
+  (`_maybe_start_slurm_llm` + the teardown `finally` in `execute()`);
+  `studies/*/run.py` watchdogs (serve-job reap). Reuses
+  `pipeline/resources.py` (`SlurmCluster`/`SlurmResources`) unchanged.
+- **Status:** Phase 1 done, headless-tested; validate on a real GPU cluster
+  before making it a default anywhere (greenfield + cluster-specific).
+
 ## E. Runtime safety
 
 ### Wall-clock watchdog + recursive reap (#11/#14)
