@@ -61,7 +61,9 @@ defers to it.
     achievement or existence claim ("some design in this space reaches X"), or
     its negation ("no design reaches X") — severity means the search had the
     POWER to find that instance had it existed: adequate coverage of the space
-    the claim ranges over, and any guiding surrogate predicting above chance. A
+    the claim ranges over, and the surrogate that steers the search toward the
+    claim's own observable predicting above chance (a surrogate for a different
+    quantity does not confer severity on a claim it does not measure). A
     search that merely stopped improving, or that rests on a surrogate the work
     itself reports as near-chance, is an INADEQUATE test of such a claim and
     routes to INCONCLUSIVE under §3 — failing to find a better instance is not
