@@ -156,15 +156,16 @@ _FAILED_RETROSPECTIVE = (
 )
 
 
-def build_declared_read_closures(node, agent_tools) -> dict:
-    """Read-only ledger/store tools, granted to ANY node type by DECLARATION.
+def build_declared_shared_closures(node, agent_tools) -> dict:
+    """Capability tools granted to ANY node type by DECLARATION.
 
     Single source of truth: a tool is exposed iff the agent lists it in its
-    `tools`. These four are read-only and node-type-agnostic — the entry
-    strategizer, a delegating worker (implementer/datagenerator), and a leaf
-    worker (critic) all resolve the run's store/ledger through
-    node._resolve_run_dir()/node._read_ledger(), so they behave identically
-    everywhere. No mutation is possible here.
+    `tools`. These are node-type-agnostic — the entry strategizer, a delegating
+    worker (implementer/datagenerator), and a leaf worker (critic) resolve the
+    run's store/ledger through node._resolve_run_dir()/node._read_ledger(), so
+    they behave identically everywhere, and they are plain framework closures
+    (so Claude/Ollama backends expose an identical surface). The read tools
+    mutate nothing; WaitForProcess only blocks.
     """
     out: dict = {}
 
@@ -382,6 +383,54 @@ def build_declared_read_closures(node, agent_tools) -> dict:
                 return f"ERROR: hypothesis {hypothesis_id!r} not found."
             return _json.dumps(entry, indent=2)
         out["HypothesisGet"] = HypothesisGet
+
+    if "WaitForProcess" in agent_tools:
+        def WaitForProcess(pid: int, timeout_s: int = 1800,
+                           poll_s: float = 5.0) -> str:
+            """Block until process `pid` exits, or until timeout_s seconds.
+
+            Use this after launching a long job in the background (e.g. an
+            Abaqus solve) so your turn resumes only when it actually finishes —
+            the backend-agnostic replacement for hand-rolled `while kill -0`
+            polling. It cannot read a non-child process's exit CODE, so confirm
+            success or failure by checking the job's own result/output file.
+            """
+            import time
+
+            import psutil
+            try:
+                pid = int(pid)
+                timeout_s = int(timeout_s)
+                poll_s = float(poll_s)
+            except (TypeError, ValueError):
+                return ("ERROR: pid and timeout_s must be integers and poll_s "
+                        "a number.")
+            if poll_s <= 0:
+                poll_s = 5.0
+
+            def _running(p: int) -> bool:
+                # A finished-but-unreaped child lingers as a ZOMBIE with its pid
+                # still present; treat that as exited, not running.
+                try:
+                    proc = psutil.Process(p)
+                    return proc.status() != psutil.STATUS_ZOMBIE
+                except psutil.Error:
+                    return False
+
+            if not _running(pid):
+                return (f"Process {pid} is not running (already exited or "
+                        "never existed).")
+            start = time.monotonic()
+            while _running(pid):
+                if time.monotonic() - start > timeout_s:
+                    return (f"Process {pid} still running after {timeout_s}s "
+                            "(timeout). It was NOT killed — check on it or "
+                            "call WaitForProcess again.")
+                time.sleep(poll_s)
+            waited = int(time.monotonic() - start)
+            return (f"Process {pid} exited after ~{waited}s. Check its "
+                    "result/output file to confirm success or failure.")
+        out["WaitForProcess"] = WaitForProcess
 
     return out
 
@@ -2992,7 +3041,7 @@ def build_routing_tools(node) -> dict:
     # Read-only ledger/store tools — declaration-gated and shared verbatim with
     # leaf WorkerNodes (see WorkerNode.__init__), so the exposure surface is
     # identical across node types.
-    closures.update(build_declared_read_closures(node, _agent_tools))
+    closures.update(build_declared_shared_closures(node, _agent_tools))
 
     # AskForFeedback is only injected when a critic node is
     # connected AND this is the entry node (only the entry node

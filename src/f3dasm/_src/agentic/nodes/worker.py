@@ -55,9 +55,9 @@ class WorkerNode(AgentNode):
         # identical, working RecallStore/QueryStore/HypothesisList/Get surface
         # whenever it declares them. Resolves the run via the shared
         # AgentNode._resolve_run_dir (delegation-log path).
-        from .tools.routing import build_declared_read_closures
+        from .tools.routing import build_declared_shared_closures
         self.adapter.closure_tools.update(
-            build_declared_read_closures(self, self._agent_tools))
+            build_declared_shared_closures(self, self._agent_tools))
 
     def _make_recall_history(self) -> Any:
         """Build the RecallHistory closure for this worker node."""

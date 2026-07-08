@@ -659,7 +659,7 @@ class StrategizerNode(RecordingMixin, CriticGateMixin, LifecycleMixin, AgentNode
             )
 
         # HypothesisList / HypothesisGet (read-only) live in the shared,
-        # declaration-gated builder (build_declared_read_closures) so leaf
+        # declaration-gated builder (build_declared_shared_closures) so leaf
         # workers can be granted them too. This builder returns only the
         # MUTATE tools, which stay orchestrator-only.
         return {

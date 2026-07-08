@@ -90,7 +90,9 @@ class DebuggerAgent(Agent):
     tools = frozenset({"Bash", "Read", "Grep", "Edit", "Write",
                        # read-only ledger/store access for diagnosis
                        "RecallStore", "QueryStore",
-                       "HypothesisList", "HypothesisGet"})
+                       "HypothesisList", "HypothesisGet",
+                       # block until a backgrounded job finishes
+                       "WaitForProcess"})
     reset_on_checkpoint = True
     description = (
         "Diagnoses errors and applies minimal fixes. "
