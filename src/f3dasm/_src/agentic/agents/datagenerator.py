@@ -219,8 +219,8 @@ class DataGeneratorAgent(Agent):
         "Bash", "Edit", "Read", "Write", "Glob", "Grep", "ReportEvals",
         # read-only ledger/store access (single source of truth for tools)
         "RecallStore", "QueryStore", "HypothesisList", "HypothesisGet",
-        # block until a backgrounded long job (e.g. Abaqus) finishes
-        "WaitForProcess",
+        # manage a backgrounded long job (e.g. Abaqus): poll it / stop it
+        "BashOutput", "KillShell",
     })
     reset_on_checkpoint = True
     role = "datagenerator"

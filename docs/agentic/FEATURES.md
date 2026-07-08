@@ -86,20 +86,28 @@ Format per feature: **what** (plain language) · **why** · **where** (files) ·
 - **Where:** `notebook_exec.py` `diagnose_notebook`, `RunPipelineCell` closure.
 - **Tools:** `RunPipelineCell`. **Status:** done.
 
-### WaitForProcess — backend-agnostic "block until job done" (#24)
-- **What:** a declaration-gated closure `WaitForProcess(pid, timeout_s=1800)`
-  that polls `psutil.pid_exists(pid)` until the process exits or times out. It
-  lets a worker launch a long job (e.g. an Abaqus solve) in the background and
-  resume its turn only when the job finishes, instead of hand-rolling
-  `while kill -0 <pid>` loops. It cannot read a non-child's exit code, so the
-  agent confirms success via the job's own result file. Declared by the
+### Unified, SDK-compatible Bash surface: `Bash` + `BashOutput` + `KillShell` (#24)
+- **What:** one tool SURFACE across every backend. `Bash(command, timeout?,
+  run_in_background?, description?, dangerouslyDisableSandbox?)` runs foreground
+  by default; a command that exceeds its timeout is **backgrounded, not killed**,
+  and returned with a `bash_id` the agent polls via `BashOutput(bash_id)` and
+  stops via `KillShell(bash_id)`. Matches the Claude-Agent-SDK Bash param and
+  tool names so agents don't relearn behavior. The one deliberate deviation:
+  auto-background is made **visible** (an `interrupted` notice + `bash_id`) so an
+  agent never wakes up thinking a still-running job finished. Declared by the
   implementer, datagenerator, and debugger.
-- **Why a framework closure, not the SDK's `Monitor`:** `Monitor` is a
-  Claude-Agent-SDK/harness tool with no Ollama equivalent, so exposing it would
-  break Claude/Ollama parity. `WaitForProcess` is a plain framework closure
-  exposed identically on both backends (MCP on Claude, native map on Ollama).
-- **Where:** `nodes/tools/routing.py` `build_declared_shared_closures`.
-- **Status:** done; declaration-gated like every other capability tool.
+- **Two implementations, one surface** (the standard pattern here): on Claude the
+  SDK executes Bash/BashOutput/KillShell natively (they are SDK built-ins — we
+  now enable the two companions we had omitted from `NATIVE_TOOLS`); on
+  ollama/vllm/openrouter the framework provides them via `_BashSession` +
+  `_make_bash_tool`/`_make_bashoutput_tool`/`_make_killshell_tool`.
+- **Safety:** framework-backgrounded children stay in the run's process group
+  (no `start_new_session`), so the watchdog group-kill reaches them; the bg pid
+  is best-effort registered in `governor_pids.jsonl`; `KillShell` is the only
+  per-delegation teardown.
+- **Where:** `backends/claude.py` (`NATIVE_TOOLS`), `backends/openai_compatible.py`
+  (`_BashSession`, the three factories, `_native_tool_map`).
+- **Status:** done. Supersedes the earlier `WaitForProcess` stopgap.
 
 ### Sandbox study-root anchor (`F3DASM_STUDY_ROOT`)
 - **What:** the reproduction gate, `CheckDeliverable`, `RunPipelineCell`, and the
@@ -281,6 +289,6 @@ Format per feature: **what** (plain language) · **why** · **where** (files) ·
 | `RecallStore` · `QueryStore` | Canonical evaluation-store read (declaration-gated; shared verbatim across node types — strategizer, workers, and the critic) |
 | `HypothesisPropose` · `HypothesisUpdate` · `HypothesisList` · `HypothesisGet` · `LinkFalsificationAttempt` | Hypothesis ledger — read (List/Get) is declaration-gated to any node; mutate (Propose/Update/Link) is strategizer-only |
 | `MilestoneList` · `MilestonePropose` · `MilestoneComplete` · `MilestoneSkip` | Process milestones (strategizer-only) |
-| `WaitForProcess` | Block until a backgrounded job (pid) exits (#24) |
+| `BashOutput` · `KillShell` | Bash companions: poll / stop a backgrounded shell (#24) |
 | `Read` · `Write` · `Edit` · `Bash` · `Glob` · `Grep` | Workspace file/shell primitives |
 | `Done` | Close the run for the gate |

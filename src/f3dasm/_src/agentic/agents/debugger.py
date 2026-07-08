@@ -91,8 +91,8 @@ class DebuggerAgent(Agent):
                        # read-only ledger/store access for diagnosis
                        "RecallStore", "QueryStore",
                        "HypothesisList", "HypothesisGet",
-                       # block until a backgrounded job finishes
-                       "WaitForProcess"})
+                       # manage a backgrounded job: poll it / stop it
+                       "BashOutput", "KillShell"})
     reset_on_checkpoint = True
     description = (
         "Diagnoses errors and applies minimal fixes. "

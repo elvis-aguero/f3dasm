@@ -350,6 +350,12 @@ USE Bash() to:
   - Call external simulators named in the briefing.
   - Execute Python scripts for numerical work.
 
+LONG JOBS (e.g. an Abaqus solve): a Bash command that runs past its timeout is
+BACKGROUNDED — NOT killed — and returns a `bash_id`. Do NOT assume it finished:
+poll it with BashOutput(bash_id) until it reports exited, then read its result
+file; use KillShell(bash_id) to stop it. For a job you know is long, pass a
+larger `timeout` (ms) or run_in_background=true up front.
+
 Call ReportEvals once per task, immediately before the ## Report block (its
 full contract — always call, even for 0; it arms the unledgered-evals safety
 check — is in the <tools> catalog).
@@ -516,8 +522,10 @@ class F3dasmImplementerAgent(Agent):
         "Bash", "Edit", "Read", "Write", "Glob", "Grep", "ReportEvals",
         # read-only ledger/store access (single source of truth for tools)
         "RecallStore", "QueryStore", "HypothesisList", "HypothesisGet",
-        # block until a backgrounded long job (e.g. Abaqus) finishes
-        "WaitForProcess",
+        # manage a backgrounded long job (e.g. Abaqus): poll it / stop it.
+        # Bash auto-backgrounds a command past its timeout and returns a
+        # bash_id; these are its SDK companions.
+        "BashOutput", "KillShell",
     })
     reset_on_checkpoint = True
     role = "implementer"

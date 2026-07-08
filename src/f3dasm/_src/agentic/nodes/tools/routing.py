@@ -164,8 +164,8 @@ def build_declared_shared_closures(node, agent_tools) -> dict:
     worker (implementer/datagenerator), and a leaf worker (critic) resolve the
     run's store/ledger through node._resolve_run_dir()/node._read_ledger(), so
     they behave identically everywhere, and they are plain framework closures
-    (so Claude/Ollama backends expose an identical surface). The read tools
-    mutate nothing; WaitForProcess only blocks.
+    (so Claude/Ollama backends expose an identical surface). These are all
+    read-only and mutate nothing.
     """
     out: dict = {}
 
@@ -384,53 +384,9 @@ def build_declared_shared_closures(node, agent_tools) -> dict:
             return _json.dumps(entry, indent=2)
         out["HypothesisGet"] = HypothesisGet
 
-    if "WaitForProcess" in agent_tools:
-        def WaitForProcess(pid: int, timeout_s: int = 1800,
-                           poll_s: float = 5.0) -> str:
-            """Block until process `pid` exits, or until timeout_s seconds.
-
-            Use this after launching a long job in the background (e.g. an
-            Abaqus solve) so your turn resumes only when it actually finishes —
-            the backend-agnostic replacement for hand-rolled `while kill -0`
-            polling. It cannot read a non-child process's exit CODE, so confirm
-            success or failure by checking the job's own result/output file.
-            """
-            import time
-
-            import psutil
-            try:
-                pid = int(pid)
-                timeout_s = int(timeout_s)
-                poll_s = float(poll_s)
-            except (TypeError, ValueError):
-                return ("ERROR: pid and timeout_s must be integers and poll_s "
-                        "a number.")
-            if poll_s <= 0:
-                poll_s = 5.0
-
-            def _running(p: int) -> bool:
-                # A finished-but-unreaped child lingers as a ZOMBIE with its pid
-                # still present; treat that as exited, not running.
-                try:
-                    proc = psutil.Process(p)
-                    return proc.status() != psutil.STATUS_ZOMBIE
-                except psutil.Error:
-                    return False
-
-            if not _running(pid):
-                return (f"Process {pid} is not running (already exited or "
-                        "never existed).")
-            start = time.monotonic()
-            while _running(pid):
-                if time.monotonic() - start > timeout_s:
-                    return (f"Process {pid} still running after {timeout_s}s "
-                            "(timeout). It was NOT killed — check on it or "
-                            "call WaitForProcess again.")
-                time.sleep(poll_s)
-            waited = int(time.monotonic() - start)
-            return (f"Process {pid} exited after ~{waited}s. Check its "
-                    "result/output file to confirm success or failure.")
-        out["WaitForProcess"] = WaitForProcess
+    # NOTE: WaitForProcess was superseded by the SDK-compatible Bash surface
+    # (run_in_background -> BashOutput -> KillShell), which lives with the Bash
+    # tool per backend (SDK-native on Claude; openai_compatible on the rest).
 
     return out
 

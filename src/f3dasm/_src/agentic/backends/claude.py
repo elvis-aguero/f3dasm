@@ -280,6 +280,11 @@ class ClaudeAdapter:
     # are injected as Python closures (MCP), not passed here.
     NATIVE_TOOLS = frozenset({
         "Bash", "Edit", "Read", "Write", "Glob", "Grep",
+        # Bash's own SDK companions: poll a backgrounded shell / kill it. These
+        # are SDK built-ins we previously omitted, so an agent that got a
+        # backgroundTaskId (from auto-background on timeout) had no tool to act
+        # on it. Granting them by declaration closes that awareness gap.
+        "BashOutput", "KillShell",
         "Task", "WebFetch", "WebSearch", "computer",
     })
 
