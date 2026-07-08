@@ -106,28 +106,243 @@ def _make_glob_tool(cwd: Path | None) -> Any:
     return StructuredTool.from_function(glob_files, name="Glob")
 
 
-def _make_bash_tool(cwd: Path | None, nudge: Any = None) -> Any:
+# --------------------------------------------------------------------------
+# Bash + BashOutput + KillShell: one SDK-compatible surface for the non-Claude
+# backends (Claude gets these from the real SDK). A command that exceeds its
+# timeout is BACKGROUNDED (not killed) and returned with a bash_id, matching
+# the SDK's auto-background; BashOutput polls it, KillShell stops it. The one
+# deliberate deviation from the SDK is that the background is made VISIBLE
+# (interrupted + bash_id in the result) so the agent never wakes up thinking a
+# still-running job finished.
+# --------------------------------------------------------------------------
+
+_BASH_TIMEOUT_DEFAULT_MS = 300000    # 5 min (SDK default is 120000; ours is
+_BASH_TIMEOUT_MAX_MS = 600000        # longer for hours-scale compute). Cap = SDK max.
+_BASH_INLINE_CAP = 30000             # chars kept inline before spilling to a file
+
+
+class _BashSession:
+    """Per-adapter registry of shells backing Bash/BashOutput/KillShell.
+
+    Background shells key on a ``bash_id``. Shared by the three tool factories
+    (built together in ``_native_tool_map``) so a worker can launch with
+    ``run_in_background`` (or hit the timeout) and then poll ``BashOutput`` /
+    ``KillShell`` within the same ReAct turn.
+    """
+
+    def __init__(self, cwd: Path | None) -> None:
+        self.cwd = str(cwd) if cwd else None
+        self._bg: dict[str, dict] = {}   # bash_id -> {proc, spool, handle, cursor}
+        self._n = 0
+        self._lock = threading.Lock()
+
+    def add_background(self, proc, spool: str, handle) -> str:
+        with self._lock:
+            self._n += 1
+            bid = f"bash_{self._n}"
+            self._bg[bid] = {"proc": proc, "spool": spool,
+                             "handle": handle, "cursor": 0}
+        return bid
+
+    def get(self, bid: str) -> dict | None:
+        with self._lock:
+            return self._bg.get(bid)
+
+    def drop(self, bid: str) -> None:
+        with self._lock:
+            self._bg.pop(bid, None)
+
+    def register_governor(self, pid: int) -> None:
+        """Best-effort: add a backgrounded pid to the run's governor_pids.jsonl
+        so the memory watcher tracks/kills it per-delegation. If the run
+        context is not resolvable from the env, the process still stays in the
+        run's process group (no setsid), so the whole-run group-kill remains
+        the backstop; we simply skip fine-grained tracking."""
+        try:
+            import json as _json
+            from datetime import datetime, timezone
+            store = os.environ.get("F3DASM_CANONICAL_STORE")
+            did = os.environ.get("F3DASM_DELEGATION_ID")
+            if not store or not did:
+                return
+            reg = Path(store).parent / "debug" / "governor_pids.jsonl"
+            if not reg.parent.exists():
+                return
+            from ..resource_backend import get_resource_backend
+            be = get_resource_backend()
+            rec = {
+                "delegation_id": did, "pid": pid,
+                "start_time": be.proc_start_time(pid),
+                "ts": datetime.now(tz=timezone.utc).isoformat(
+                    timespec="seconds"),
+            }
+            with reg.open("a", encoding="utf-8") as f:
+                f.write(_json.dumps(rec) + "\n")
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _read_spill(spool: str, start: int) -> tuple[str, int]:
+    """Read spool[start:] as text; return (text, new_end_offset)."""
+    try:
+        with open(spool, "rb") as f:
+            f.seek(start)
+            data = f.read()
+        return data.decode("utf-8", errors="replace"), start + len(data)
+    except OSError:
+        return "", start
+
+
+def _render(out: str, spool: str, *, exit_code=None, interrupted=False,
+            bash_id=None, waited_s=None, nudge_msg=None) -> str:
+    """SDK-shaped rendering as text (this backend delivers tool results as
+    strings). Plain output on clean foreground success — for minimal
+    disruption and backwards-compat — with a labeled trailer only when there
+    is something the agent must know (nonzero exit, timeout/background)."""
+    body = out if out else "(no output)"
+    # Spill large output to the file and keep an inline tail.
+    if len(body) > _BASH_INLINE_CAP:
+        body = (f"[output truncated to last {_BASH_INLINE_CAP} chars; full "
+                f"output at {spool}]\n" + body[-_BASH_INLINE_CAP:])
+    parts = [body]
+    if interrupted and bash_id is not None:
+        parts.append(
+            f"\n[interrupted: still running in the background after "
+            f"~{waited_s}s — NOT killed]\nbash_id: {bash_id}  "
+            f"(BashOutput('{bash_id}') for more output; "
+            f"KillShell('{bash_id}') to stop it)")
+    elif bash_id is not None:               # explicit run_in_background
+        parts.append(
+            f"\n[running in the background]\nbash_id: {bash_id}  "
+            f"(BashOutput('{bash_id}') to poll; KillShell('{bash_id}') to stop)")
+    elif exit_code not in (None, 0):
+        parts.append(f"\n[exit {exit_code}]")
+    if nudge_msg:
+        parts.append(f"\n\n{nudge_msg}")
+    return "".join(parts)
+
+
+def _make_bash_tool(cwd: Path | None, nudge: Any = None,
+                    session: "_BashSession | None" = None) -> Any:
     import subprocess
+    import tempfile
 
     from langchain_core.tools import StructuredTool
 
-    work_dir = str(cwd) if cwd else None
+    sess = session if session is not None else _BashSession(cwd)
 
-    def bash(command: str) -> str:
-        """Run a shell command and return stdout + stderr."""
-        result = subprocess.run(
-            command, shell=True, capture_output=True, text=True,
-            timeout=120, cwd=work_dir,
-        )
-        out = result.stdout + result.stderr
-        out = out if out else "(no output)"
-        if nudge is not None:
-            msg = nudge("Bash", {"command": command})
-            if msg:
-                out = f"{out}\n\n{msg}"
-        return out
+    def bash(command: str, timeout: int = _BASH_TIMEOUT_DEFAULT_MS,
+             run_in_background: bool = False, description: str | None = None,
+             dangerouslyDisableSandbox: bool = False) -> str:
+        """Run a shell command. Foreground by default; a command that exceeds
+        `timeout` (ms) is BACKGROUNDED — not killed — and returned with a
+        `bash_id` you poll via BashOutput / stop via KillShell. Set
+        run_in_background=true to background immediately (for a long solve).
+        stdout and stderr are merged. `description` is advisory;
+        `dangerouslyDisableSandbox` is accepted for SDK compatibility and has
+        no effect here (Bash is not sandbox-enforced on this backend)."""
+        try:
+            timeout_ms = int(timeout)
+        except (TypeError, ValueError):
+            timeout_ms = _BASH_TIMEOUT_DEFAULT_MS
+        timeout_s = max(1.0, min(timeout_ms, _BASH_TIMEOUT_MAX_MS) / 1000.0)
+        if isinstance(run_in_background, str):
+            run_in_background = run_in_background.strip().lower() in (
+                "true", "1", "yes")
+
+        spool = tempfile.NamedTemporaryFile(
+            prefix="f3dasm_bash_", suffix=".log", delete=False)
+        spool_path = spool.name
+        spool.close()
+        handle = open(spool_path, "wb")
+        # No start_new_session: the child MUST stay in the run's process group
+        # so the watchdog group-kill and governor tree-walk can reach it.
+        proc = subprocess.Popen(
+            command, shell=True, cwd=sess.cwd,
+            stdout=handle, stderr=subprocess.STDOUT)
+
+        def _nudge_msg():
+            return nudge("Bash", {"command": command}) if nudge else None
+
+        if run_in_background:
+            sess.register_governor(proc.pid)
+            bid = sess.add_background(proc, spool_path, handle)
+            out, _ = _read_spill(spool_path, 0)
+            return _render(out, spool_path, bash_id=bid,
+                           nudge_msg=_nudge_msg())
+        try:
+            proc.wait(timeout=timeout_s)
+            handle.close()
+            out, _ = _read_spill(spool_path, 0)
+            os.unlink(spool_path) if len(out) <= _BASH_INLINE_CAP else None
+            return _render(out, spool_path, exit_code=proc.returncode,
+                           nudge_msg=_nudge_msg())
+        except subprocess.TimeoutExpired:
+            # Auto-background on timeout — matches the SDK, but made VISIBLE.
+            sess.register_governor(proc.pid)
+            bid = sess.add_background(proc, spool_path, handle)
+            out, cursor = _read_spill(spool_path, 0)
+            sess._bg[bid]["cursor"] = cursor
+            return _render(out, spool_path, interrupted=True, bash_id=bid,
+                           waited_s=int(timeout_s), nudge_msg=_nudge_msg())
 
     return StructuredTool.from_function(bash, name="Bash")
+
+
+def _make_bashoutput_tool(session: "_BashSession") -> Any:
+    from langchain_core.tools import StructuredTool
+
+    def bash_output(bash_id: str) -> str:
+        """Return output produced by a background shell (started via Bash with
+        run_in_background, or auto-backgrounded on timeout) SINCE THE LAST
+        call. Reports whether it is still running or has exited (with code)."""
+        entry = session.get(bash_id)
+        if entry is None:
+            return (f"ERROR: no background shell {bash_id!r}. Use the bash_id "
+                    "returned by Bash.")
+        new_out, cursor = _read_spill(entry["spool"], entry["cursor"])
+        entry["cursor"] = cursor
+        rc = entry["proc"].poll()
+        if rc is None:
+            status = "[still running]"
+        else:
+            try:
+                entry["handle"].close()
+            except OSError:
+                pass
+            session.drop(bash_id)
+            status = f"[exited {rc}]"
+        return f"{status}\n{new_out if new_out else '(no new output)'}"
+
+    return StructuredTool.from_function(bash_output, name="BashOutput")
+
+
+def _make_killshell_tool(session: "_BashSession") -> Any:
+    from langchain_core.tools import StructuredTool
+
+    def kill_shell(bash_id: str) -> str:
+        """Terminate a background shell and its process tree (SIGTERM then
+        SIGKILL). The only per-delegation teardown for a long job."""
+        entry = session.get(bash_id)
+        if entry is None:
+            return f"ERROR: no background shell {bash_id!r}."
+        pid = entry["proc"].pid
+        try:
+            from ..resource_backend import get_resource_backend
+            get_resource_backend().kill([pid])   # tree kill (recursive)
+        except Exception:  # noqa: BLE001
+            try:
+                entry["proc"].kill()
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            entry["handle"].close()
+        except OSError:
+            pass
+        session.drop(bash_id)
+        return f"[killed {bash_id} (pid {pid}) and its process tree]"
+
+    return StructuredTool.from_function(kill_shell, name="KillShell")
 
 
 def _make_read_tool(cwd: Path | None) -> Any:
@@ -168,8 +383,13 @@ def _make_write_tool(cwd: Path | None, nudge: Any = None) -> Any:
 
 
 def _native_tool_map(cwd: Path | None, nudge: Any = None) -> dict[str, Any]:
+    # One BashSession shared by Bash/BashOutput/KillShell so background shells
+    # launched by Bash are visible to the companion tools.
+    session = _BashSession(cwd)
     return {
-        "Bash":  _make_bash_tool(cwd, nudge),
+        "Bash":  _make_bash_tool(cwd, nudge, session=session),
+        "BashOutput": _make_bashoutput_tool(session),
+        "KillShell":  _make_killshell_tool(session),
         "Read":  _make_read_tool(cwd),
         "Write": _make_write_tool(cwd, nudge),
         "Edit":  _make_edit_tool(cwd),
