@@ -63,3 +63,39 @@ def test_headline_equals_guard_set(tmp_path):
     assert total_ledgered_evals(store_root) == guard_sum == 2
     # D000 is still bucketed for provenance, it just isn't an eval
     assert delegation_evals(store_root, "D000") == 1
+
+
+# ---------------------------------------------------------------------------
+# Guard: counting must look in EVERY folder (the main store + each family
+# sub-store), never just the main one. This is the whack-a-mole prevention —
+# a family lives in its own folder because its designs have different
+# parameters, and a reader that forgets the family folders under-counts.
+# ---------------------------------------------------------------------------
+
+def test_experiment_stores_finds_family_substores(tmp_path):
+    from f3dasm._src.agentic.instrumented import experiment_stores
+    root = tmp_path / "experiment_data"
+    _build_store(root, [(0.1, 1.0, "D001", "oracle")])                     # main
+    _build_store(root / "elliptical_rings",
+                 [(0.2, 2.0, "D002", "oracle")])                           # a family
+    stores = experiment_stores(root)
+    assert root in stores
+    assert (root / "elliptical_rings") in stores, (
+        "experiment_stores missed a family sub-store — everything downstream "
+        "would then silently count only the main folder.")
+
+
+def test_eval_count_sums_across_all_stores_not_just_main(tmp_path):
+    root = tmp_path / "experiment_data"
+    _build_store(root, [(0.1, 1.0, "D001", "oracle"),
+                        (0.2, 2.0, "D001", "oracle")])                     # main: 2 real
+    _build_store(root / "elliptical_rings",
+                 [(0.3, 3.0, "D002", "oracle")])                           # family: 1 real
+    # A reader that looked ONLY at the main folder would return 2; the correct
+    # cross-folder count is 3. This fails loudly if counting regresses to
+    # main-only (the recurring backdoor).
+    assert total_ledgered_evals(root) == 3, (
+        "eval count did not sum across the family sub-store — it is reading "
+        "only the main folder again.")
+    # a family's delegation is found in its own sub-store, not the main one
+    assert delegation_evals(root, "D002") == 1
