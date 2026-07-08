@@ -33,12 +33,14 @@ from typing import Optional
 
 from filelock import FileLock
 
-from ..core import DataGenerator
-from ..design.domain import Domain
-from ..design.parameter import Parameter
-from ..errors import EmptyFileError, ReachMaximumTriesError
-from ..experimentdata import ExperimentData
-from ..experimentsample import ExperimentSample, JobStatus
+from f3dasm import DataGenerator, ExperimentData, ExperimentSample
+
+# Not yet re-exported by the public f3dasm API. They exist in stock f3dasm,
+# only under _src. Flip to `from f3dasm import ...` once bessagroup/f3dasm#351
+# lands and is pinned.
+from f3dasm._src.errors import EmptyFileError, ReachMaximumTriesError
+from f3dasm._src.experimentsample import JobStatus
+from f3dasm.design import Domain
 
 #                                                         Authorship & Credits
 # ==========================================================================
@@ -326,7 +328,9 @@ class InstrumentedDataGenerator(DataGenerator):
         for sample in self._buffer:
             all_input_keys.update(sample._input_data.keys())
         for key in sorted(all_input_keys):
-            d._add(key, Parameter())
+            # Public API for a bounds-less base input column (constructs the
+            # Parameter and registers it, replacing the private d._add).
+            d.add_parameter(key)
         # Collect all output keys from the buffer.
         all_keys: set[str] = set()
         for sample in self._buffer:

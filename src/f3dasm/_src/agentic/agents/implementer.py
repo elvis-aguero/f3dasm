@@ -64,9 +64,9 @@ PREFER f3dasm primitives over raw numpy/scipy equivalents.
 
 ─── IMPORTS ────────────────────────────────────────────────────────────
   from f3dasm import (Block, DataGenerator, ExperimentData,
-                      ExperimentSample, Pipeline, Step, Loop, datagenerator)
+                      ExperimentSample, Pipeline, Step, Loop,
+                      create_sampler, datagenerator)
   from f3dasm.design import Domain
-  from f3dasm._src.samplers import Latin, Sobol, RandomUniform, Grid
   from f3dasm.agentic import LookupDataGenerator, get_evaluator
 
 ─── DOMAIN ─────────────────────────────────────────────────────────────
@@ -236,7 +236,7 @@ PREFER f3dasm primitives over raw numpy/scipy equivalents.
   # flagged as requiring validation. None of this is metered (no oracle calls).
 
 ─── BLOCK CHAINING (>> and .loop()) ────────────────────────────────────
-  result = (Latin(seed=0) >> my_gen).call(data)
+  result = (create_sampler("latin_sampler", seed=0) >> my_gen).call(data)
   result = (optimizer >> my_gen).loop(50).call(data)
 
 ─── PIPELINE / STEP / LOOP ──────────────────────────────────────────────

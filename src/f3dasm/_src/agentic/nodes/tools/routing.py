@@ -214,8 +214,14 @@ def build_declared_shared_closures(node, agent_tools) -> dict:
             magnitude sentinel outputs) are never returned as 'best'."""
             import json as _json
 
-            from ....errors import EmptyFileError, ReachMaximumTriesError
-            from ....experimentdata import ExperimentData
+            from f3dasm import ExperimentData
+
+            # Not yet public; flip after bessagroup/f3dasm#351.
+            from f3dasm._src.errors import (
+                EmptyFileError,
+                ReachMaximumTriesError,
+            )
+
             from ...instrumented import _PROVENANCE_COLS
 
             sd = _derive_store_dir()

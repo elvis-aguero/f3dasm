@@ -262,12 +262,14 @@ def test_implementer_xml_sections_appear_exactly_once():
 # ---------------------------------------------------------------------------
 
 def test_implementer_f3dasm_primer_references_key_classes():
-    """The f3dasm primer section names all critical API classes/samplers.
+    """The f3dasm primer section names all critical public API.
 
     Notes
     -----
-    Checked as literal substrings (case-sensitive) because the model
-    must use the exact class names when generating code.
+    Checked as literal substrings (case-sensitive) because the model must
+    use the exact public names when generating code. Samplers are reached
+    through the public ``create_sampler`` factory with string keys
+    (e.g. ``"latin_sampler"``), not the private sampler classes.
     """
     from f3dasm._src.agentic.agent_prompts import (
         IMPLEMENTER_SYSTEM_PROMPT,
@@ -276,8 +278,8 @@ def test_implementer_f3dasm_primer_references_key_classes():
     required_terms = [
         "Domain",
         "ExperimentData",
-        "Latin",
-        "Sobol",
+        "create_sampler",
+        "latin_sampler",
         "DataGenerator",
         "LookupDataGenerator",
     ]

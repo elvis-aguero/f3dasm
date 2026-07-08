@@ -20,10 +20,12 @@ from typing import Optional
 # Third-party
 import numpy as np
 
-# Local
-from ..core import DataGenerator
-from ..experimentdata import ExperimentData
-from ..experimentsample import ExperimentSample, JobStatus
+# f3dasm (external dependency once a3dasm is standalone)
+from f3dasm import DataGenerator, ExperimentData, ExperimentSample
+
+# Not yet public in f3dasm; flip to `from f3dasm import JobStatus` after
+# bessagroup/f3dasm#351.
+from f3dasm._src.experimentsample import JobStatus
 
 #                                                          Authorship & Credits
 # =============================================================================

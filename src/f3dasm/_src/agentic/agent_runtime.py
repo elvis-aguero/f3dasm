@@ -47,6 +47,12 @@ DEFAULT_OLLAMA_MODEL = "qwen2.5:1.5b"
 # the resolution order (config -> env -> SLURM allocation -> this default).
 DEFAULT_MEM_CAP_BYTES = 4 * 1024 ** 3
 
+# Filename that marks a store as the PROTECTED canonical ledger. a3dasm owns
+# this constant (stock f3dasm does not define it). Writing the marker is a
+# no-op against a plain f3dasm; the store()-level guard that reads it is
+# re-homed into a3dasm separately (currently provided by the vendored core).
+PROTECTED_STORE_SENTINEL = ".f3dasm_protected"
+
 
 def resolve_mem_cap_bytes(explicit, env=None) -> int:
     """Resolve the hard per-delegation RAM cap (bytes).
@@ -136,7 +142,6 @@ def _init_canonical_store(
     # Mark this as the PROTECTED canonical store: ExperimentData.store() will
     # refuse any write that would shrink it, so a stray agent .store() can't
     # clobber the metered ledger (only get_evaluator() should write here).
-    from .._io import PROTECTED_STORE_SENTINEL
     (store_dir / PROTECTED_STORE_SENTINEL).touch()
 
     eval_cfg = evaluator_config or {}
@@ -241,7 +246,6 @@ def register_evaluator_entrypoint(
                 "'experiment_data' is reserved (it is the default store's own "
                 "data dir) — choose a different experiment/namespace name."
             )
-        from .._io import PROTECTED_STORE_SENTINEL
         base_store = Path(config["store_dir"])
         ns_store = base_store / namespace
         ns_store.mkdir(parents=True, exist_ok=True)
@@ -360,10 +364,12 @@ def _ingest_precomputed_pool(
 
     from filelock import FileLock
 
-    from ..design.domain import Domain
-    from ..errors import EmptyFileError, ReachMaximumTriesError
-    from ..experimentdata import ExperimentData
-    from ..experimentsample import ExperimentSample, JobStatus
+    from f3dasm import ExperimentData, ExperimentSample
+
+    # Not yet public; flip to `from f3dasm import ...` after bessagroup/f3dasm#351.
+    from f3dasm._src.errors import EmptyFileError, ReachMaximumTriesError
+    from f3dasm._src.experimentsample import JobStatus
+    from f3dasm.design import Domain
 
     pool_project = study_dir / lookup_cfg["pool"]
     pool = ExperimentData.from_file(project_dir=pool_project)
@@ -567,8 +573,9 @@ class AgenticRun:
         if not cfg.get("enabled"):
             return None
 
+        from f3dasm import SlurmCluster
+
         from . import slurm_llm
-        from ..pipeline.resources import SlurmCluster
 
         model = cfg.get("model") or self._model
         spec = slurm_llm.resolve_serve_spec(model, cfg)
@@ -927,6 +934,7 @@ class AgenticRun:
         if nb_path.exists():
             try:
                 import nbformat
+
                 from .notebook_exec import stamp_run_provenance
                 nb = nbformat.read(str(nb_path), as_version=4)
                 # Replace (not append) the provenance cell — the notebook is
