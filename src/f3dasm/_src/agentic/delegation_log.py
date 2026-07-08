@@ -150,6 +150,13 @@ class DelegationLog:
 
         matching = [r for r in records if r.get("to_node") == node_name]
         if n is not None:
+            # MCP string-in tools may pass n as "6"; `matching[-n:]` would raise
+            # "bad operand type for unary -: 'str'". Coerce here so every caller
+            # (routing.py and worker.py RecallHistory) is covered at once.
+            try:
+                n = int(n)
+            except (TypeError, ValueError):
+                return matching
             # Return the last n, oldest-first
             matching = matching[-n:]
         return matching

@@ -231,3 +231,21 @@ def test_query_all_returns_every_record_oldest_first(tmp_path):
 def test_query_all_returns_empty_when_no_records(tmp_path):
     log = _make_log(tmp_path)
     assert log.query_all() == []
+
+
+# ---------------------------------------------------------------------------
+# query_received coerces a string n (MCP string-in tools pass "6")
+# ---------------------------------------------------------------------------
+
+def test_query_received_coerces_string_n(tmp_path):
+    """Regression (run 20260708T021335, critic-3): RecallHistory(n='6') reached
+    query_received, whose `matching[-n:]` raised 'bad operand type for unary -:
+    str'. A string n must be coerced, not crash."""
+    log = _make_log(tmp_path)
+    for i in range(4):
+        _record(log, id=f"D00{i}", to_node="implementer")
+    # string n (as an MCP tool would pass) must not raise and must honor the count
+    got = log.query_received("implementer", "2")
+    assert len(got) == 2
+    # garbage n degrades gracefully to "all", not a crash
+    assert len(log.query_received("implementer", "not-a-number")) == 4
