@@ -26,7 +26,35 @@ __all__ = [
     "build_notebook",
     "notebook_deliverable_spec",
     "sandbox_env",
+    "stamp_run_provenance",
 ]
+
+# Stable name for the run-provenance metadata cell (see stamp_run_provenance).
+RUN_PROVENANCE_CELL = "_run_provenance"
+
+
+def stamp_run_provenance(nb, meta_md: str):
+    """Stamp the run-provenance metadata cell onto the deliverable notebook,
+    REPLACING any prior one instead of appending.
+
+    pipeline.ipynb is study-scoped and persists across runs, so appending an
+    UNNAMED stamp cell each close accumulated stale metadata — a run's
+    deliverable carried the PREVIOUS run's run_dir / evals_used (run
+    20260630T164908 shipped 20260629's stamp). The cell is given a stable
+    ``metadata["name"]`` so (a) the next close replaces it rather than piling
+    up, and (b) it is visible/removable via ShowNotebook / DeletePipelineCell
+    like every other named cell.
+    """
+    import nbformat
+    nb.cells = [
+        c for c in nb.cells
+        if (getattr(c, "metadata", None) or {}).get("name")
+        != RUN_PROVENANCE_CELL
+    ]
+    cell = nbformat.v4.new_markdown_cell(meta_md)
+    cell.metadata["name"] = RUN_PROVENANCE_CELL
+    nb.cells.append(cell)
+    return nb
 
 
 def sandbox_env(

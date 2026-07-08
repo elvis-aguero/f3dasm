@@ -804,8 +804,12 @@ class AgenticRun:
         if nb_path.exists():
             try:
                 import nbformat
+                from .notebook_exec import stamp_run_provenance
                 nb = nbformat.read(str(nb_path), as_version=4)
-                nb.cells.append(nbformat.v4.new_markdown_cell(meta_md))
+                # Replace (not append) the provenance cell — the notebook is
+                # study-scoped and persists across runs; appending accumulated
+                # a prior run's stale metadata cell.
+                stamp_run_provenance(nb, meta_md)
                 nb.metadata.setdefault("agentic", {}).update(
                     {"model": self._model, "run": str(run_dir),
                      "timestamp": now_ts, "gate_outcome": _gate_outcome})
