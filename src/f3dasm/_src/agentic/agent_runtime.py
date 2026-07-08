@@ -42,9 +42,47 @@ DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_OLLAMA_MODEL = "qwen2.5:1.5b"
 # Default per-campaign-process hard memory cap (bytes) — the one HARD resource
 # boundary. 4 GiB: comfortably above a healthy GP-BO campaign, below the runaway
-# GP-on-5302-points blowup that pegged the host. Override via config.yaml
-# `mem_cap` (bytes) or env F3DASM_MEM_CAP; on HPC default to SLURM's --mem.
+# GP-on-5302-points blowup that pegged the host. See resolve_mem_cap_bytes for
+# the resolution order (config -> env -> SLURM allocation -> this default).
 DEFAULT_MEM_CAP_BYTES = 4 * 1024 ** 3
+
+
+def resolve_mem_cap_bytes(explicit, env=None) -> int:
+    """Resolve the hard per-delegation RAM cap (bytes).
+
+    Precedence: an explicit config.yaml ``mem_cap`` > env ``F3DASM_MEM_CAP`` >
+    the SLURM job's memory allocation > ``DEFAULT_MEM_CAP_BYTES``. The SLURM
+    step matters on real HPC: SLURM already gives the job a memory allocation,
+    so without this the watchdog kept a small hardcoded ceiling and silently
+    throttled worker concurrency far below what the node actually granted. This
+    only sets the cap's VALUE — it is still the one hard host-safety cap.
+    """
+    import os as _os
+    env = _os.environ if env is None else env
+
+    def _as_int(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    if (v := _as_int(explicit)) and v > 0:
+        return v
+    if (v := _as_int(env.get("F3DASM_MEM_CAP"))) and v > 0:
+        return v
+    # SLURM reports memory in MB. Prefer the per-node allocation; otherwise
+    # derive it from per-CPU * CPUs (SLURM_CPUS_ON_NODE may be "16" or "16(x2)").
+    mb = _as_int(env.get("SLURM_MEM_PER_NODE"))
+    if not mb:
+        per_cpu = _as_int(env.get("SLURM_MEM_PER_CPU"))
+        cpus_raw = env.get("SLURM_CPUS_ON_NODE") or env.get(
+            "SLURM_JOB_CPUS_PER_NODE") or ""
+        cpus = _as_int(str(cpus_raw).split("(")[0]) if cpus_raw else None
+        if per_cpu and cpus:
+            mb = per_cpu * cpus
+    if mb and mb > 0:
+        return mb * 1024 * 1024
+    return DEFAULT_MEM_CAP_BYTES
 
 
 class AgenticRunError(Exception):
@@ -449,9 +487,10 @@ class AgenticRun:
             eval_budget if eval_budget is not None else cfg.get("eval_budget")
         )
         # Hard per-campaign memory cap (bytes) — the single HARD resource boundary
-        # (host safety, not a science budget). Source of truth is config.yaml
-        # `mem_cap` (explicit, like every run knob); falls back to the default.
-        self._mem_cap_bytes = cfg.get("mem_cap") or DEFAULT_MEM_CAP_BYTES
+        # (host safety, not a science budget). config.yaml `mem_cap` wins; else
+        # env F3DASM_MEM_CAP; else the SLURM allocation (real HPC budget); else
+        # the default. See resolve_mem_cap_bytes.
+        self._mem_cap_bytes = resolve_mem_cap_bytes(cfg.get("mem_cap"))
         self._required_deliverables = cfg.get("required_deliverables") or []
 
         # budget from config is HH:MM:SS string or seconds float
