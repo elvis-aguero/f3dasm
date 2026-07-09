@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -66,6 +67,16 @@ def build() -> None:
     for ov in OVERRIDES.rglob("*.py"):
         rel = ov.relative_to(OVERRIDES)
         (DEST/rel).write_text(ov.read_text(encoding="utf-8"), encoding="utf-8")
+
+    # The namespace rename shifts import ordering (a3dasm._src sorts differently
+    # from f3dasm._src.agentic), so let ruff normalise imports on the built tree
+    # per a3dasm's own config. Keeps the pre-commit ruff hook green.
+    try:
+        subprocess.run(
+            ["uvx", "ruff@0.14.10", "check", "--fix", "--quiet", "src"],
+            cwd=DEST, check=False)
+    except FileNotFoundError:
+        print("ruff/uvx not available — skipping the import-sort pass")
 
     print(f"built a3dasm at {DEST}")
 

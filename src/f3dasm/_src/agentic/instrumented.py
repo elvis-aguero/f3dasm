@@ -1109,7 +1109,7 @@ def delegation_evals(store_root: Path | str, delegation_id: str) -> int:
 
 def load_experiments(
     store_root: Path | str | None = None,
-) -> dict[str, "ExperimentData"]:
+) -> dict[str, ExperimentData]:
     """Load EVERY experiment store of a run as a dict ``{name: ExperimentData}``.
 
     A namespaced run holds one clean ``ExperimentData`` per experiment at nested
